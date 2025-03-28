@@ -54,17 +54,17 @@ const seedBadges = async () => {
         ('Feedback Provider', 'Offers constructive criticism that helps others improve', 'Leadership Qualities', 'loop_arrow.svg')
     `);
     
-    // Personal Attributes (Yellow)
-    await db.query(`
-      INSERT INTO badges (name, description, category, image_url)
-      VALUES 
-        ('Quick Learner', 'Rapidly adapts to new information and technologies', 'Personal Attributes', 'brain_lightning.svg'),
-        ('Empathetic', 'Understands others' perspectives and emotional needs', 'Personal Attributes', 'heart.svg'),
-        ('Persistent', 'Overcomes obstacles with determination and resilience', 'Personal Attributes', 'mountain_climber.svg'),
-        ('Detail-Oriented', 'Notices and addresses small details others might miss', 'Personal Attributes', 'magnifying_glass.svg'),
-        ('Adaptable', 'Flexibly responds to changing circumstances and requirements', 'Personal Attributes', 'chameleon.svg'),
-        ('Knowledge Sharer', 'Generously shares expertise and helps others learn', 'Personal Attributes', 'open_book.svg')
-    `);
+// Personal Attributes (Yellow)
+await db.query(`
+    INSERT INTO badges (name, description, category, image_url)
+    VALUES 
+      ('Quick Learner', 'Rapidly adapts to new information and technologies', 'Personal Attributes', 'brain_lightning.svg'),
+      ('Empathetic', 'Understands others perspectives and emotional needs', 'Personal Attributes', 'heart.svg'),
+      ('Persistent', 'Overcomes obstacles with determination and resilience', 'Personal Attributes', 'mountain_climber.svg'),
+      ('Detail-Oriented', 'Notices and addresses small details others might miss', 'Personal Attributes', 'magnifying_glass.svg'),
+      ('Adaptable', 'Flexibly responds to changing circumstances and requirements', 'Personal Attributes', 'chameleon.svg'),
+      ('Knowledge Sharer', 'Generously shares expertise and helps others learn', 'Personal Attributes', 'open_book.svg')
+  `);
     
     // Award some badges to users
     // First get user IDs
