@@ -1,3 +1,4 @@
+// Script to run all migrations in order
 const createUsersTable = require('./01_create_users');
 const createTagsTable = require('./02_create_tags');
 const createUserTagsTable = require('./03_create_user_tags');
