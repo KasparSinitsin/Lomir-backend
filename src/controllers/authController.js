@@ -1,3 +1,5 @@
+// placeholder functions for one controller as an example
+
 const register = async (req, res) => {
     try {
       // This is just a placeholder - we'll implement actual logic next week
