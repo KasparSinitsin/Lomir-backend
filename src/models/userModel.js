@@ -8,22 +8,38 @@ const userModel = {
    * @returns {Object} Created user object
    */
   async createUser(userData) {
+    console.log('User model: Creating user with data:', userData);
+    
     const { username, email, password, first_name, last_name, bio, postal_code } = userData;
     
     // Hash password
     const saltRounds = 10;
     const password_hash = await bcrypt.hash(password, saltRounds);
     
-    const result = await db.query(
-      `INSERT INTO users 
-        (username, email, password_hash, first_name, last_name, bio, postal_code) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7) 
-       RETURNING id, username, email, first_name, last_name, bio, postal_code, created_at`,
-      [username, email, password_hash, first_name, last_name, bio, postal_code]
-    );
-    
-    return result.rows[0];
-  },
+    try {
+      console.log('User model: Executing database query...');
+      const result = await db.query(
+        `INSERT INTO users 
+          (username, email, password_hash, first_name, last_name, bio, postal_code) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7) 
+         RETURNING id, username, email, first_name, last_name, bio, postal_code, created_at`,
+        [username, email, password_hash, first_name, last_name, bio, postal_code]
+      );
+      
+      console.log('User model: Full query result:', result);
+      console.log('User model: Inserted user:', result.rows[0]);
+      return result.rows[0];
+    } catch (error) {
+      console.error('Database insertion error:', error);
+      console.error('Error details:', {
+        message: error.message,
+        stack: error.stack,
+        code: error.code,
+        detail: error.detail
+      });
+      throw error;
+    }
+  }, 
   
   /**
    * Find a user by email
