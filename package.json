@@ -2,13 +2,13 @@
   "name": "lomir-backend",
   "version": "1.0.0",
   "main": "index.js",
- "scripts": {
-  "start": "node src/server.js",
-  "dev": "nodemon src/server.js",
-  "test": "echo \"Error: no test specified\" && exit 1",
-  "migrate": "node migrate.js",
-  "seed": "node seed.js"
-},
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "migrate": "node migrate.js",
+    "seed": "node seed.js"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/KasparSinitsin/Lomir-backend.git"
