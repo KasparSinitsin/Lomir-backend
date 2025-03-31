@@ -25,10 +25,13 @@ const authController = {
    */
   async register(req, res) {
     try {
+      console.log('Registration request received:', req.body);
+      
       // Validate request body
       const { error, value } = registerSchema.validate(req.body);
       
       if (error) {
+        console.log('Validation error:', error.details);
         return res.status(400).json({
           success: false,
           message: 'Validation error',
@@ -39,6 +42,7 @@ const authController = {
       // Check if user already exists
       const existingUserByEmail = await userModel.findByEmail(value.email);
       if (existingUserByEmail) {
+        console.log('User with this email already exists:', value.email);
         return res.status(400).json({
           success: false,
           message: 'User with this email already exists'
@@ -47,6 +51,7 @@ const authController = {
       
       const existingUserByUsername = await userModel.findByUsername(value.username);
       if (existingUserByUsername) {
+        console.log('User with this username already exists:', value.username);
         return res.status(400).json({
           success: false,
           message: 'User with this username already exists'
@@ -54,7 +59,9 @@ const authController = {
       }
       
       // Create user
+      console.log('Creating new user...');
       const user = await userModel.createUser(value);
+      console.log('User created successfully:', user);
       
       // Generate token
       const token = generateToken(user);
@@ -74,6 +81,7 @@ const authController = {
         }
       });
     } catch (error) {
+      console.error('Error in register controller:', error);
       res.status(500).json({
         success: false,
         message: 'Error registering user',
