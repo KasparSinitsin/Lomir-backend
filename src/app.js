@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const routes = require('./routes');
 
 // Load environment variables
 dotenv.config();
@@ -14,10 +13,19 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// API Routes
-app.use('/api', routes);
-
 // Routes
+const tagRoutes = require('./routes/api/tags');
+app.use('/api/tags', tagRoutes);
+
+// If you have other API routes to include
+try {
+  const routes = require('./routes');
+  app.use('/api', routes);
+} catch (error) {
+  console.log('No general routes module found or error importing:', error.message);
+}
+
+// Home route
 app.get('/', (req, res) => {
   res.send('Lomir API is running...');
 });
