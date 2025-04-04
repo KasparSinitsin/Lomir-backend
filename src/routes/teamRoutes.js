@@ -1,15 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const teamController = require('../controllers/teamController');
-const auth = require('../middlewares/auth'); // assuming you want team actions protected
+const auth = require('../middlewares/auth');
 
 // Team routes
-router.post('/', auth, teamController.createTeam); // protect team creation
 router.get('/', teamController.getAllTeams);
 router.get('/:id', teamController.getTeamById);
-router.put('/:id', auth, teamController.updateTeam); // protect updates
-router.delete('/:id', auth, teamController.deleteTeam); // protect deletions
-router.post('/:id/members', auth, teamController.addTeamMember);
-router.delete('/:id/members/:userId', auth, teamController.removeTeamMember);
+router.post('/', auth.authenticateToken, teamController.createTeam);
+router.put('/:id', auth.authenticateToken, teamController.updateTeam);
+router.delete('/:id', auth.authenticateToken, teamController.deleteTeam);
+router.post('/:id/members', auth.authenticateToken, teamController.addTeamMember);
+router.delete('/:id/members/:userId', auth.authenticateToken, teamController.removeTeamMember);
 
 module.exports = router;
