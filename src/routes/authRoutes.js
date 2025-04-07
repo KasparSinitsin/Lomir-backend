@@ -2,10 +2,15 @@ const express = require('express');
 const authController = require('../controllers/authController');
 const { authenticateToken } = require('../middlewares/auth');
 const db = require('../config/database');
+const upload = require('../middlewares/uploadMiddleware');
 
 const router = express.Router();
 
-router.post('/register', authController.register);
+router.post('/register', 
+  upload.single('avatar'),  // Middleware for file upload
+  authController.register
+);
+
 router.post('/login', authController.login);
 router.get('/me', authenticateToken, authController.getCurrentUser);
 

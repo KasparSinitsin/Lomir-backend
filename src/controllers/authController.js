@@ -25,13 +25,10 @@ const authController = {
    */
   async register(req, res) {
     try {
-      console.log('Registration request received:', req.body);
-      
       // Validate request body
       const { error, value } = registerSchema.validate(req.body);
       
       if (error) {
-        console.log('Validation error:', error.details);
         return res.status(400).json({
           success: false,
           message: 'Validation error',
@@ -42,7 +39,6 @@ const authController = {
       // Check if user already exists
       const existingUserByEmail = await userModel.findByEmail(value.email);
       if (existingUserByEmail) {
-        console.log('User with this email already exists:', value.email);
         return res.status(400).json({
           success: false,
           message: 'User with this email already exists'
@@ -51,17 +47,23 @@ const authController = {
       
       const existingUserByUsername = await userModel.findByUsername(value.username);
       if (existingUserByUsername) {
-        console.log('User with this username already exists:', value.username);
         return res.status(400).json({
           success: false,
           message: 'User with this username already exists'
         });
       }
       
+      // Handle avatar upload
+      let avatarUrl = null;
+      if (req.file) {
+        avatarUrl = req.file.path; // Cloudinary provides the full URL in path
+      }
+      
       // Create user
-      console.log('Creating new user...');
-      const user = await userModel.createUser(value);
-      console.log('User created successfully:', user);
+      const user = await userModel.createUser({
+        ...value,
+        avatar_url: avatarUrl
+      });
       
       // Generate token
       const token = generateToken(user);
@@ -76,12 +78,13 @@ const authController = {
             username: user.username,
             email: user.email,
             firstName: user.first_name,
-            lastName: user.last_name
+            lastName: user.last_name,
+            avatarUrl: user.avatar_url
           }
         }
       });
     } catch (error) {
-      console.error('Error in register controller:', error);
+      console.error('Registration error:', error);
       res.status(500).json({
         success: false,
         message: 'Error registering user',
