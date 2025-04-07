@@ -51,7 +51,6 @@ const userModel = {
       'SELECT * FROM users WHERE email = $1',
       [email]
     );
-    
     return result.rows[0] || null;
   },
   
@@ -91,7 +90,7 @@ const userModel = {
    */
   async comparePassword(password, hashedPassword) {
     return await bcrypt.compare(password, hashedPassword);
-  }
-};
+  },
+}
 
 module.exports = userModel;
