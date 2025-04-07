@@ -11,7 +11,7 @@ const createUsersTable = async () => {
         first_name VARCHAR(50),
         last_name VARCHAR(50),
         bio TEXT,
-        avatar_url VARCHAR(255),
+        avatar_url VARCHAR(255), 
         postal_code VARCHAR(20),
         latitude DECIMAL(10, 8),
         longitude DECIMAL(11, 8),
