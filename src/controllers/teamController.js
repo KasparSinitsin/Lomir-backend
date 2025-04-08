@@ -156,8 +156,6 @@ if (value.tags && value.tags.length > 0) {
   }
 };
 
-I
-
 const getAllTeams = async (req, res) => {
   try {
     // Implement pagination
@@ -259,11 +257,12 @@ const getTeamById = async (req, res) => {
 
 const getUserTeams = async (req, res) => {
   try {
-    const userId = req.params.userId;
+    // Use the authenticated user's ID from the token
+    const userId = req.user.id;
     
     const teamsResult = await db.pool.query(`
       SELECT t.*, 
-             COUNT(tm.id) AS members_count
+      COUNT(tm.id) AS members_count
       FROM teams t
       JOIN team_members tm ON t.id = tm.team_id
       WHERE tm.user_id = $1 AND t.archived_at IS NULL
