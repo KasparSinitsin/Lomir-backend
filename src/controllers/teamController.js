@@ -77,44 +77,44 @@ const createTeam = async (req, res) => {
       // Start transaction
       await client.query('BEGIN');
 
-      // Insert team details
-      const teamResult = await client.query(`
-        INSERT INTO teams (
-          name, 
-          description, 
-          creator_id, 
-          is_public, 
-          max_members, 
-          postal_code
-        ) VALUES ($1, $2, $3, $4, $5, $6) 
-        RETURNING id
-      `, [
-        value.name, 
-        value.description, 
-        creatorId, 
-        value.is_public, 
-        value.max_members, 
-        value.postal_code
-      ]);
+ // Insert team details
+ const teamResult = await client.query(`
+  INSERT INTO teams (
+    name, 
+    description, 
+    creator_id, 
+    is_public, 
+    max_members, 
+    postal_code
+  ) VALUES ($1, $2, $3, $4, $5, $6) 
+  RETURNING id, name, description, is_public, max_members, postal_code, created_at
+`, [
+  value.name, 
+  value.description, 
+  creatorId, 
+  value.is_public, 
+  value.max_members, 
+  value.postal_code
+]);
 
-      const teamId = teamResult.rows[0].id;
+const team = teamResult.rows[0];
 
-      // Add creator as team member with 'creator' role
-      await client.query(`
-        INSERT INTO team_members (team_id, user_id, role)
-        VALUES ($1, $2, $3)
-      `, [teamId, creatorId, 'creator']);
+// Add creator as team member with 'creator' role
+await client.query(`
+  INSERT INTO team_members (team_id, user_id, role)
+  VALUES ($1, $2, $3)
+`, [team.id, creatorId, 'creator']);
 
-      // Insert team tags
-      if (value.tags && value.tags.length > 0) {
-        const tagInserts = value.tags.map(tag => 
-          client.query(`
-            INSERT INTO team_tags (team_id, tag_id)
-            VALUES ($1, $2)
-          `, [teamId, tag.tag_id])
-        );
-        await Promise.all(tagInserts);
-      }
+// Insert team tags if provided
+if (value.tags && value.tags.length > 0) {
+  const tagInserts = value.tags.map(tag => 
+    client.query(`
+      INSERT INTO team_tags (team_id, tag_id)
+      VALUES ($1, $2)
+    `, [team.id, tag.tag_id])
+  );
+  await Promise.all(tagInserts);
+}
 
       // Commit transaction
       await client.query('COMMIT');
@@ -123,11 +123,7 @@ const createTeam = async (req, res) => {
       res.status(201).json({
         success: true,
         message: 'Team created successfully',
-        data: { 
-          id: teamId,
-          name: value.name,
-          description: value.description
-        }
+        data: team
       });
     } catch (dbError) {
       // Rollback transaction in case of error
