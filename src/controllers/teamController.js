@@ -62,99 +62,117 @@ const teamCreationSchema = Joi.object({
       })
     });
 
-const createTeam = async (req, res) => {
-  try {
-    // Get the currently logged-in user's ID from the authentication middleware
-    const creatorId = req.user.id;
-
-    console.log('Received team creation request:', req.body);
-    console.log('Creator ID:', creatorId);
-
-    // Validate request body
-    const { error, value } = teamCreationSchema.validate(req.body);
+    const createTeam = async (req, res) => {
+      try {
+        // Get the currently logged-in user's ID from the authentication middleware
+        const creatorId = req.user.id;
     
-    if (error) {
-      console.error('Validation error:', error.details);
-      return res.status(400).json({
-        success: false,
-        message: 'Validation error',
-        errors: error.details.map(detail => detail.message)
-      });
-    }
-
-    // Begin a database transaction
-    const client = await db.pool.connect();
-
-    try {
-      // Start transaction
-      await client.query('BEGIN');
-
- // Insert team details
- const teamResult = await client.query(`
-  INSERT INTO teams (
-    name, 
-    description, 
-    creator_id, 
-    is_public, 
-    max_members, 
-    postal_code
-  ) VALUES ($1, $2, $3, $4, $5, $6) 
-  RETURNING id, name, description, is_public, max_members, postal_code, created_at
-`, [
-  value.name, 
-  value.description, 
-  creatorId, 
-  value.is_public, 
-  value.max_members, 
-  value.postal_code
-]);
-
-const team = teamResult.rows[0];
-
-// Add creator as team member with 'creator' role
-await client.query(`
-  INSERT INTO team_members (team_id, user_id, role)
-  VALUES ($1, $2, $3)
-`, [team.id, creatorId, 'creator']);
-
-// Insert team tags if provided
-if (value.tags && value.tags.length > 0) {
-  const tagInserts = value.tags.map(tag => 
-    client.query(`
-      INSERT INTO team_tags (team_id, tag_id)
-      VALUES ($1, $2)
-    `, [team.id, tag.tag_id])
-  );
-  await Promise.all(tagInserts);
-}
-
-      // Commit transaction
-      await client.query('COMMIT');
-
-      // Return successful response
-      res.status(201).json({
-        success: true,
-        message: 'Team created successfully',
-        data: team
-      });
-    } catch (dbError) {
-      // Rollback transaction in case of error
-      await client.query('ROLLBACK');
-      throw dbError;
-    } finally {
-      // Release the client back to the pool
-      client.release();
-    }
-  } catch (error) {
-    console.error('Full team creation error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error creating team',
-      errorDetails: error.message,
-      fullError: error
-    });
-  }
-};
+        console.log('Received team creation request:', req.body);
+        console.log('Creator ID:', creatorId);
+    
+        // Validate request body
+        const { error, value } = teamCreationSchema.validate(req.body);
+        
+        if (error) {
+          console.error('Validation error:', error.details);
+          return res.status(400).json({
+            success: false,
+            message: 'Validation error',
+            errors: error.details.map(detail => detail.message)
+          });
+        }
+    
+        // Begin a database transaction
+        const client = await db.pool.connect();
+    
+        try {
+          // Start transaction
+          await client.query('BEGIN');
+    
+          // Insert team details
+          const teamResult = await client.query(`
+            INSERT INTO teams (
+              name, 
+              description, 
+              creator_id, 
+              is_public, 
+              max_members, 
+              postal_code
+            ) VALUES ($1, $2, $3, $4, $5, $6) 
+            RETURNING id, name, description, is_public, max_members, postal_code, created_at
+          `, [
+            value.name, 
+            value.description, 
+            creatorId, 
+            value.is_public, 
+            value.max_members, 
+            value.postal_code
+          ]);
+    
+          const team = teamResult.rows[0];
+    
+          // Add creator as team member with 'creator' role
+          await client.query(`
+            INSERT INTO team_members (team_id, user_id, role)
+            VALUES ($1, $2, $3)
+          `, [team.id, creatorId, 'creator']);
+    
+          // Insert team tags if provided
+          if (value.tags && value.tags.length > 0) {
+            const tagIdsToCheck = value.tags.map(tag => tag.tag_id);
+            const tagsExistResult = await client.query(`
+              SELECT id FROM tags WHERE id IN (${tagIdsToCheck.join(',')})
+            `);
+    
+            const existingTagIds = tagsExistResult.rows.map(row => row.id);
+    
+            // Check if all provided tag_ids exist
+            if (existingTagIds.length !== tagIdsToCheck.length) {
+              await client.query('ROLLBACK');
+              client.release();
+              return res.status(400).json({
+                success: false,
+                message: 'Validation error',
+                errors: ['One or more of the provided tag IDs do not exist.']
+              });
+            }
+    
+            const tagInserts = value.tags.map(tag => 
+              client.query(`
+                INSERT INTO team_tags (team_id, tag_id)
+                VALUES ($1, $2)
+              `, [team.id, tag.tag_id])
+            );
+            await Promise.all(tagInserts);
+          }
+    
+          // Commit transaction
+          await client.query('COMMIT');
+    
+          // Return successful response
+          res.status(201).json({
+            success: true,
+            message: 'Team created successfully',
+            data: team
+          });
+        } catch (dbError) {
+          // Rollback transaction in case of error
+          await client.query('ROLLBACK');
+          throw dbError;
+        } finally {
+          // Release the client back to the pool
+          client.release();
+        }
+      } catch (error) {
+        console.error('Full team creation error:', error);
+        res.status(500).json({
+          success: false,
+          message: 'Error creating team',
+          errorDetails: error.message,
+          fullError: error
+        });
+      }
+    };
 
 const getAllTeams = async (req, res) => {
   try {
