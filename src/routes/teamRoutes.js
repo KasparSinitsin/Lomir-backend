@@ -7,6 +7,7 @@ const auth = require('../middlewares/auth');
 router.post('/', auth.authenticateToken, teamController.createTeam);
 router.get('/', teamController.getAllTeams);
 router.get('/:id', teamController.getTeamById);
+router.get('/my-teams', auth.authenticateToken, teamController.getUserTeams);
 router.put('/:id', auth.authenticateToken, teamController.updateTeam);
 router.delete('/:id', auth.authenticateToken, teamController.deleteTeam);
 router.post('/:id/members', auth.authenticateToken, teamController.addTeamMember);

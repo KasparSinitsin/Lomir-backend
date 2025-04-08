@@ -722,6 +722,7 @@ module.exports = {
   createTeam,
   getAllTeams,
   getTeamById,
+  getUserTeams,
   updateTeam,
   deleteTeam,
   addTeamMember,
