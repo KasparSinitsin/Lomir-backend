@@ -259,16 +259,15 @@ const getTeamById = async (req, res) => {
 
 const getUserTeams = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.params.userId;
     
     const teamsResult = await db.pool.query(`
       SELECT t.*, 
-      COUNT(tm.id) AS current_members_count,
-      tm.role AS user_team_role
+             COUNT(tm.id) AS members_count
       FROM teams t
       JOIN team_members tm ON t.id = tm.team_id
       WHERE tm.user_id = $1 AND t.archived_at IS NULL
-      GROUP BY t.id, tm.role
+      GROUP BY t.id
       ORDER BY t.created_at DESC
     `, [userId]);
     
