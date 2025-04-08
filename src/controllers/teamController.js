@@ -59,10 +59,14 @@ const createTeam = async (req, res) => {
     // Get the currently logged-in user's ID from the authentication middleware
     const creatorId = req.user.id;
 
+    console.log('Received team creation request:', req.body);
+    console.log('Creator ID:', creatorId);
+
     // Validate request body
     const { error, value } = teamCreationSchema.validate(req.body);
     
     if (error) {
+      console.error('Validation error:', error.details);
       return res.status(400).json({
         success: false,
         message: 'Validation error',
@@ -134,14 +138,17 @@ if (value.tags && value.tags.length > 0) {
       client.release();
     }
   } catch (error) {
-    console.error('Team creation error:', error);
+    console.error('Full team creation error:', error);
     res.status(500).json({
       success: false,
       message: 'Error creating team',
-      error: error.message
+      errorDetails: error.message,
+      fullError: error
     });
   }
 };
+
+I
 
 const getAllTeams = async (req, res) => {
   try {
@@ -248,8 +255,8 @@ const getUserTeams = async (req, res) => {
     
     const teamsResult = await db.pool.query(`
       SELECT t.*, 
-             COUNT(tm.id) AS current_members_count,
-             tm.role AS user_team_role
+      COUNT(tm.id) AS current_members_count,
+      tm.role AS user_team_role
       FROM teams t
       JOIN team_members tm ON t.id = tm.team_id
       WHERE tm.user_id = $1 AND t.archived_at IS NULL
@@ -271,10 +278,7 @@ const getUserTeams = async (req, res) => {
   }
 };
 
-module.exports = {
-  // ... existing exports ...
-  getUserTeams
-};
+
 
 const updateTeam = async (req, res) => {
   try {
@@ -728,3 +732,4 @@ module.exports = {
   addTeamMember,
   removeTeamMember
 };
+
