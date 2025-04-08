@@ -4,55 +4,63 @@ const Joi = require('joi');
 // Validation schema for team creation
 const teamCreationSchema = Joi.object({
   name: Joi.string()
+    .trim()
     .min(3)
     .max(100)
     .required()
     .messages({
+      'string.empty': 'Team name cannot be empty',
       'string.min': 'Team name must be at least 3 characters long',
       'string.max': 'Team name cannot exceed 100 characters',
       'any.required': 'Team name is required'
     }),
   
-  description: Joi.string()
+    description: Joi.string()
+    .trim()
     .min(10)
     .max(500)
     .required()
     .messages({
+      'string.empty': 'Team description cannot be empty',
       'string.min': 'Description must be at least 10 characters long',
       'string.max': 'Description cannot exceed 500 characters',
       'any.required': 'Team description is required'
     }),
   
-  is_public: Joi.boolean().default(true),
+    is_public: Joi.boolean().default(true),
   
-  max_members: Joi.number()
-    .min(2)
-    .max(20)
-    .required()
-    .messages({
-      'number.min': 'Team must have at least 2 members',
-      'number.max': 'Team cannot have more than 20 members',
-      'any.required': 'Maximum members is required'
-    }),
+    max_members: Joi.number()
+      .integer()
+      .min(2)
+      .max(20)
+      .required()
+      .messages({
+        'number.base': 'Maximum members must be a number',
+        'number.min': 'Team must have at least 2 members',
+        'number.max': 'Team cannot have more than 20 members',
+        'any.required': 'Maximum members is required'
+      }),
   
-  postal_code: Joi.string()
-    .required()
-    .messages({
-      'any.required': 'Postal code is required'
-    }),
+      postal_code: Joi.string()
+      .trim()
+      .required()
+      .messages({
+        'string.empty': 'Postal code cannot be empty',
+        'any.required': 'Postal code is required'
+      }),
   
-  tags: Joi.array().items(Joi.object({
-    tag_id: Joi.number().required(),
-    experience_level: Joi.string()
-      .valid('beginner', 'intermediate', 'advanced', 'expert')
-      .default('beginner'),
-    interest_level: Joi.string()
-      .valid('low', 'medium', 'high', 'very-high')
-      .default('medium')
-  })).min(1).messages({
-    'array.min': 'At least one tag is required'
-  })
-});
+      tags: Joi.array().items(Joi.object({
+        tag_id: Joi.number().integer().required(),
+        experience_level: Joi.string()
+          .valid('beginner', 'intermediate', 'advanced', 'expert')
+          .default('beginner'),
+        interest_level: Joi.string()
+          .valid('low', 'medium', 'high', 'very-high')
+          .default('medium')
+      })).min(1).messages({
+        'array.min': 'At least one tag is required'
+      })
+    });
 
 const createTeam = async (req, res) => {
   try {
