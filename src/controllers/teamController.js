@@ -589,6 +589,18 @@ const addTeamMember = async (req, res) => {
         message: 'User is already a member of this team'
       });
     }
+
+    if (value.tags && value.tags.length > 0) {
+      console.log('Processing tags:', value.tags);
+      const tagInserts = value.tags.map(tag => {
+        console.log(`Attempting to insert tag: ${JSON.stringify(tag)}`);
+        return client.query(`
+          INSERT INTO team_tags (team_id, tag_id)
+          VALUES ($1, $2)
+        `, [team.id, tag.tag_id])
+      });
+      await Promise.all(tagInserts);
+    }
     
     // Add member
     const client = await db.pool.connect();
