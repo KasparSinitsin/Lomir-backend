@@ -242,6 +242,40 @@ const getTeamById = async (req, res) => {
   }
 };
 
+const getUserTeams = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    const teamsResult = await db.pool.query(`
+      SELECT t.*, 
+             COUNT(tm.id) AS current_members_count,
+             tm.role AS user_team_role
+      FROM teams t
+      JOIN team_members tm ON t.id = tm.team_id
+      WHERE tm.user_id = $1 AND t.archived_at IS NULL
+      GROUP BY t.id, tm.role
+      ORDER BY t.created_at DESC
+    `, [userId]);
+    
+    res.status(200).json({
+      success: true,
+      data: teamsResult.rows
+    });
+  } catch (error) {
+    console.error('Error fetching user teams:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching user teams',
+      error: error.message
+    });
+  }
+};
+
+module.exports = {
+  // ... existing exports ...
+  getUserTeams
+};
+
 const updateTeam = async (req, res) => {
   try {
     const teamId = req.params.id;
