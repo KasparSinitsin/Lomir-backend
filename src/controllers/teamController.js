@@ -112,34 +112,35 @@ const teamCreationSchema = Joi.object({
         `, [team.id, creatorId, 'creator']);
         console.log('--> Creator added as member');
     
-        if (value.tags && value.tags.length > 0) {
-          const tagIdsToCheck = value.tags.map(tag => tag.tag_id);
-          console.log('--> Checking tag IDs:', tagIdsToCheck);
-          const tagsExistResult = await client.query(`
-            SELECT id FROM tags WHERE id IN (${tagIdsToCheck.join(',')})
-          `);
-          const existingTagIds = tagsExistResult.rows.map(row => row.id);
+        // Commenting out the tags logic for now
+        // if (value.tags && value.tags.length > 0) {
+        //   const tagIdsToCheck = value.tags.map(tag => tag.tag_id);
+        //   console.log('--> Checking tag IDs:', tagIdsToCheck);
+        //   const tagsExistResult = await client.query(`
+        //     SELECT id FROM tags WHERE id IN (${tagIdsToCheck.join(',')})
+        //   `);
+        //   const existingTagIds = tagsExistResult.rows.map(row => row.id);
     
-          if (existingTagIds.length !== tagIdsToCheck.length) {
-            console.error('--> Invalid tag IDs:', tagIdsToCheck.filter(tagId => !existingTagIds.includes(tagId)));
-            await client.query('ROLLBACK');
-            return res.status(400).json({
-              success: false,
-              message: 'Validation error',
-              errors: ['One or more of the provided tag IDs do not exist.']
-            });
-          }
-          console.log('--> All tag IDs exist');
+        //   if (existingTagIds.length !== tagIdsToCheck.length) {
+        //     console.error('--> Invalid tag IDs:', tagIdsToCheck.filter(tagId => !existingTagIds.includes(tagId)));
+        //     await client.query('ROLLBACK');
+        //     return res.status(400).json({
+        //       success: false,
+        //       message: 'Validation error',
+        //       errors: ['One or more of the provided tag IDs do not exist.']
+        //     });
+        //   }
+        //   console.log('--> All tag IDs exist');
     
-          const tagInserts = value.tags.map(tag => 
-            client.query(`
-              INSERT INTO team_tags (team_id, tag_id)
-              VALUES ($1, $2)
-            `, [team.id, tag.tag_id])
-          );
-          await Promise.all(tagInserts);
-          console.log('--> Tags inserted');
-        }
+        //   const tagInserts = value.tags.map(tag => 
+        //     client.query(`
+        //       INSERT INTO team_tags (team_id, tag_id)
+        //       VALUES ($1, $2)
+        //     `, [team.id, tag.tag_id])
+        //   );
+        //   await Promise.all(tagInserts);
+        //   console.log('--> Tags inserted');
+        // }
     
         await client.query('COMMIT');
         console.log('--> Transaction committed');
@@ -601,17 +602,17 @@ const addTeamMember = async (req, res) => {
       });
     }
 
-    if (value.tags && value.tags.length > 0) {
-      console.log('Processing tags:', value.tags);
-      const tagInserts = value.tags.map(tag => {
-        console.log(`Attempting to insert tag: ${JSON.stringify(tag)}`);
-        return client.query(`
-          INSERT INTO team_tags (team_id, tag_id)
-          VALUES ($1, $2)
-        `, [team.id, tag.tag_id])
-      });
-      await Promise.all(tagInserts);
-    }
+    // if (value.tags && value.tags.length > 0) {
+    //   console.log('Processing tags:', value.tags);
+    //   const tagInserts = value.tags.map(tag => {
+    //     console.log(`Attempting to insert tag: ${JSON.stringify(tag)}`);
+    //     return client.query(`
+    //       INSERT INTO team_tags (team_id, tag_id)
+    //       VALUES ($1, $2)
+    //     `, [team.id, tag.tag_id])
+    //   });
+    //   await Promise.all(tagInserts);
+    // }
     
     // Add member
     const client = await db.pool.connect();
@@ -761,4 +762,3 @@ module.exports = {
   addTeamMember,
   removeTeamMember
 };
-
