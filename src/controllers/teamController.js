@@ -4,65 +4,77 @@ const Joi = require('joi');
 // Validation schema for team creation
 const teamCreationSchema = Joi.object({
   name: Joi.string()
+    .trim()
     .min(3)
     .max(100)
     .required()
     .messages({
+      'string.empty': 'Team name cannot be empty',
       'string.min': 'Team name must be at least 3 characters long',
       'string.max': 'Team name cannot exceed 100 characters',
       'any.required': 'Team name is required'
     }),
   
-  description: Joi.string()
+    description: Joi.string()
+    .trim()
     .min(10)
     .max(500)
     .required()
     .messages({
+      'string.empty': 'Team description cannot be empty',
       'string.min': 'Description must be at least 10 characters long',
       'string.max': 'Description cannot exceed 500 characters',
       'any.required': 'Team description is required'
     }),
   
-  is_public: Joi.boolean().default(true),
+    is_public: Joi.boolean().default(true),
   
-  max_members: Joi.number()
-    .min(2)
-    .max(20)
-    .required()
-    .messages({
-      'number.min': 'Team must have at least 2 members',
-      'number.max': 'Team cannot have more than 20 members',
-      'any.required': 'Maximum members is required'
-    }),
+    max_members: Joi.number()
+      .integer()
+      .min(2)
+      .max(20)
+      .required()
+      .messages({
+        'number.base': 'Maximum members must be a number',
+        'number.min': 'Team must have at least 2 members',
+        'number.max': 'Team cannot have more than 20 members',
+        'any.required': 'Maximum members is required'
+      }),
   
-  postal_code: Joi.string()
-    .required()
-    .messages({
-      'any.required': 'Postal code is required'
-    }),
+      postal_code: Joi.string()
+      .trim()
+      .required()
+      .messages({
+        'string.empty': 'Postal code cannot be empty',
+        'any.required': 'Postal code is required'
+      }),
   
-  tags: Joi.array().items(Joi.object({
-    tag_id: Joi.number().required(),
-    experience_level: Joi.string()
-      .valid('beginner', 'intermediate', 'advanced', 'expert')
-      .default('beginner'),
-    interest_level: Joi.string()
-      .valid('low', 'medium', 'high', 'very-high')
-      .default('medium')
-  })).min(1).messages({
-    'array.min': 'At least one tag is required'
-  })
-});
+      tags: Joi.array().items(Joi.object({
+        tag_id: Joi.number().integer().required(),
+        experience_level: Joi.string()
+          .valid('beginner', 'intermediate', 'advanced', 'expert')
+          .default('beginner'),
+        interest_level: Joi.string()
+          .valid('low', 'medium', 'high', 'very-high')
+          .default('medium')
+      })).min(1).messages({
+        'array.min': 'At least one tag is required'
+      })
+    });
 
 const createTeam = async (req, res) => {
   try {
     // Get the currently logged-in user's ID from the authentication middleware
     const creatorId = req.user.id;
 
+    console.log('Received team creation request:', req.body);
+    console.log('Creator ID:', creatorId);
+
     // Validate request body
     const { error, value } = teamCreationSchema.validate(req.body);
     
     if (error) {
+      console.error('Validation error:', error.details);
       return res.status(400).json({
         success: false,
         message: 'Validation error',
@@ -134,11 +146,12 @@ if (value.tags && value.tags.length > 0) {
       client.release();
     }
   } catch (error) {
-    console.error('Team creation error:', error);
+    console.error('Full team creation error:', error);
     res.status(500).json({
       success: false,
       message: 'Error creating team',
-      error: error.message
+      errorDetails: error.message,
+      fullError: error
     });
   }
 };
@@ -241,6 +254,37 @@ const getTeamById = async (req, res) => {
     });
   }
 };
+
+const getUserTeams = async (req, res) => {
+  try {
+    // Use the authenticated user's ID from the token
+    const userId = req.user.id;
+    
+    const teamsResult = await db.pool.query(`
+      SELECT t.*, 
+      COUNT(tm.id) AS members_count
+      FROM teams t
+      JOIN team_members tm ON t.id = tm.team_id
+      WHERE tm.user_id = $1 AND t.archived_at IS NULL
+      GROUP BY t.id
+      ORDER BY t.created_at DESC
+    `, [userId]);
+    
+    res.status(200).json({
+      success: true,
+      data: teamsResult.rows
+    });
+  } catch (error) {
+    console.error('Error fetching user teams:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching user teams',
+      error: error.message
+    });
+  }
+};
+
+
 
 const updateTeam = async (req, res) => {
   try {
@@ -688,8 +732,10 @@ module.exports = {
   createTeam,
   getAllTeams,
   getTeamById,
+  getUserTeams,
   updateTeam,
   deleteTeam,
   addTeamMember,
   removeTeamMember
 };
+

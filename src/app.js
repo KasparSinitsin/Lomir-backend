@@ -22,7 +22,10 @@ try {
   const routes = require('./routes');
   app.use('/api', routes);
 } catch (error) {
-  console.log('No general routes module found or error importing:', error.message);
+  console.error('Routes import error:', error);
+  console.error('Error name:', error.name);
+  console.error('Error message:', error.message);
+  console.error('Error stack:', error.stack);
 }
 
 // Home route
