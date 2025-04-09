@@ -15,14 +15,10 @@ const registerSchema = Joi.object({
   tags: Joi.array().items(
     Joi.object({
       tag_id: Joi.number().integer().required(),
-      experience_level: Joi.string()
-        .valid('beginner', 'intermediate', 'advanced', 'expert')
-        .default('beginner'),
-      interest_level: Joi.string()
-        .valid('low', 'medium', 'high', 'very-high')
-        .default('medium')
+      experience_level: Joi.string().valid('beginner', 'intermediate', 'advanced', 'expert').default('beginner'),
+      interest_level: Joi.string().valid('low', 'medium', 'high', 'very-high').default('medium')
     })
-  ).optional()
+  ).optional() //  Make it optional
 });
 
 // Validation schema for login
@@ -34,61 +30,64 @@ const loginSchema = Joi.object({
 const authController = {
   async register(req, res) {
     try {
-      // Log incoming data for debugging
-      console.log('Received registration data:', req.body);
+      console.log('Received registration data (req.body):', req.body); // Log raw req.body
 
-      // Parse tags if sent as string
+      // Parse tags if sent as string (more robust)
       let tags = req.body.tags;
       if (typeof tags === 'string') {
         try {
           tags = JSON.parse(tags);
         } catch (parseError) {
-          console.error('Error parsing tags:', parseError);
-          tags = [];
+          console.error('Error parsing tags (JSON.parse):', parseError);
+          tags = []; // Default to empty array on parsing error
         }
       }
 
-      // Prepare user data with optional tags
+      // Prepare user data (cleaner)
       const userData = {
         ...req.body,
-        tags: tags,
+        tags: tags || [], // Ensure tags is always an array
         avatar_url: req.file ? req.file.path : null
       };
 
       // Validate the entire payload
       const { error, value } = registerSchema.validate(userData);
-      
+
       if (error) {
+        console.warn('Validation error details:', error.details); // Log validation error details
         return res.status(400).json({
           success: false,
           message: 'Validation error',
           errors: error.details.map(detail => detail.message)
         });
       }
-      
-      // Check if user already exists
-      const existingUserByEmail = await userModel.findByEmail(value.email);
+
+      // Check if user already exists (more efficient)
+      const [existingUserByEmail, existingUserByUsername] = await Promise.all([
+        userModel.findByEmail(value.email),
+        userModel.findByUsername(value.username)
+      ]);
+
       if (existingUserByEmail) {
         return res.status(400).json({
           success: false,
           message: 'User with this email already exists'
         });
       }
-      
-      const existingUserByUsername = await userModel.findByUsername(value.username);
+
       if (existingUserByUsername) {
         return res.status(400).json({
           success: false,
           message: 'User with this username already exists'
         });
       }
-      
-      // Create user (modified userModel will handle tag insertion)
+
+      // Create user
       const user = await userModel.createUser(value);
-      
+
       // Generate token
       const token = generateToken(user);
-      
+
       res.status(201).json({
         success: true,
         message: 'User registered successfully',
@@ -106,7 +105,7 @@ const authController = {
         }
       });
     } catch (error) {
-      console.error('Registration error:', error);
+      console.error('Registration error (catch):', error); // Log full error
       res.status(500).json({
         success: false,
         message: 'Error registering user',
@@ -114,7 +113,7 @@ const authController = {
       });
     }
   },
-  
+
   /**
    * Login a user
    */
@@ -122,7 +121,7 @@ const authController = {
     try {
       // Validate request body
       const { error, value } = loginSchema.validate(req.body);
-      
+
       if (error) {
         return res.status(400).json({
           success: false,
@@ -130,7 +129,7 @@ const authController = {
           errors: error.details.map(detail => detail.message)
         });
       }
-      
+
       // Check if user exists
       const user = await userModel.findByEmail(value.email);
       if (!user) {
@@ -139,7 +138,7 @@ const authController = {
           message: 'Invalid email or password'
         });
       }
-      
+
       // Check if password is correct
       const isPasswordValid = await userModel.comparePassword(value.password, user.password_hash);
       if (!isPasswordValid) {
@@ -148,10 +147,10 @@ const authController = {
           message: 'Invalid email or password'
         });
       }
-      
+
       // Generate token
       const token = generateToken(user);
-      
+
       res.status(200).json({
         success: true,
         message: 'Login successful',
@@ -167,6 +166,7 @@ const authController = {
         }
       });
     } catch (error) {
+      console.error('Login error (catch):', error); // Log full error
       res.status(500).json({
         success: false,
         message: 'Error logging in',
@@ -174,14 +174,14 @@ const authController = {
       });
     }
   },
-  
+
   /**
    * Get the current user
    */
   async getCurrentUser(req, res) {
     try {
       const userId = req.user.id;
-      
+
       const user = await userModel.findById(userId);
       if (!user) {
         return res.status(404).json({
@@ -189,7 +189,7 @@ const authController = {
           message: 'User not found'
         });
       }
-      
+
       res.status(200).json({
         success: true,
         data: {
@@ -207,6 +207,7 @@ const authController = {
         }
       });
     } catch (error) {
+      console.error('GetCurrentUser error (catch):', error); // Log full error
       res.status(500).json({
         success: false,
         message: 'Error getting current user',
