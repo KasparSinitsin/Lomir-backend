@@ -9,15 +9,23 @@ dotenv.config();
 const app = express();
 
 // Middleware
-app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// CORS Configuration (Modified)
+const corsOptions = {
+  origin: 'http://localhost:5173', // Replace with your frontend's URL!
+  credentials: true,
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+  allowedHeaders: 'Content-Type,Authorization',
+};
+
+app.use(cors(corsOptions));
 
 // Routes
 const tagRoutes = require('./routes/api/tags');
 app.use('/api/tags', tagRoutes);
 
-// If you have other API routes to include
 try {
   const routes = require('./routes');
   app.use('/api', routes);
