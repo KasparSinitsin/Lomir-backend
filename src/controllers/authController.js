@@ -2,7 +2,7 @@ const Joi = require('joi');
 const userModel = require('../models/userModel');
 const { generateToken } = require('../utils/jwtUtils');
 
-// Validation schema for registration
+// Updated Validation schema for registration to include tags
 const registerSchema = Joi.object({
   username: Joi.string().alphanum().min(3).max(30).required(),
   email: Joi.string().email().required(),
@@ -10,7 +10,19 @@ const registerSchema = Joi.object({
   first_name: Joi.string().allow('', null),
   last_name: Joi.string().allow('', null),
   bio: Joi.string().allow('', null),
-  postal_code: Joi.string().allow('', null)
+  postal_code: Joi.string().allow('', null),
+  // Add new tag validation
+  tags: Joi.array().items(
+    Joi.object({
+      tag_id: Joi.number().integer().required(),
+      experience_level: Joi.string()
+        .valid('beginner', 'intermediate', 'advanced', 'expert')
+        .default('beginner'),
+      interest_level: Joi.string()
+        .valid('low', 'medium', 'high', 'very-high')
+        .default('medium')
+    })
+  ).optional()
 });
 
 // Validation schema for login
@@ -20,13 +32,31 @@ const loginSchema = Joi.object({
 });
 
 const authController = {
-  /**
-   * Register a new user
-   */
   async register(req, res) {
     try {
-      // Validate request body
-      const { error, value } = registerSchema.validate(req.body);
+      // Log incoming data for debugging
+      console.log('Received registration data:', req.body);
+
+      // Parse tags if sent as string
+      let tags = req.body.tags;
+      if (typeof tags === 'string') {
+        try {
+          tags = JSON.parse(tags);
+        } catch (parseError) {
+          console.error('Error parsing tags:', parseError);
+          tags = [];
+        }
+      }
+
+      // Prepare user data with optional tags
+      const userData = {
+        ...req.body,
+        tags: tags,
+        avatar_url: req.file ? req.file.path : null
+      };
+
+      // Validate the entire payload
+      const { error, value } = registerSchema.validate(userData);
       
       if (error) {
         return res.status(400).json({
@@ -53,17 +83,8 @@ const authController = {
         });
       }
       
-      // Handle avatar upload
-      let avatarUrl = null;
-      if (req.file) {
-        avatarUrl = req.file.path; // Cloudinary provides the full URL in path
-      }
-      
-      // Create user
-      const user = await userModel.createUser({
-        ...value,
-        avatar_url: avatarUrl
-      });
+      // Create user (modified userModel will handle tag insertion)
+      const user = await userModel.createUser(value);
       
       // Generate token
       const token = generateToken(user);
@@ -79,7 +100,8 @@ const authController = {
             email: user.email,
             firstName: user.first_name,
             lastName: user.last_name,
-            avatarUrl: user.avatar_url
+            avatarUrl: user.avatar_url,
+            tags: user.tags || []
           }
         }
       });
