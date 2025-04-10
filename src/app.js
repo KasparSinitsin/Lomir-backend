@@ -54,7 +54,7 @@ const tagRoutes = require('./routes/api/tags');
 app.use('/api/tags', tagRoutes);
 
 try {
-  const routes = require('./routes');
+  const routes = require('./routes/index');
   app.use('/api', routes);
 } catch (error) {
   console.error('Routes import error:', error);
