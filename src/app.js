@@ -1,8 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const multer = require('multer'); // For parsing multipart/form-data
-const rawBody = require('raw-body'); // To get the raw request body (if needed)
 
 dotenv.config();
 
@@ -11,12 +9,12 @@ const app = express();
 // *** Middleware (Order is important!) ***
 
 // 1. Body Parsers (for JSON and URL-encoded data)
-app.use(express.json()); // Parses application/json
-app.use(express.urlencoded({ extended: true })); // Parses application/x-www-form-urlencoded
+app.use(express.json()); 
+app.use(express.urlencoded({ extended: true })); 
 
 // 2. multer (for multipart/form-data)
-const upload = multer({ dest: 'uploads/' }); // Configure multer (temporary upload dir)
-app.use(upload.none()); // Parse text fields only (no files) - OR - app.use(multer().any()); // Parse all fields (text and files)
+// const upload = multer({ dest: 'uploads/' }); // Configure multer (temporary upload dir)
+// app.use(upload.none()); // Parse text fields only (no files) - OR - app.use(multer().any()); // Parse all fields (text and files)
 
 // 3. (Optional) Raw Body Parsing (for debugging)
 // app.use((req, res, next) => {
@@ -41,12 +39,12 @@ app.use(upload.none()); // Parse text fields only (no files) - OR - app.use(mult
 //   }
 // });
 
-// 4. CORS Configuration (After body parsers, before routes)
+// CORS Configuration
 const frontendOrigin = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
 const corsOptions = {
   origin: frontendOrigin,
   credentials: true,
-  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS', // Include OPTIONS
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
   allowedHeaders: 'Content-Type,Authorization',
 };
 app.use(cors(corsOptions));
