@@ -80,13 +80,13 @@ const searchController = {
     try {
       res.status(200).json({
         success: true,
-        message: 'General search placeholder',
+        message: 'Protected general search',
         data: { results: [] }
       });
     } catch (error) {
       res.status(500).json({
         success: false,
-        message: 'Error during general search',
+        message: 'Error during protected search',
         error: error.message
       });
     }
