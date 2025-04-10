@@ -1,52 +1,50 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const multer = require('multer'); // For parsing multipart/form-data
-const rawBody = require('raw-body'); // To get the raw request body (if needed)
 
 dotenv.config();
 
 const app = express();
 
-// *** Middleware (Order is important!) ***
+// *** Middleware***
 
 // 1. Body Parsers (for JSON and URL-encoded data)
-app.use(express.json()); // Parses application/json
-app.use(express.urlencoded({ extended: true })); // Parses application/x-www-form-urlencoded
+app.use(express.json()); 
+app.use(express.urlencoded({ extended: true })); 
 
 // 2. multer (for multipart/form-data)
-const upload = multer({ dest: 'uploads/' }); // Configure multer (temporary upload dir)
-app.use(upload.none()); // Parse text fields only (no files) - OR - app.use(multer().any()); // Parse all fields (text and files)
+// const upload = multer({ dest: 'uploads/' }); // Configure multer (temporary upload dir)
+// app.use(upload.none()); // Parse text fields only (no files) - OR - app.use(multer().any()); // Parse all fields (text and files)
 
 // 3. (Optional) Raw Body Parsing (for debugging)
-app.use((req, res, next) => {
-  if (req.headers['content-type'] && req.headers['content-type'].startsWith('multipart/form-data')) {
-    // Only parse raw body for multipart/form-data
-    rawBody(req, {
-      length: req.headers['content-length'],
-      limit: '1mb', // Adjust limit as needed
-      encoding: req.charset || 'utf-8'
-    }, (err, string) => {
-      if (err) {
-        console.error('Error getting raw body:', err);
-        req.rawBody = ''; // Or handle the error appropriately
-      } else {
-        req.rawBody = string;
-      }
-      next();
-    });
-  } else {
-    req.rawBody = ''; // No raw body for other content types
-    next();
-  }
-});
+// app.use((req, res, next) => {
+//   if (req.headers['content-type'] && req.headers['content-type'].startsWith('multipart/form-data')) {
+//     // Only parse raw body for multipart/form-data
+//     rawBody(req, {
+//       length: req.headers['content-length'],
+//       limit: '1mb', // Adjust limit as needed
+//       encoding: req.charset || 'utf-8'
+//     }, (err, string) => {
+//       if (err) {
+//         console.error('Error getting raw body:', err);
+//         req.rawBody = ''; // Or handle the error appropriately
+//       } else {
+//         req.rawBody = string;
+//       }
+//       next();
+//     });
+//   } else {
+//     req.rawBody = ''; // No raw body for other content types
+//     next();
+//   }
+// });
 
-// 4. CORS Configuration (After body parsers, before routes)
+// CORS Configuration
 const frontendOrigin = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
 const corsOptions = {
   origin: frontendOrigin,
   credentials: true,
-  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS', // Include OPTIONS
+  methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
   allowedHeaders: 'Content-Type,Authorization',
 };
 app.use(cors(corsOptions));

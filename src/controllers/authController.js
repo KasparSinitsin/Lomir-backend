@@ -11,15 +11,105 @@ const registerSchema = Joi.object({
   last_name: Joi.string().allow('', null),
   bio: Joi.string().allow('', null),
   postal_code: Joi.string().allow('', null),
-  // Add new tag validation
+  avatar_url: Joi.string().uri().allow(null),
   tags: Joi.array().items(
     Joi.object({
       tag_id: Joi.number().integer().required(),
-      experience_level: Joi.string().valid('beginner', 'intermediate', 'advanced', 'expert').default('beginner'),
-      interest_level: Joi.string().valid('low', 'medium', 'high', 'very-high').default('medium')
+      experience_level: Joi.string()
+        .valid('beginner', 'intermediate', 'advanced', 'expert')
+        .default('beginner'),
+      interest_level: Joi.string()
+        .valid('low', 'medium', 'high', 'very-high')
+        .default('medium')
     })
-  ).optional() //  Make it optional
+  ).optional()
 });
+
+const register = async (req, res) => {
+  try {
+    console.log('Received registration data (req.body):', req.body); // Log raw req.body
+
+    // Parse tags if sent as string (more robust)
+    let tags = req.body.tags;
+    if (typeof tags === 'string') {
+      try {
+        tags = JSON.parse(tags);
+      } catch (parseError) {
+        console.error('Error parsing tags (JSON.parse):', parseError);
+        tags = []; // Default to empty array on parsing error
+      }
+    }
+
+    // Prepare user data (cleaner)
+    const userData = {
+      ...req.body,
+      tags: tags || [], // Ensure tags is always an array
+      avatar_url: req.file ? req.file.path : null
+    };
+
+    // Validate the entire payload
+    const { error, value } = registerSchema.validate(userData);
+
+    if (error) {
+      console.warn('Validation error details:', error.details); // Log validation error details
+      return res.status(400).json({
+        success: false,
+        message: 'Validation error',
+        errors: error.details.map(detail => detail.message)
+      });
+    }
+
+    // Check if user already exists (more efficient)
+    const [existingUserByEmail, existingUserByUsername] = await Promise.all([
+      userModel.findByEmail(value.email),
+      userModel.findByUsername(value.username)
+    ]);
+
+    if (existingUserByEmail) {
+      return res.status(400).json({
+        success: false,
+        message: 'User with this email already exists'
+      });
+    }
+
+    if (existingUserByUsername) {
+      return res.status(400).json({
+        success: false,
+        message: 'User with this username already exists'
+      });
+    }
+
+    // Create user
+    const user = await userModel.createUser(value);
+
+    // Generate token
+    const token = generateToken(user);
+
+    res.status(201).json({
+      success: true,
+      message: 'User registered successfully',
+      data: {
+        token,
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          firstName: user.first_name,
+          lastName: user.last_name,
+          avatarUrl: user.avatar_url,
+          tags: user.tags || []
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Full registration error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error registering user',
+      error: error.message
+    });
+  }
+};
 
 // Validation schema for login
 const loginSchema = Joi.object({
@@ -28,95 +118,7 @@ const loginSchema = Joi.object({
 });
 
 const authController = {
-  async register(req, res) {
-    try {
-      console.log('Received registration data (req.body):', req.body); // Log raw req.body
-
-      // Parse tags if sent as string (more robust)
-      let tags = req.body.tags;
-      if (typeof tags === 'string') {
-        try {
-          tags = JSON.parse(tags);
-        } catch (parseError) {
-          console.error('Error parsing tags (JSON.parse):', parseError);
-          tags = []; // Default to empty array on parsing error
-        }
-      }
-
-      // Prepare user data (cleaner)
-      const userData = {
-        ...req.body,
-        tags: tags || [], // Ensure tags is always an array
-        avatar_url: req.file ? req.file.path : null
-      };
-
-      // Validate the entire payload
-      const { error, value } = registerSchema.validate(userData);
-
-      if (error) {
-        console.warn('Validation error details:', error.details); // Log validation error details
-        return res.status(400).json({
-          success: false,
-          message: 'Validation error',
-          errors: error.details.map(detail => detail.message)
-        });
-      }
-
-      // Check if user already exists (more efficient)
-      const [existingUserByEmail, existingUserByUsername] = await Promise.all([
-        userModel.findByEmail(value.email),
-        userModel.findByUsername(value.username)
-      ]);
-
-      if (existingUserByEmail) {
-        return res.status(400).json({
-          success: false,
-          message: 'User with this email already exists'
-        });
-      }
-
-      if (existingUserByUsername) {
-        return res.status(400).json({
-          success: false,
-          message: 'User with this username already exists'
-        });
-      }
-
-      // Create user
-      const user = await userModel.createUser(value);
-
-      // Generate token
-      const token = generateToken(user);
-
-      res.status(201).json({
-        success: true,
-        message: 'User registered successfully',
-        data: {
-          token,
-          user: {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            firstName: user.first_name,
-            lastName: user.last_name,
-            avatarUrl: user.avatar_url,
-            tags: user.tags || []
-          }
-        }
-      });
-    } catch (error) {
-      console.error('Registration error (catch):', error); // Log full error
-      res.status(500).json({
-        success: false,
-        message: 'Error registering user',
-        error: error.message
-      });
-    }
-  },
-
-  /**
-   * Login a user
-   */
+  register, // Use the extracted register function
   async login(req, res) {
     try {
       // Validate request body
