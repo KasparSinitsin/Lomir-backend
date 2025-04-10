@@ -76,8 +76,23 @@ const searchController = {
     }
   },
 
-  // We are replacing the original 'search' function with 'globalSearch'
-  // The other functions 'searchByTag' and 'searchByLocation' are kept as they were
+  search: async (req, res) => {
+    try {
+      res.status(200).json({
+        success: true,
+        message: 'General search placeholder',
+        data: { results: [] }
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Error during general search',
+        error: error.message
+      });
+    }
+  },
+
+
   searchByTag: async (req, res) => {
     try {
       const tagId = req.params.tagId;
