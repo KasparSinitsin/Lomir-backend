@@ -1,127 +1,111 @@
 const db = require('../config/database');
-// const geocodingService = require('../services/geocodingService'); // Uncomment when implementing geocoding
 
 const searchController = {
-  // ... other existing methods (globalSearch, etc.) ...
-
-  async searchByLocation(req, res) {
+  async globalSearch(req, res) {
     try {
-      const { postalCode, radius = 50 } = req.query;
+      const { query, authenticated } = req.query;
+      const isAuthenticated = authenticated === 'true'; // Ensure boolean interpretation
 
-      if (!postalCode) {
+      // Basic security check: prevent searching with too short queries
+      if (!query || query.trim().length < 2) {
         return res.status(400).json({
           success: false,
-          message: 'Postal code is required'
+          message: 'Search query must be at least 2 characters long'
         });
       }
 
-      // TODO: Implement Geocoding Service
-      // Potential future implementation:
-      /*
-      try {
-        // Fetch nearby postal codes using a geocoding service
-        const nearbyCodes = await geocodingService.findNearbyPostalCodes(
-          postalCode, 
-          radius
-        );
+      // Prepare the search query with wildcard
+      const searchTerm = `%${query.trim()}%`;
 
-        // Use nearby postal codes for searching
-        const teamQuery = `
-          SELECT 
-            id, 
-            name, 
-            description, 
-            is_public, 
-            max_members, 
-            postal_code,
-            (SELECT COUNT(*) FROM team_members WHERE team_id = teams.id) as current_members_count
-          FROM teams
-          WHERE 
-            postal_code = ANY($1)
-            AND archived_at IS NULL
-          LIMIT 12
-        `;
-
-        const userQuery = `
-          SELECT 
-            id, 
-            username, 
-            first_name, 
-            last_name, 
-            bio
-          FROM users
-          WHERE 
-            postal_code = ANY($1)
-          LIMIT 12
-        `;
-
-        const [teamResults, userResults] = await Promise.all([
-          db.pool.query(teamQuery, [nearbyCodes]),
-          db.pool.query(userQuery, [nearbyCodes])
-        ]);
-
-        return res.status(200).json({
-          success: true,
-          data: {
-            teams: teamResults.rows,
-            users: userResults.rows,
-            radius: radius
-          }
-        });
-      } catch (geocodingError) {
-        console.error('Geocoding error:', geocodingError);
-        // Fallback to exact postal code match if geocoding fails
-      }
-      */
-
-      // Current simple implementation (exact postal code match)
+      // Base team search query
       const teamQuery = `
-        SELECT 
-          id, 
-          name, 
-          description, 
-          is_public, 
-          max_members, 
+        SELECT
+          id,
+          name,
+          description,
+          is_public,
+          max_members,
           postal_code,
           (SELECT COUNT(*) FROM team_members WHERE team_id = teams.id) as current_members_count
         FROM teams
-        WHERE 
-          postal_code = $1
+        WHERE
+          (name ILIKE $1 OR description ILIKE $1)
           AND archived_at IS NULL
+          ${!isAuthenticated ? 'AND is_public = TRUE' : ''}
         LIMIT 12
       `;
 
+      // Base user search query (assuming an is_public field exists in your users table)
       const userQuery = `
-        SELECT 
-          id, 
-          username, 
-          first_name, 
-          last_name, 
+        SELECT
+          id,
+          username,
+          first_name,
+          last_name,
           bio
         FROM users
-        WHERE 
-          postal_code = $1
+        WHERE
+          (username ILIKE $1
+           OR first_name ILIKE $1
+           OR last_name ILIKE $1
+           OR bio ILIKE $1)
+          ${!isAuthenticated ? 'AND is_public = TRUE' : ''}
         LIMIT 12
       `;
 
+      // Execute both searches
       const [teamResults, userResults] = await Promise.all([
-        db.pool.query(teamQuery, [postalCode]),
-        db.pool.query(userQuery, [postalCode])
+        db.pool.query(teamQuery, [searchTerm]),
+        db.pool.query(userQuery, [searchTerm])
       ]);
 
       res.status(200).json({
         success: true,
         data: {
           teams: teamResults.rows,
-          users: userResults.rows,
-          radius: radius
+          users: userResults.rows
         }
       });
     } catch (error) {
-      console.error('Location search error:', error);
+      console.error('Search error:', error);
       res.status(500).json({
         success: false,
-        message: 'Error performing location search',
+        message: 'Error performing search',
+        error: error.message
+      });
+    }
+  },
+
+  // We are replacing the original 'search' function with 'globalSearch'
+  // The other functions 'searchByTag' and 'searchByLocation' are kept as they were
+  searchByTag: async (req, res) => {
+    try {
+      const tagId = req.params.tagId;
+      res.status(200).json({
+        success: true,
+        message: `Search by tag ${tagId} placeholder`,
+        data: { results: [] }
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Error during tag search',
+        error: error.message
+      });
+    }
+  },
+
+  searchByLocation: async (req, res) => {
+    try {
+      res.status(200).json({
+        success: true,
+        message: 'Search by location placeholder',
+        data: { results: [] }
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Error during location search',
         error: error.message
       });
     }

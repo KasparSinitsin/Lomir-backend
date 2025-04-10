@@ -4,13 +4,10 @@ const { authenticateToken } = require('../middlewares/auth');
 
 const router = express.Router();
 
-// Global search - no authentication required
-router.get('/', searchController.globalSearch);
+router.get('/', searchController.globalSearch); //Public
 
-// Tag-based search - optional authentication
-router.get('/by-tag/:tagId', searchController.searchByTag);
-
-// Location-based search - requires authentication
-router.get('/by-location', authenticateToken, searchController.searchByLocation);
+router.get('/', authenticateToken, searchController.search); //Protected
+router.get('/by-tag/:tagId', authenticateToken, searchController.searchByTag); //Protected
+router.get('/by-location', authenticateToken, searchController.searchByLocation); //Protected
 
 module.exports = router;
