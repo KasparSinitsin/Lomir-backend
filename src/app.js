@@ -6,7 +6,7 @@ dotenv.config();
 
 const app = express();
 
-// *** Middleware (Order is important!) ***
+// *** Middleware***
 
 // 1. Body Parsers (for JSON and URL-encoded data)
 app.use(express.json()); 
