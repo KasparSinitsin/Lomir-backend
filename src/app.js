@@ -19,27 +19,27 @@ const upload = multer({ dest: 'uploads/' }); // Configure multer (temporary uplo
 app.use(upload.none()); // Parse text fields only (no files) - OR - app.use(multer().any()); // Parse all fields (text and files)
 
 // 3. (Optional) Raw Body Parsing (for debugging)
-app.use((req, res, next) => {
-  if (req.headers['content-type'] && req.headers['content-type'].startsWith('multipart/form-data')) {
-    // Only parse raw body for multipart/form-data
-    rawBody(req, {
-      length: req.headers['content-length'],
-      limit: '1mb', // Adjust limit as needed
-      encoding: req.charset || 'utf-8'
-    }, (err, string) => {
-      if (err) {
-        console.error('Error getting raw body:', err);
-        req.rawBody = ''; // Or handle the error appropriately
-      } else {
-        req.rawBody = string;
-      }
-      next();
-    });
-  } else {
-    req.rawBody = ''; // No raw body for other content types
-    next();
-  }
-});
+// app.use((req, res, next) => {
+//   if (req.headers['content-type'] && req.headers['content-type'].startsWith('multipart/form-data')) {
+//     // Only parse raw body for multipart/form-data
+//     rawBody(req, {
+//       length: req.headers['content-length'],
+//       limit: '1mb', // Adjust limit as needed
+//       encoding: req.charset || 'utf-8'
+//     }, (err, string) => {
+//       if (err) {
+//         console.error('Error getting raw body:', err);
+//         req.rawBody = ''; // Or handle the error appropriately
+//       } else {
+//         req.rawBody = string;
+//       }
+//       next();
+//     });
+//   } else {
+//     req.rawBody = ''; // No raw body for other content types
+//     next();
+//   }
+// });
 
 // 4. CORS Configuration (After body parsers, before routes)
 const frontendOrigin = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
