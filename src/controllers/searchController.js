@@ -46,32 +46,33 @@ const searchController = {
 
       // Users search query
       const userQuery = `
-        SELECT
-          u.id,
-          u.username,
-          u.first_name,
-          u.last_name,
-          u.bio,
-          (SELECT STRING_AGG(t.name, ', ')
-            FROM user_tags ut
-            JOIN tags t ON ut.tag_id = t.id
-            WHERE ut.user_id = u.id) as tags
-        FROM users u
-        LEFT JOIN user_tags ut ON u.id = ut.user_id
-        LEFT JOIN tags t ON ut.tag_id = t.id
-        WHERE
-          (
-            u.username ILIKE $1 OR
-            u.first_name ILIKE $1 OR
-            u.last_name ILIKE $1 OR
-            u.bio ILIKE $1 OR
-            t.name ILIKE $1
-          )
-          ${!isAuthenticated ? 'AND u.is_public = TRUE' : ''}
-        GROUP BY
-          u.id, u.username, u.first_name, u.last_name, u.bio
-        LIMIT 20
-      `;
+      SELECT 
+        u.id,
+        u.username,
+        u.first_name,
+        u.last_name,
+        u.bio,
+        (SELECT STRING_AGG(t.name, ', ') 
+         FROM user_tags ut 
+         JOIN tags t ON ut.tag_id = t.id 
+         WHERE ut.user_id = u.id) as tags
+      FROM users u
+      LEFT JOIN user_tags ut ON u.id = ut.user_id
+      LEFT JOIN tags t ON ut.tag_id = t.id
+      WHERE 
+        (
+          u.username ILIKE $1 OR 
+          u.first_name ILIKE $1 OR 
+          u.last_name ILIKE $1 OR 
+          u.bio ILIKE $1 OR 
+          t.name ILIKE $1
+        )
+      -- Commented out for now
+      -- ${!authenticated ? 'AND u.is_public = TRUE' : ''}
+      GROUP BY 
+        u.id, u.username, u.first_name, u.last_name, u.bio
+      LIMIT 20
+    `;
 
       // Execute both searches
       const [teamResults, userResults] = await Promise.all([
