@@ -17,40 +17,60 @@ const searchController = {
       // Prepare the search query with wildcard
       const searchTerm = `%${query.trim()}%`;
 
-      // Base team search query
+      // Teams search query
       const teamQuery = `
         SELECT
-          id,
-          name,
-          description,
-          is_public,
-          max_members,
-          postal_code,
-          (SELECT COUNT(*) FROM team_members WHERE team_id = teams.id) as current_members_count
-        FROM teams
+          t.id,
+          t.name,
+          t.description,
+          t.is_public,
+          t.max_members,
+          t.postal_code,
+          COUNT(tm.id) as current_members_count
+        FROM teams t
+        LEFT JOIN team_members tm ON t.id = tm.team_id
+        LEFT JOIN team_tags tt ON t.id = tt.team_id
+        LEFT JOIN tags tag ON tt.tag_id = tag.id
         WHERE
-          (name ILIKE $1 OR description ILIKE $1)
-          AND archived_at IS NULL
-          ${!isAuthenticated ? 'AND is_public = TRUE' : ''}
-        LIMIT 12
+          (
+            t.name ILIKE $1 OR
+            t.description ILIKE $1 OR
+            tag.name ILIKE $1
+          )
+          AND t.archived_at IS NULL
+          ${!isAuthenticated ? 'AND t.is_public = TRUE' : ''}
+        GROUP BY
+          t.id, t.name, t.description, t.is_public, t.max_members, t.postal_code
+        LIMIT 20
       `;
 
-      // Base user search query (assuming an is_public field exists in your users table)
+      // Users search query
       const userQuery = `
         SELECT
-          id,
-          username,
-          first_name,
-          last_name,
-          bio
-        FROM users
+          u.id,
+          u.username,
+          u.first_name,
+          u.last_name,
+          u.bio,
+          (SELECT STRING_AGG(t.name, ', ')
+            FROM user_tags ut
+            JOIN tags t ON ut.tag_id = t.id
+            WHERE ut.user_id = u.id) as tags
+        FROM users u
+        LEFT JOIN user_tags ut ON u.id = ut.user_id
+        LEFT JOIN tags t ON ut.tag_id = t.id
         WHERE
-          (username ILIKE $1
-           OR first_name ILIKE $1
-           OR last_name ILIKE $1
-           OR bio ILIKE $1)
-          ${!isAuthenticated ? 'AND is_public = TRUE' : ''}
-        LIMIT 12
+          (
+            u.username ILIKE $1 OR
+            u.first_name ILIKE $1 OR
+            u.last_name ILIKE $1 OR
+            u.bio ILIKE $1 OR
+            t.name ILIKE $1
+          )
+          ${!isAuthenticated ? 'AND u.is_public = TRUE' : ''}
+        GROUP BY
+          u.id, u.username, u.first_name, u.last_name, u.bio
+        LIMIT 20
       `;
 
       // Execute both searches
