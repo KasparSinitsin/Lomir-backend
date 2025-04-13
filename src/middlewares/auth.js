@@ -14,19 +14,21 @@ const authenticateToken = (req, res, next) => {
       message: 'Access denied. No token provided.' 
     });
   }
-  
-  const decoded = verifyToken(token);
-  
-  if (!decoded) {
+
+  try {
+    // Verify the token
+    const decoded = verifyToken(token);
+
+    // Add the user info to the request
+    req.user = decoded;
+    next();
+  } catch (error) {
     return res.status(403).json({ 
       success: false, 
-      message: 'Invalid or expired token.' 
+      message: 'Invalid or expired token.',
+      error: error.message
     });
   }
-  
-  // Add the user info to the request
-  req.user = decoded;
-  next();
 };
 
 module.exports = {

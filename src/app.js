@@ -6,38 +6,10 @@ dotenv.config();
 
 const app = express();
 
-// *** Middleware***
-
-// 1. Body Parsers (for JSON and URL-encoded data)
-app.use(express.json()); 
-app.use(express.urlencoded({ extended: true })); 
-
-// 2. multer (for multipart/form-data)
-// const upload = multer({ dest: 'uploads/' }); // Configure multer (temporary upload dir)
-// app.use(upload.none()); // Parse text fields only (no files) - OR - app.use(multer().any()); // Parse all fields (text and files)
-
-// 3. (Optional) Raw Body Parsing (for debugging)
-// app.use((req, res, next) => {
-//   if (req.headers['content-type'] && req.headers['content-type'].startsWith('multipart/form-data')) {
-//     // Only parse raw body for multipart/form-data
-//     rawBody(req, {
-//       length: req.headers['content-length'],
-//       limit: '1mb', // Adjust limit as needed
-//       encoding: req.charset || 'utf-8'
-//     }, (err, string) => {
-//       if (err) {
-//         console.error('Error getting raw body:', err);
-//         req.rawBody = ''; // Or handle the error appropriately
-//       } else {
-//         req.rawBody = string;
-//       }
-//       next();
-//     });
-//   } else {
-//     req.rawBody = ''; // No raw body for other content types
-//     next();
-//   }
-// });
+// *** Middleware ***
+// Body Parsers (for JSON and URL-encoded data)
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // CORS Configuration
 const frontendOrigin = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
@@ -53,12 +25,9 @@ app.use(cors(corsOptions));
 const tagRoutes = require('./routes/api/tags');
 app.use('/api/tags', tagRoutes);
 
-try {
-  const routes = require('./routes/index');
-  app.use('/api', routes);
-} catch (error) {
-  console.error('Routes import error:', error);
-}
+// Importing search routes and ensuring they are used under '/api/search'
+const searchRoutes = require('./routes/searchRoutes'); // Ensure correct path
+app.use('/api/search', searchRoutes);
 
 // Home route (optional)
 app.get('/', (req, res) => {

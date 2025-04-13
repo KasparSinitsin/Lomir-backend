@@ -1,12 +1,19 @@
 const express = require('express');
-const searchController = require('../controllers/searchController');
+const { globalSearch, getRecommended, searchByTag, searchByLocation } = require('../controllers/searchController');
 const { authenticateToken } = require('../middlewares/auth');
 
 const router = express.Router();
 
-router.get('/global', searchController.globalSearch); // Public global search
-router.get('/', authenticateToken, searchController.search); // Protected general search
-router.get('/by-tag/:tagId', authenticateToken, searchController.searchByTag); // Protected tag search
-router.get('/by-location', authenticateToken, searchController.searchByLocation); // Protected location search
+// Route for public global search
+router.get('/global', globalSearch);
+
+// Route for protected search by tag (authenticated users only)
+router.get('/by-tag/:tagId', authenticateToken, searchByTag);
+
+// Route for protected search by location (authenticated users only)
+router.get('/by-location', authenticateToken, searchByLocation);
+
+// Route for getting recommended teams/users based on shared tags
+router.get('/recommended', authenticateToken, getRecommended);
 
 module.exports = router;
