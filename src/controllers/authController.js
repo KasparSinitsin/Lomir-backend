@@ -15,12 +15,15 @@ const registerSchema = Joi.object({
   tags: Joi.array().items(
     Joi.object({
       tag_id: Joi.number().integer().required(),
-      experience_level: Joi.string()
-        .valid('beginner', 'intermediate', 'advanced', 'expert')
-        .default('beginner'),
-      interest_level: Joi.string()
-        .valid('low', 'medium', 'high', 'very-high')
-        .default('medium')
+      // Commented out for now
+      // experience_level: Joi.string()
+      //   .valid('beginner', 'intermediate', 'advanced', 'expert')
+      //   .default('beginner')
+      //   .optional(),
+      // interest_level: Joi.string()
+      //   .valid('low', 'medium', 'high', 'very-high')
+      //   .default('medium')
+      //   .optional()
     })
   ).optional()
 });
