@@ -4,6 +4,7 @@ const { authenticateToken } = require('../middlewares/auth');
 
 const router = express.Router();
 
+router.get('/all', searchController.getAllUsersAndTeams); // Public route to get all users and teams
 router.get('/global', searchController.globalSearch); // Public global search
 router.get('/', authenticateToken, searchController.search); // Protected general search
 router.get('/by-tag/:tagId', authenticateToken, searchController.searchByTag); // Protected tag search
