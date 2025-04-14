@@ -41,12 +41,12 @@ const teamCreationSchema = Joi.object({
       'any.required': 'Maximum members is required'
     }),
 
-  tags: Joi.array().items(
-    Joi.object({
-      tag_id: Joi.number().integer().required(),
-    })
-  ).default([])
-});
+    tags: Joi.array().items(
+      Joi.object({
+        tag_id: Joi.number().integer().required(),
+      })
+    ).default([]) // Made this default([]) so it's optional
+  });
 
 const createTeam = async (req, res) => {
   const client = await db.pool.connect();
