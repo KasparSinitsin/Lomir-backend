@@ -41,25 +41,17 @@ const teamCreationSchema = Joi.object({
         'any.required': 'Maximum members is required'
       }),
   
-      postal_code: Joi.string()
-      .trim()
-      .required()
-      .messages({
-        'string.empty': 'Postal code cannot be empty',
-        'any.required': 'Postal code is required'
-      }),
-  
-      tags: Joi.array().items(Joi.object({
-        tag_id: Joi.number().integer().required(),
-        experience_level: Joi.string()
-          .valid('beginner', 'intermediate', 'advanced', 'expert')
-          .default('beginner'),
-        interest_level: Joi.string()
-          .valid('low', 'medium', 'high', 'very-high')
-          .default('medium')
-      })).min(1).messages({
-        'array.min': 'At least one tag is required'
-      })
+      tags: Joi.array().items(
+        Joi.object({
+          tag_id: Joi.number().integer().required(),
+          experience_level: Joi.string()
+            .valid('beginner', 'intermediate', 'advanced', 'expert')
+            .default('beginner'),
+          interest_level: Joi.string()
+            .valid('low', 'medium', 'high', 'very-high')
+            .default('medium')
+        })
+      ).default([])
     });
 
     const createTeam = async (req, res) => {

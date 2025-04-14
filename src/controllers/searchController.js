@@ -25,7 +25,6 @@ const searchController = {
           t.description,
           t.is_public,
           t.max_members,
-          t.postal_code,
           COUNT(tm.id) as current_members_count
         FROM teams t
         LEFT JOIN team_members tm ON t.id = tm.team_id
@@ -40,7 +39,7 @@ const searchController = {
           AND t.archived_at IS NULL
           ${!isAuthenticated ? 'AND t.is_public = TRUE' : ''}
         GROUP BY
-          t.id, t.name, t.description, t.is_public, t.max_members, t.postal_code
+          t.id, t.name, t.description, t.is_public, t.max_members
         LIMIT 20
       `;
 
