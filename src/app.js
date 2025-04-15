@@ -51,6 +51,7 @@ const corsOptions = {
 // Enable CORS
 app.use(cors({
   origin: ['http://localhost:5173', 'https://lomir-backend.onrender.com'],
+  credentials: true
 }));
 
 // *** Routes ***
