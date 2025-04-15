@@ -5,48 +5,70 @@ const db = require('../../config/database');
 // GET /api/tags/structured
 router.get('/structured', async (req, res) => {
   try {
-    // Sample structured tag data for development
-    const structuredTags = [
-      {
-        id: 1,
-        name: "Technology & Development",
-        categories: [
-          {
-            id: 1,
-            name: "Software Development",
-            tags: [
-              { id: 1, name: "JavaScript" },
-              { id: 2, name: "React" },
-              { id: 3, name: "Node.js" }
-            ]
-          },
-          {
-            id: 2,
-            name: "Hardware & Engineering",
-            tags: [
-              { id: 4, name: "3D Printing" },
-              { id: 5, name: "Arduino" }
-            ]
-          }
-        ]
-      },
-      {
-        id: 2,
-        name: "Creative Arts",
-        categories: [
-          {
-            id: 3,
-            name: "Visual Arts",
-            tags: [
-              { id: 6, name: "Painting" },
-              { id: 7, name: "Photography" }
-            ]
-          }
-        ]
-      }
-    ];
+    // Query all supercategories
+    const supercategoryQuery = `
+      SELECT DISTINCT supercategory as name
+      FROM tags
+      WHERE supercategory IS NOT NULL
+      ORDER BY supercategory
+    `;
+    const supercategoryResult = await db.query(supercategoryQuery);
     
-    res.json(structuredTags);
+    // Build the structured response
+    const structuredData = [];
+    
+    for (const supercat of supercategoryResult.rows) {
+      // Create supercategory object
+      const supercategory = {
+        id: supercat.name, // Using name as ID for supercategory
+        name: supercat.name,
+        categories: []
+      };
+      
+      // Get categories for this supercategory
+      const categoryQuery = `
+        SELECT DISTINCT category as name
+        FROM tags
+        WHERE supercategory = $1
+        ORDER BY category
+      `;
+      const categoryResult = await db.query(categoryQuery, [supercat.name]);
+      
+      for (const cat of categoryResult.rows) {
+        const category = {
+          id: cat.name, // Using name as ID for category
+          name: cat.name,
+          tags: []
+        };
+        
+        // Get tags for this category with their REAL database IDs
+        const tagsQuery = `
+          SELECT id, name
+          FROM tags
+          WHERE category = $1 AND supercategory = $2
+          ORDER BY name
+        `;
+        const tagsResult = await db.query(tagsQuery, [cat.name, supercat.name]);
+        
+        category.tags = tagsResult.rows.map(tag => ({
+          id: tag.id,  // Use the actual numeric ID from the database
+          name: tag.name
+        }));
+        
+        // Only add categories that have tags
+        if (category.tags.length > 0) {
+          supercategory.categories.push(category);
+        }
+      }
+      
+      // Only add supercategories that have categories with tags
+      if (supercategory.categories.length > 0) {
+        structuredData.push(supercategory);
+      }
+    }
+    
+    console.log('Structured tags:', JSON.stringify(structuredData, null, 2));
+    res.json(structuredData);
   } catch (error) {
     console.error('Error fetching structured tags:', error);
     res.status(500).json({ error: 'Failed to fetch structured tags' });
