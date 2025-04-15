@@ -12,5 +12,6 @@ router.put('/:id', auth.authenticateToken, teamController.updateTeam);
 router.delete('/:id', auth.authenticateToken, teamController.deleteTeam);
 router.post('/:id/members', auth.authenticateToken, teamController.addTeamMember);
 router.delete('/:id/members/:userId', auth.authenticateToken, teamController.removeTeamMember);
+router.get('/:id/members/:userId/role', auth.authenticateToken, teamController.getUserRoleInTeam);
 
 module.exports = router;
