@@ -23,19 +23,15 @@
 						}
 					}
 				},
-				"url": {
-					"raw": "http://localhost:5001/api/auth/register",
-					"protocol": "http",
-					"host": [
-						"localhost"
-					],
-					"port": "5001",
-					"path": [
-						"api",
-						"auth",
-						"register"
-					]
-				}
+			"url": {
+  "raw": "https://lomir-backend.onrender.com/api/auth/register",
+  "protocol": "https",
+  "host": [
+    "https://lomir-backend.onrender",
+    "com"
+  ],
+  "path": ["api", "auth", "register"]
+}
 			},
 			"response": []
 		},

@@ -3,7 +3,7 @@ const db = require('../../config/database');
 const seedTags = async () => {
   try {
     // Clear existing data
-    await db.query('TRUNCATE tags CASCADE');
+   // await db.query('TRUNCATE tags CASCADE');
     
     // Insert tags by category
     // Technical Skills

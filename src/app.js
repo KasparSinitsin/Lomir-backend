@@ -47,7 +47,11 @@ const corsOptions = {
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
   allowedHeaders: 'Content-Type,Authorization',
 };
-app.use(cors(corsOptions));
+
+// Enable CORS
+app.use(cors({
+  origin: ['http://localhost:5173', 'https://lomir-backend.onrender.com'],
+}));
 
 // *** Routes ***
 const tagRoutes = require('./routes/api/tags');
