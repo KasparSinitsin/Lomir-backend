@@ -28,6 +28,11 @@ const registerSchema = Joi.object({
     ).optional()
 });
 
+const loginSchema = Joi.object({
+    email: Joi.string().email().required(),
+    password: Joi.string().min(6).required()
+});
+
 const authController = {
     async register(req, res) {
         try {
