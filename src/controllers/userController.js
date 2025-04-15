@@ -1,3 +1,5 @@
+const db = require('../config/database');
+
 const getAllUsers = async (req, res) => {
     try {
       // Placeholder response
@@ -15,7 +17,7 @@ const getAllUsers = async (req, res) => {
     }
   };
   
-  const getUserById = async (req, res) => {
+const getUserById = async (req, res) => {
     try {
       const userId = req.params.id;
       res.status(200).json({
@@ -32,7 +34,7 @@ const getAllUsers = async (req, res) => {
     }
   };
   
-  const updateUser = async (req, res) => {
+const updateUser = async (req, res) => {
     try {
       const userId = req.params.id;
       res.status(200).json({
@@ -49,7 +51,7 @@ const getAllUsers = async (req, res) => {
     }
   };
   
-  const deleteUser = async (req, res) => {
+const deleteUser = async (req, res) => {
     try {
       const userId = req.params.id;
       res.status(200).json({
@@ -66,7 +68,7 @@ const getAllUsers = async (req, res) => {
     }
   };
   
-  const getUserTeams = async (req, res) => {
+const getUserTeams = async (req, res) => {
     try {
       const userId = req.params.id;
       res.status(200).json({
@@ -82,11 +84,81 @@ const getAllUsers = async (req, res) => {
       });
     }
   };
+
+const getUserTags = async (req, res) => {
+  try {
+    const userId = req.params.id;
+    
+    const tagsResult = await db.query(`
+      SELECT t.id, t.name, t.category, t.supercategory 
+      FROM tags t
+      JOIN user_tags ut ON t.id = ut.tag_id
+      WHERE ut.user_id = $1
+    `, [userId]);
+
+    res.status(200).json({
+      success: true,
+      data: tagsResult.rows
+    });
+  } catch (error) {
+    console.error('Error fetching user tags:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching user tags',
+      error: error.message
+    });
+  }
+};
+
+const updateUserTags = async (req, res) => {
+  const userId = req.params.id;
+  const { tags } = req.body;
+
+  const client = await db.pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    // Remove existing user tags
+    await client.query('DELETE FROM user_tags WHERE user_id = $1', [userId]);
+
+    // Insert new tags
+    if (tags && tags.length > 0) {
+      const tagInserts = tags.map(tag => 
+        client.query(`
+          INSERT INTO user_tags (user_id, tag_id)
+          VALUES ($1, $2)
+        `, [userId, tag.tag_id])
+      );
+
+      await Promise.all(tagInserts);
+    }
+
+    await client.query('COMMIT');
+
+    res.status(200).json({
+      success: true,
+      message: 'User tags updated successfully'
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error updating user tags:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating user tags',
+      error: error.message
+    });
+  } finally {
+    client.release();
+  }
+};
   
-  module.exports = {
-    getAllUsers,
-    getUserById,
-    updateUser,
-    deleteUser,
-    getUserTeams
-  };
+module.exports = {
+  getAllUsers,
+  getUserById,
+  updateUser,
+  deleteUser,
+  getUserTeams,
+  getUserTags,
+  updateUserTags
+};

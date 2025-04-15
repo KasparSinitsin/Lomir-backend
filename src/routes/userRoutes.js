@@ -6,8 +6,12 @@ const router = express.Router();
 
 router.get('/', userController.getAllUsers);
 router.get('/:id', userController.getUserById);
-router.put('/:id', auth.authenticateToken, userController.updateUser); // Protected
-router.delete('/:id', auth.authenticateToken, userController.deleteUser); // Protected
+router.put('/:id', auth.authenticateToken, userController.updateUser);
+router.delete('/:id', auth.authenticateToken, userController.deleteUser);
 router.get('/:id/teams', userController.getUserTeams);
+
+// New routes for user tags
+router.get('/:id/tags', userController.getUserTags);
+router.put('/:id/tags', auth.authenticateToken, userController.updateUserTags);
 
 module.exports = router;
