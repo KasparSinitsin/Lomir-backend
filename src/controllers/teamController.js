@@ -281,6 +281,41 @@ const getUserTeams = async (req, res) => {
   }
 };
 
+const getUserRoleInTeam = async (req, res) => {
+  try {
+    const teamId = req.params.id;
+    const userId = req.params.userId;
+    
+    const roleResult = await db.pool.query(`
+      SELECT role 
+      FROM team_members 
+      WHERE team_id = $1 AND user_id = $2
+    `, [teamId, userId]);
+    
+    if (roleResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User is not a member of this team'
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        role: roleResult.rows[0].role
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching user role:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching user role',
+      error: error.message
+    });
+  }
+};
+
+
 const updateTeam = async (req, res) => {
   try {
     const teamId = req.params.id;
@@ -761,6 +796,7 @@ module.exports = {
   getAllTeams,
   getTeamById,
   getUserTeams,
+  getUserRoleInTeam,
   updateTeam,
   deleteTeam,
   addTeamMember,
