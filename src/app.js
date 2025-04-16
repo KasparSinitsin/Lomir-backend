@@ -39,9 +39,11 @@ app.use(cors(corsOptions));
 const authRoutes = require('./routes/authRoutes');
 app.use('/api/auth', authRoutes);
 
+//Search routes
 const searchRoutes = require('./routes/searchRoutes');
 app.use('/api/search', searchRoutes);
 
+//Team routes
 const teamRoutes = require('./routes/teamRoutes');
 app.use('/api/teams', teamRoutes);
 
