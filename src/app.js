@@ -1,6 +1,8 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const authRoutes = require('./routes');
+
 
 dotenv.config();
 
@@ -43,6 +45,8 @@ try {
 } catch (error) {
   console.error('Routes import error:', error);
 }
+
+app.use('/api/auth', authRoutes);
 
 // Home route
 app.get('/', (req, res) => {
