@@ -114,28 +114,34 @@ const updateUserTags = async (req, res) => {
   const userId = req.params.id;
   const { tags } = req.body;
 
+  // Input validation: Ensure tags is an array and each tag has a valid tag_id
+  if (!Array.isArray(tags) || tags.some(tag => !tag.tag_id)) {
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid tag data provided'
+    });
+  }
+
   const client = await db.pool.connect();
 
   try {
     await client.query('BEGIN');
 
-    // Remove existing user tags
+    // Remove existing user tags before inserting new ones
     await client.query('DELETE FROM user_tags WHERE user_id = $1', [userId]);
 
-    // Insert new tags
-    if (tags && tags.length > 0) {
-      const tagInserts = tags.map(tag => 
+    // Insert new tags if provided
+    if (tags.length > 0) {
+      const tagInserts = tags.map(tag =>
         client.query(`
           INSERT INTO user_tags (user_id, tag_id)
           VALUES ($1, $2)
         `, [userId, tag.tag_id])
       );
-
-      await Promise.all(tagInserts);
+      await Promise.all(tagInserts);  // Execute all insertions in parallel
     }
 
     await client.query('COMMIT');
-
     res.status(200).json({
       success: true,
       message: 'User tags updated successfully'
@@ -149,7 +155,7 @@ const updateUserTags = async (req, res) => {
       error: error.message
     });
   } finally {
-    client.release();
+    client.release();  // Always release the client after use
   }
 };
   

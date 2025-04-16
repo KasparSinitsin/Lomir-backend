@@ -11,7 +11,7 @@ router.put('/:id', auth.authenticateToken, userController.updateUser);  // Updat
 router.delete('/:id', auth.authenticateToken, userController.deleteUser);  // Delete user by ID
 
 // Routes for getting user teams
-router.get('/api/teams/my-teams');
+router.get('/api/teams/my-teams', auth.authenticateToken, userController.getUserTeams); 
 
 router.get('/:id/tags', userController.getUserTags);  // Get tags for a user by ID
 router.put('/:id/tags', auth.authenticateToken, userController.updateUserTags);  // Update tags for a user by ID
