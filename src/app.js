@@ -13,9 +13,19 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true })); 
 
 // CORS Configuration
-const frontendOrigin = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
+const allowedOrigins = [
+  'https://lomir.onrender.com', 
+  'http://localhost:5173',      
+];
+
 const corsOptions = {
-  origin: frontendOrigin,
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS blocked: origin ${origin} not allowed`));
+    }
+  },
   credentials: true,
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
   allowedHeaders: ['Content-Type', 'Authorization'],
