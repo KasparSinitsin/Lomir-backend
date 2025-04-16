@@ -42,6 +42,9 @@ app.use('/api/auth', authRoutes);
 const searchRoutes = require('./routes/searchRoutes');
 app.use('/api/search', searchRoutes);
 
+const teamRoutes = require('./routes/teamRoutes');
+app.use('/api/teams', teamRoutes);
+
 // Tag routes
 const tagRoutes = require('./routes/api/tags');  
 app.use('/api/tags', tagRoutes); 
