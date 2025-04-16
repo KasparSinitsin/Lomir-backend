@@ -116,4 +116,36 @@ router.get('/search', async (req, res) => {
   }
 });
 
+// PUT /api/tags/users/:userId
+router.put('/users/:userId/tags', async (req, res) => {
+  try {
+    const userId = req.params.userId;
+    const { tags } = req.body; 
+
+    if (!Array.isArray(tags) || tags.length === 0) {
+      return res.status(400).json({ error: 'Tags must be a non-empty array' });
+    }
+
+    const deleteQuery = `
+      DELETE FROM user_tags WHERE user_id = $1
+    `;
+    await db.query(deleteQuery, [userId]);
+
+    const insertQuery = `
+      INSERT INTO user_tags (user_id, tag_id)
+      VALUES ($1, $2)
+      RETURNING user_id, tag_id
+    `;
+    
+    for (const tagId of tags) {
+      await db.query(insertQuery, [userId, tagId]);
+    }
+
+    res.status(200).json({ message: 'User tags updated successfully' });
+  } catch (error) {
+    console.error('Error updating user tags:', error);
+    res.status(500).json({ error: 'Failed to update user tags' });
+  }
+});
+
 module.exports = router;
