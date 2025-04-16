@@ -40,13 +40,8 @@ const authRoutes = require('./routes/authRoutes');
 app.use('/api/auth', authRoutes);
 
 // Tag routes
-const tagRoutes = require('./routes/api/tags');
-app.use('/api/tags', tagRoutes);
-
-// Optional: base router file, if needed
-// If you have an `index.js` in `routes/`, uncomment the following:
-// const baseRoutes = require('./routes');
-// app.use('/api', baseRoutes);
+const tagRoutes = require('./routes/api/tags');  
+app.use('/api/tags', tagRoutes); 
 
 // Home route
 app.get('/', (req, res) => {
