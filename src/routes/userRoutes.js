@@ -4,14 +4,16 @@ const auth = require('../middlewares/auth');
 
 const router = express.Router();
 
-router.get('/', userController.getAllUsers);
-router.get('/:id', userController.getUserById);
-router.put('/:id', auth.authenticateToken, userController.updateUser);
-router.delete('/:id', auth.authenticateToken, userController.deleteUser);
-router.get('/:id/teams', userController.getUserTeams);
+// Routes for getting and updating users
+router.get('/', userController.getAllUsers);  // Get all users
+router.get('/:id', userController.getUserById);  // Get user by ID
+router.put('/:id', auth.authenticateToken, userController.updateUser);  // Update user by ID
+router.delete('/:id', auth.authenticateToken, userController.deleteUser);  // Delete user by ID
 
-// New routes for user tags
-router.get('/:id/tags', userController.getUserTags);
-router.put('/:id/tags', auth.authenticateToken, userController.updateUserTags);
+// Routes for getting user teams
+router.get('/:id/teams', userController.getUserTeams);  // Get user teams by ID
+
+router.get('/:id/tags', userController.getUserTags);  // Get tags for a user by ID
+router.put('/:id/tags', auth.authenticateToken, userController.updateUserTags);  // Update tags for a user by ID
 
 module.exports = router;
