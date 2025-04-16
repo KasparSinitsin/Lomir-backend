@@ -39,6 +39,9 @@ app.use(cors(corsOptions));
 const authRoutes = require('./routes/authRoutes');
 app.use('/api/auth', authRoutes);
 
+const searchRoutes = require('./routes/searchRoutes');
+app.use('/api/search', searchRoutes);
+
 // Tag routes
 const tagRoutes = require('./routes/api/tags');  
 app.use('/api/tags', tagRoutes); 
