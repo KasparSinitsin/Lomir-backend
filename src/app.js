@@ -8,36 +8,9 @@ const app = express();
 
 // *** Middleware***
 
-// 1. Body Parsers (for JSON and URL-encoded data)
+// Body Parsers
 app.use(express.json()); 
 app.use(express.urlencoded({ extended: true })); 
-
-// 2. multer (for multipart/form-data)
-// const upload = multer({ dest: 'uploads/' }); // Configure multer (temporary upload dir)
-// app.use(upload.none()); // Parse text fields only (no files) - OR - app.use(multer().any()); // Parse all fields (text and files)
-
-// 3. (Optional) Raw Body Parsing (for debugging)
-// app.use((req, res, next) => {
-//   if (req.headers['content-type'] && req.headers['content-type'].startsWith('multipart/form-data')) {
-//     // Only parse raw body for multipart/form-data
-//     rawBody(req, {
-//       length: req.headers['content-length'],
-//       limit: '1mb', // Adjust limit as needed
-//       encoding: req.charset || 'utf-8'
-//     }, (err, string) => {
-//       if (err) {
-//         console.error('Error getting raw body:', err);
-//         req.rawBody = ''; // Or handle the error appropriately
-//       } else {
-//         req.rawBody = string;
-//       }
-//       next();
-//     });
-//   } else {
-//     req.rawBody = ''; // No raw body for other content types
-//     next();
-//   }
-// });
 
 // CORS Configuration
 const frontendOrigin = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
@@ -45,14 +18,10 @@ const corsOptions = {
   origin: frontendOrigin,
   credentials: true,
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-  allowedHeaders: 'Content-Type,Authorization',
+  allowedHeaders: ['Content-Type', 'Authorization'],
 };
 
-// Enable CORS
-app.use(cors({
-  origin: ['http://localhost:5173', 'https://lomir-backend.onrender.com'],
-  credentials: true
-}));
+app.use(cors(corsOptions));
 
 // *** Routes ***
 const tagRoutes = require('./routes/api/tags');
@@ -65,20 +34,20 @@ try {
   console.error('Routes import error:', error);
 }
 
-// Home route (optional)
+// Home route
 app.get('/', (req, res) => {
   res.send('Lomir API is running...');
 });
 
-// *** Error Handling Middleware (Last middleware) ***
+// Error Handling
 app.use((err, req, res, next) => {
-  console.error('Unhandled Error:', err); // Log the full error
+  console.error('Unhandled Error:', err);
   const statusCode = err.statusCode || 500;
   res.status(statusCode).json({
     status: 'error',
     statusCode,
     message: err.message,
-    stack: process.env.NODE_ENV === 'production' ? null : err.stack, // Don't send stack in production
+    stack: process.env.NODE_ENV === 'production' ? null : err.stack,
   });
 });
 
