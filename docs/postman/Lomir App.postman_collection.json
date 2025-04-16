@@ -23,12 +23,12 @@
 						}
 					}
 				},
-			"url": {
-  "raw": "https://lomir-backend.onrender.com/api/auth/register",
-  "protocol": "https",
-  "host": ["lomir-backend", "onrender", "com"],
-  "path": ["api", "auth", "register"]
-}
+				"url": {
+					"raw": "https://lomir-backend.onrender.com/api/auth/register",
+					"protocol": "https",
+					"host": ["lomir-backend", "onrender", "com"],
+					"path": ["api", "auth", "register"]
+				}
 			},
 			"response": []
 		},
@@ -89,7 +89,7 @@
 					}
 				},
 				"url": {
-					"raw": "http://lomir-backend.onrender.com/api/auth/me",
+					"raw": "https://lomir-backend.onrender.com/api/auth/me",
 					"protocol": "https",
 					"host": ["lomir-backend", "onrender", "com"],
 					"path": [
