@@ -1,23 +1,21 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const authRoutes = require('./routes');
-
 
 dotenv.config();
 
 const app = express();
 
-// *** Middleware***
+// *** Middleware ***
 
 // Body Parsers
-app.use(express.json()); 
-app.use(express.urlencoded({ extended: true })); 
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // CORS Configuration
 const allowedOrigins = [
-  'https://lomir.onrender.com', 
-  'http://localhost:5173',      
+  'https://lomir.onrender.com',
+  'http://localhost:5173',
 ];
 
 const corsOptions = {
@@ -36,24 +34,26 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // *** Routes ***
+
+// Auth routes (properly mounted under /api/auth)
+const authRoutes = require('./routes/authRoutes');
+app.use('/api/auth', authRoutes);
+
+// Tag routes
 const tagRoutes = require('./routes/api/tags');
 app.use('/api/tags', tagRoutes);
 
-try {
-  const routes = require('./routes/index');
-  app.use('./routes', routes);
-} catch (error) {
-  console.error('Routes import error:', error);
-}
-
-app.use('./routes', authRoutes);
+// Optional: base router file, if needed
+// If you have an `index.js` in `routes/`, uncomment the following:
+// const baseRoutes = require('./routes');
+// app.use('/api', baseRoutes);
 
 // Home route
 app.get('/', (req, res) => {
   res.send('Lomir API is running...');
 });
 
-// Error Handling
+// *** Error Handling ***
 app.use((err, req, res, next) => {
   console.error('Unhandled Error:', err);
   const statusCode = err.statusCode || 500;
