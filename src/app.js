@@ -41,12 +41,12 @@ app.use('/api/tags', tagRoutes);
 
 try {
   const routes = require('./routes/index');
-  app.use('/api', routes);
+  app.use('./routes', routes);
 } catch (error) {
   console.error('Routes import error:', error);
 }
 
-app.use('/api/auth', authRoutes);
+app.use('./routes', authRoutes);
 
 // Home route
 app.get('/', (req, res) => {
