@@ -33,6 +33,11 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
+app.use((req, res, next) => {
+  console.log('Incoming request:', req.method, req.url);
+  next();
+});
+
 // *** Routes ***
 
 // Auth routes (properly mounted under /api/auth)
@@ -70,6 +75,12 @@ app.use((err, req, res, next) => {
     message: err.message,
     stack: process.env.NODE_ENV === 'production' ? null : err.stack,
   });
+});
+
+// Added to catch unmatched routes
+app.use((req, res) => {
+  console.log('No route matched for:', req.method, req.url);
+  res.status(404).send(`Cannot ${req.method} ${req.url}`);
 });
 
 module.exports = app;
