@@ -10,8 +10,8 @@ router.get('/:id', userController.getUserById);  // Get user by ID
 router.put('/:id', auth.authenticateToken, userController.updateUser);  // Update user by ID
 router.delete('/:id', auth.authenticateToken, userController.deleteUser);  // Delete user by ID
 
-// Routes for getting user teams
-router.get('/teams', auth.authenticateToken, userController.getUserTeams);  // Get teams for the authenticated user
+// Routes for getting user teams (optional, can be moved to teamRoutes.js)
+router.get('/teams', auth.authenticateToken, userController.getUserTeams); 
 
 // Routes for getting user tags
 router.get('/:id/tags', userController.getUserTags);  // Get tags for a user by ID
