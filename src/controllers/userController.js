@@ -58,6 +58,7 @@ const updateUser = async (req, res) => {
       });
     }
     
+    // Our frontend will now send snake_case thanks to the API interceptor
     const { first_name, last_name, bio, postal_code, avatar_url } = req.body;
     
     // Build dynamic update query
