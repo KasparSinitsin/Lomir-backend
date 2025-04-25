@@ -83,4 +83,8 @@ app.use((req, res) => {
   res.status(404).send(`Cannot ${req.method} ${req.url}`);
 });
 
+app.get('*', (req, res) => {
+  res.status(404).send('Route not found');
+});
+
 module.exports = app;

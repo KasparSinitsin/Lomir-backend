@@ -1,14 +1,23 @@
-const db = require('../config/database');
+// Import necessary database configuration
+const db = require('../config/database'); // Assuming 'db' might be used elsewhere or for other query methods
+const { pool } = require('../config/database'); // Specifically importing pool for direct queries
 
+/**
+ * @description Get all users (Placeholder)
+ * @route GET /api/users
+ * @access Public (or Private depending on your auth setup)
+ */
 const getAllUsers = async (req, res) => {
   try {
-    // Placeholder response
+    // Placeholder response - Implement actual logic later
+    // Example: const result = await pool.query('SELECT id, username, email FROM users');
     res.status(200).json({
       success: true,
       message: 'Get all users placeholder',
-      data: []
+      data: [] // Replace with result.rows when implemented
     });
   } catch (error) {
+    console.error('Error fetching all users:', error); // Log the error
     res.status(500).json({
       success: false,
       message: 'Error fetching users',
@@ -16,15 +25,22 @@ const getAllUsers = async (req, res) => {
     });
   }
 };
-  
+
+/**
+ * @description Get a single user by ID
+ * @route GET /api/users/:id
+ * @access Public (or Private)
+ */
 const getUserById = async (req, res) => {
   try {
     const userId = req.params.id;
-    const result = await db.query(
+    // Use pool directly or stick to db.query if it's configured
+    const result = await pool.query( // Using pool as per the update example
       'SELECT id, username, email, first_name, last_name, bio, avatar_url, postal_code, created_at FROM users WHERE id = $1',
       [userId]
     );
 
+    // Check if user was found
     if (result.rows.length === 0) {
       return res.status(404).json({
         success: false,
@@ -32,12 +48,14 @@ const getUserById = async (req, res) => {
       });
     }
 
+    // Send successful response
     res.status(200).json({
       success: true,
       message: 'User retrieved successfully',
       data: result.rows[0]
     });
   } catch (error) {
+    console.error(`Error fetching user ${req.params.id}:`, error); // Log the error
     res.status(500).json({
       success: false,
       message: 'Error fetching user',
@@ -45,111 +63,78 @@ const getUserById = async (req, res) => {
     });
   }
 };
-  
+
+/**
+ * @description Update a user's profile (DEBUGGING VERSION)
+ * @route PUT /api/users/:id
+ * @access Private (Requires authentication and authorization)
+ */
 const updateUser = async (req, res) => {
   try {
     const userId = req.params.id;
-    
-    // Check if user is authorized to update this profile
-    if (req.user && req.user.id !== parseInt(userId)) {
-      return res.status(403).json({
-        success: false,
-        message: 'You are not authorized to update this profile'
-      });
-    }
-    
-    // Our frontend will now send snake_case thanks to the API interceptor
-    const { first_name, last_name, bio, postal_code, avatar_url } = req.body;
-    
-    // Build dynamic update query
-    const updateFields = [];
-    const values = [];
-    let paramCounter = 1;
-    
-    if (first_name !== undefined) {
-      updateFields.push(`first_name = $${paramCounter}`);
-      values.push(first_name);
-      paramCounter++;
-    }
-    
-    if (last_name !== undefined) {
-      updateFields.push(`last_name = $${paramCounter}`);
-      values.push(last_name);
-      paramCounter++;
-    }
-    
-    if (bio !== undefined) {
-      updateFields.push(`bio = $${paramCounter}`);
-      values.push(bio);
-      paramCounter++;
-    }
-    
-    if (postal_code !== undefined) {
-      updateFields.push(`postal_code = $${paramCounter}`);
-      values.push(postal_code);
-      paramCounter++;
-    }
-    
-    if (avatar_url !== undefined) {
-      updateFields.push(`avatar_url = $${paramCounter}`);
-      values.push(avatar_url);
-      paramCounter++;
-    }
-    
-    // Add updated_at timestamp
-    updateFields.push(`updated_at = NOW()`);
-    
-    // Only proceed if there are fields to update
-    if (updateFields.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'No fields to update'
-      });
-    }
-    
-    // Add user ID as the last parameter
-    values.push(userId);
-    
-    const query = `
-      UPDATE users
-      SET ${updateFields.join(', ')}
-      WHERE id = $${paramCounter}
-      RETURNING id, username, email, first_name, last_name, bio, avatar_url, postal_code
-    `;
-    
-    const result = await db.query(query, values);
-    
+    console.log('UPDATE USER CALLED FOR ID:', userId);
+    console.log('REQUEST BODY:', req.body);
+
+    // --- Debugging Direct Database Update ---
+    // This version directly attempts to update the 'bio' field
+    // It bypasses authorization checks and dynamic field updates for testing purposes.
+    const result = await pool.query(
+      'UPDATE users SET bio = $1, updated_at = NOW() WHERE id = $2 RETURNING *', // Added updated_at
+      [req.body.bio || 'Updated bio via debug', userId] // Use provided bio or a default debug message
+    );
+    // --- End Debugging Section ---
+
+    // Check if the update affected any rows (i.e., if the user ID exists)
     if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
+        // This case might happen if the ID doesn't exist.
+        // The original code had this check after the query, which is correct.
+        return res.status(404).json({
+            success: false,
+            message: 'User not found, update failed'
+        });
     }
-    
+
+    console.log('Database update result:', result.rows[0]);
+
+    // Send successful response with the updated user data
     res.status(200).json({
       success: true,
-      message: 'User updated successfully',
+      message: 'User updated successfully (debug mode)',
       data: result.rows[0]
     });
   } catch (error) {
-    console.error('Error updating user:', error);
+    // Log the detailed error
+    console.error('Error updating user (debug mode):', error);
     res.status(500).json({
       success: false,
-      message: 'Error updating user',
+      message: 'Error updating user (debug mode)',
       error: error.message
     });
   }
 };
-  
+
+
+/**
+ * @description Delete a user (Placeholder)
+ * @route DELETE /api/users/:id
+ * @access Private (Requires authentication and authorization)
+ */
 const deleteUser = async (req, res) => {
   try {
     const userId = req.params.id;
+
+    // Placeholder - Implement actual delete logic later
+    // Example:
+    // Check authorization first (e.g., if req.user.id === userId || req.user.isAdmin)
+    // await pool.query('DELETE FROM users WHERE id = $1', [userId]);
+
     res.status(200).json({
       success: true,
       message: `Delete user ${userId} placeholder`,
       data: { id: userId }
     });
   } catch (error) {
+    console.error(`Error deleting user ${req.params.id}:`, error); // Log the error
     res.status(500).json({
       success: false,
       message: 'Error deleting user',
@@ -157,16 +142,27 @@ const deleteUser = async (req, res) => {
     });
   }
 };
-  
+
+/**
+ * @description Get teams associated with a user (Placeholder)
+ * @route GET /api/users/:id/teams
+ * @access Private (or Public depending on requirements)
+ */
 const getUserTeams = async (req, res) => {
   try {
     const userId = req.params.id;
+
+    // Placeholder - Implement actual logic to fetch teams
+    // Example: Join users and teams tables via a user_teams mapping table
+    // const result = await pool.query('SELECT t.* FROM teams t JOIN user_teams ut ON t.id = ut.team_id WHERE ut.user_id = $1', [userId]);
+
     res.status(200).json({
       success: true,
       message: `Get teams for user ${userId} placeholder`,
-      data: []
+      data: [] // Replace with result.rows when implemented
     });
   } catch (error) {
+    console.error(`Error fetching teams for user ${req.params.id}:`, error); // Log the error
     res.status(500).json({
       success: false,
       message: 'Error fetching user teams',
@@ -175,23 +171,30 @@ const getUserTeams = async (req, res) => {
   }
 };
 
+/**
+ * @description Get tags associated with a user
+ * @route GET /api/users/:id/tags
+ * @access Private (or Public)
+ */
 const getUserTags = async (req, res) => {
   try {
     const userId = req.params.id;
-    
-    const tagsResult = await db.query(`
-      SELECT t.id, t.name, t.category, t.supercategory 
+
+    // Fetch tags associated with the user
+    const tagsResult = await pool.query(`
+      SELECT t.id, t.name, t.category, t.supercategory
       FROM tags t
       JOIN user_tags ut ON t.id = ut.tag_id
       WHERE ut.user_id = $1
     `, [userId]);
 
+    // Send successful response
     res.status(200).json({
       success: true,
       data: tagsResult.rows
     });
   } catch (error) {
-    console.error('Error fetching user tags:', error);
+    console.error(`Error fetching tags for user ${req.params.id}:`, error); // Log the error
     res.status(500).json({
       success: false,
       message: 'Error fetching user tags',
@@ -200,59 +203,82 @@ const getUserTags = async (req, res) => {
   }
 };
 
+/**
+ * @description Update the tags associated with a user
+ * @route PUT /api/users/:id/tags
+ * @access Private (Requires authentication)
+ */
 const updateUserTags = async (req, res) => {
   const userId = req.params.id;
-  const { tags } = req.body;
+  const { tags } = req.body; // Expecting an array like [{ tag_id: 1 }, { tag_id: 5 }]
 
-  // Input validation: Ensure tags is an array and each tag has a valid tag_id
-  if (!Array.isArray(tags) || tags.some(tag => !tag.tag_id)) {
+  // Input validation: Ensure tags is an array
+  if (!Array.isArray(tags)) {
     return res.status(400).json({
       success: false,
-      message: 'Invalid tag data provided'
+      message: 'Invalid data provided: "tags" must be an array.'
     });
   }
 
-  const client = await db.pool.connect();
+  // Further validation: Ensure each item has a numeric tag_id (or adapt if IDs are UUIDs etc.)
+  if (tags.some(tag => typeof tag.tag_id !== 'number' || !Number.isInteger(tag.tag_id))) {
+      return res.status(400).json({
+          success: false,
+          message: 'Invalid tag data provided: Each tag must have a numeric "tag_id".'
+      });
+  }
+
+  // Get a client from the pool for transaction management
+  const client = await pool.connect();
 
   try {
+    // Start transaction
     await client.query('BEGIN');
 
-    // Remove existing user tags before inserting new ones
+    // Clear existing tags for this user
     await client.query('DELETE FROM user_tags WHERE user_id = $1', [userId]);
 
-    // Insert new tags if provided
+    // Insert new tags if the array is not empty
     if (tags.length > 0) {
-      const tagInserts = tags.map(tag =>
-        client.query(`
-          INSERT INTO user_tags (user_id, tag_id)
-          VALUES ($1, $2)
-        `, [userId, tag.tag_id])
-      );
-      await Promise.all(tagInserts);  // Execute all insertions in parallel
+      // Prepare values for bulk insert or multiple inserts
+      const insertPromises = tags.map(tag => {
+        return client.query(
+          'INSERT INTO user_tags (user_id, tag_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', // Added ON CONFLICT just in case
+          [userId, tag.tag_id]
+        );
+      });
+      // Wait for all insert operations to complete
+      await Promise.all(insertPromises);
     }
 
+    // Commit transaction
     await client.query('COMMIT');
+
+    // Send success response
     res.status(200).json({
       success: true,
       message: 'User tags updated successfully'
     });
   } catch (error) {
+    // Rollback transaction in case of error
     await client.query('ROLLBACK');
-    console.error('Error updating user tags:', error);
+    console.error(`Error updating tags for user ${userId}:`, error); // Log the error
     res.status(500).json({
       success: false,
       message: 'Error updating user tags',
       error: error.message
     });
   } finally {
-    client.release();  // Always release the client after use
+    // ALWAYS release the client back to the pool
+    client.release();
   }
 };
-  
+
+// Export all controller functions
 module.exports = {
   getAllUsers,
   getUserById,
-  updateUser,
+  updateUser, // Now using the debug version
   deleteUser,
   getUserTeams,
   getUserTags,
