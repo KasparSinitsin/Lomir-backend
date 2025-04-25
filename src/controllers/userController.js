@@ -1,89 +1,178 @@
 const db = require('../config/database');
 
 const getAllUsers = async (req, res) => {
-    try {
-      // Placeholder response
-      res.status(200).json({
-        success: true,
-        message: 'Get all users placeholder',
-        data: []
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: 'Error fetching users',
-        error: error.message
-      });
-    }
-  };
+  try {
+    // Placeholder response
+    res.status(200).json({
+      success: true,
+      message: 'Get all users placeholder',
+      data: []
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching users',
+      error: error.message
+    });
+  }
+};
   
 const getUserById = async (req, res) => {
-    try {
-      const userId = req.params.id;
-      res.status(200).json({
-        success: true,
-        message: `Get user ${userId} placeholder`,
-        data: { id: userId, username: 'sampleuser' }
-      });
-    } catch (error) {
-      res.status(500).json({
+  try {
+    const userId = req.params.id;
+    const result = await db.query(
+      'SELECT id, username, email, first_name, last_name, bio, avatar_url, postal_code, created_at FROM users WHERE id = $1',
+      [userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
         success: false,
-        message: 'Error fetching user',
-        error: error.message
+        message: 'User not found'
       });
     }
-  };
+
+    res.status(200).json({
+      success: true,
+      message: 'User retrieved successfully',
+      data: result.rows[0]
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching user',
+      error: error.message
+    });
+  }
+};
   
 const updateUser = async (req, res) => {
-    try {
-      const userId = req.params.id;
-      res.status(200).json({
-        success: true,
-        message: `Update user ${userId} placeholder`,
-        data: { id: userId }
-      });
-    } catch (error) {
-      res.status(500).json({
+  try {
+    const userId = req.params.id;
+    
+    // Check if user is authorized to update this profile
+    if (req.user && req.user.id !== parseInt(userId)) {
+      return res.status(403).json({
         success: false,
-        message: 'Error updating user',
-        error: error.message
+        message: 'You are not authorized to update this profile'
       });
     }
-  };
+    
+    const { first_name, last_name, bio, postal_code, avatar_url } = req.body;
+    
+    // Build dynamic update query
+    const updateFields = [];
+    const values = [];
+    let paramCounter = 1;
+    
+    if (first_name !== undefined) {
+      updateFields.push(`first_name = $${paramCounter}`);
+      values.push(first_name);
+      paramCounter++;
+    }
+    
+    if (last_name !== undefined) {
+      updateFields.push(`last_name = $${paramCounter}`);
+      values.push(last_name);
+      paramCounter++;
+    }
+    
+    if (bio !== undefined) {
+      updateFields.push(`bio = $${paramCounter}`);
+      values.push(bio);
+      paramCounter++;
+    }
+    
+    if (postal_code !== undefined) {
+      updateFields.push(`postal_code = $${paramCounter}`);
+      values.push(postal_code);
+      paramCounter++;
+    }
+    
+    if (avatar_url !== undefined) {
+      updateFields.push(`avatar_url = $${paramCounter}`);
+      values.push(avatar_url);
+      paramCounter++;
+    }
+    
+    // Add updated_at timestamp
+    updateFields.push(`updated_at = NOW()`);
+    
+    // Only proceed if there are fields to update
+    if (updateFields.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No fields to update'
+      });
+    }
+    
+    // Add user ID as the last parameter
+    values.push(userId);
+    
+    const query = `
+      UPDATE users
+      SET ${updateFields.join(', ')}
+      WHERE id = $${paramCounter}
+      RETURNING id, username, email, first_name, last_name, bio, avatar_url, postal_code
+    `;
+    
+    const result = await db.query(query, values);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+    
+    res.status(200).json({
+      success: true,
+      message: 'User updated successfully',
+      data: result.rows[0]
+    });
+  } catch (error) {
+    console.error('Error updating user:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error updating user',
+      error: error.message
+    });
+  }
+};
   
 const deleteUser = async (req, res) => {
-    try {
-      const userId = req.params.id;
-      res.status(200).json({
-        success: true,
-        message: `Delete user ${userId} placeholder`,
-        data: { id: userId }
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: 'Error deleting user',
-        error: error.message
-      });
-    }
-  };
+  try {
+    const userId = req.params.id;
+    res.status(200).json({
+      success: true,
+      message: `Delete user ${userId} placeholder`,
+      data: { id: userId }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting user',
+      error: error.message
+    });
+  }
+};
   
 const getUserTeams = async (req, res) => {
-    try {
-      const userId = req.params.id;
-      res.status(200).json({
-        success: true,
-        message: `Get teams for user ${userId} placeholder`,
-        data: []
-      });
-    } catch (error) {
-      res.status(500).json({
-        success: false,
-        message: 'Error fetching user teams',
-        error: error.message
-      });
-    }
-  };
+  try {
+    const userId = req.params.id;
+    res.status(200).json({
+      success: true,
+      message: `Get teams for user ${userId} placeholder`,
+      data: []
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching user teams',
+      error: error.message
+    });
+  }
+};
 
 const getUserTags = async (req, res) => {
   try {
