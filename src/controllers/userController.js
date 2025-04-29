@@ -1,8 +1,6 @@
-// Import necessary database configuration
-// Assuming 'db' might be used elsewhere or provides alternative query methods
+// Single import for database access
 const db = require('../config/database');
-// Specifically importing pool for direct query execution as per debug instructions
-const { pool } = require('../config/database');
+const { pool } = db;
 
 /**
  * @description Get all users (Placeholder)
@@ -12,15 +10,14 @@ const { pool } = require('../config/database');
 const getAllUsers = async (req, res) => {
   try {
     // Placeholder response - Implement actual logic to fetch all users later
-    // Example: const result = await pool.query('SELECT id, username, email FROM users');
-    console.log('getAllUsers placeholder called.'); // Added log
+    console.log('getAllUsers placeholder called.');
     res.status(200).json({
       success: true,
       message: 'Get all users placeholder',
       data: [] // Replace with result.rows when implemented
     });
   } catch (error) {
-    console.error('Error fetching all users:', error); // Log the error
+    console.error('Error fetching all users:', error);
     res.status(500).json({
       success: false,
       message: 'Error fetching users',
@@ -37,7 +34,7 @@ const getAllUsers = async (req, res) => {
 const getUserById = async (req, res) => {
   try {
     const userId = req.params.id;
-    console.log(`getUserById called for ID: ${userId}`); // Added log
+    console.log(`getUserById called for ID: ${userId}`);
 
     // Use pool directly for the query
     const result = await pool.query(
@@ -47,7 +44,7 @@ const getUserById = async (req, res) => {
 
     // Check if user was found
     if (result.rows.length === 0) {
-      console.log(`User not found for ID: ${userId}`); // Added log
+      console.log(`User not found for ID: ${userId}`);
       return res.status(404).json({
         success: false,
         message: 'User not found'
@@ -55,7 +52,7 @@ const getUserById = async (req, res) => {
     }
 
     // Send successful response with user data
-    console.log(`User found for ID: ${userId}`); // Added log
+    console.log(`User found for ID: ${userId}`);
     res.status(200).json({
       success: true,
       message: 'User retrieved successfully',
@@ -63,7 +60,7 @@ const getUserById = async (req, res) => {
       data: result.rows[0]
     });
   } catch (error) {
-    console.error(`Error fetching user ${req.params.id}:`, error); // Log the error
+    console.error(`Error fetching user ${req.params.id}:`, error);
     res.status(500).json({
       success: false,
       message: 'Error fetching user',
@@ -73,63 +70,99 @@ const getUserById = async (req, res) => {
 };
 
 /**
- * @description Update a user's profile (DEBUGGING VERSION - Step 8)
+ * @description Update a user's profile
  * @route PUT /api/users/:id
- * @access Private (Requires authentication and authorization - bypassed in this debug version)
+ * @access Private (Requires authentication and authorization)
  */
 const updateUser = async (req, res) => {
   try {
     const userId = req.params.id;
-    // Log incoming request details for debugging
-    console.log('DEBUG updateUser CALLED FOR ID:', userId);
-    // Log the raw request body (should be snake_case if frontend interceptor works)
-    console.log('DEBUG REQUEST BODY:', req.body);
+    console.log('updateUser called for ID:', userId);
+    console.log('Request body:', req.body);
 
-    // --- Debugging Direct Database Update ---
-    // Directly updates 'bio' and 'updated_at' using pool.query.
-    // Bypasses dynamic field building and authorization checks for testing.
-    const bioToUpdate = req.body.bio || `Updated bio via debug at ${new Date().toISOString()}`; // Use provided bio or a default debug message
-    console.log(`Attempting direct DB update for user ${userId} with bio: "${bioToUpdate}"`); // Log intent
+    // Extract all relevant fields from request body
+    const { first_name, last_name, bio, postal_code, avatar_url } = req.body;
 
-    const result = await pool.query(
-      // Update the user's bio and set the updated_at timestamp
-      // RETURNING * fetches all columns of the updated row
-      'UPDATE users SET bio = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
-      [bioToUpdate, userId]
-    );
-    // --- End Debugging Section ---
+    // Build SET clause dynamically
+    const updateFields = [];
+    const queryParams = [];
+    let paramPosition = 1;
 
-    // Check if the update query actually found and updated a row
-    if (result.rows.length === 0) {
-        // This means the WHERE id = $2 clause did not match any user
-        console.log(`DEBUG updateUser: User not found for ID ${userId}, update failed.`);
-        return res.status(404).json({
-            success: false,
-            message: 'User not found, update failed'
-        });
+    // Add fields that exist in the request
+    if (first_name !== undefined) {
+      updateFields.push(`first_name = $${paramPosition}`);
+      queryParams.push(first_name);
+      paramPosition++;
+    }
+    if (last_name !== undefined) {
+      updateFields.push(`last_name = $${paramPosition}`);
+      queryParams.push(last_name);
+      paramPosition++;
+    }
+    if (bio !== undefined) {
+      updateFields.push(`bio = $${paramPosition}`);
+      queryParams.push(bio);
+      paramPosition++;
+    }
+    if (postal_code !== undefined) {
+      updateFields.push(`postal_code = $${paramPosition}`);
+      queryParams.push(postal_code);
+      paramPosition++;
+    }
+    if (avatar_url !== undefined) {
+      updateFields.push(`avatar_url = $${paramPosition}`);
+      queryParams.push(avatar_url);
+      paramPosition++;
     }
 
-    // Log the result of the database operation
-    console.log('DEBUG Database update result (user data):', result.rows[0]);
+    // Always update the updated_at timestamp
+    updateFields.push(`updated_at = NOW()`);
 
-    // Send successful response with the updated user data
+    // Only proceed if there are fields to update
+    if (updateFields.length === 1) { // Only updated_at is in the array
+      return res.status(400).json({
+        success: false,
+        message: 'No fields provided for update'
+      });
+    }
+
+    // Add the user ID as the last parameter
+    queryParams.push(userId);
+
+    // Build and execute the query
+    const query = `
+      UPDATE users 
+      SET ${updateFields.join(', ')} 
+      WHERE id = $${paramPosition}
+      RETURNING *
+    `;
+
+    console.log('Executing query:', query);
+    console.log('With parameters:', queryParams);
+
+    const result = await pool.query(query, queryParams);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
     res.status(200).json({
       success: true,
-      message: 'User updated successfully (debug mode)',
-      // Return the updated user data (already snake_case)
+      message: 'User updated successfully',
       data: result.rows[0]
     });
   } catch (error) {
-    // Log any errors encountered during the process
-    console.error(`Error updating user ${req.params.id} (debug mode):`, error);
+    console.error(`Error updating user ${req.params.id}:`, error);
     res.status(500).json({
       success: false,
-      message: 'Error updating user (debug mode)',
+      message: 'Error updating user',
       error: error.message
     });
   }
 };
-
 
 /**
  * @description Delete a user (Placeholder)
@@ -139,21 +172,16 @@ const updateUser = async (req, res) => {
 const deleteUser = async (req, res) => {
   try {
     const userId = req.params.id;
-    console.log(`deleteUser placeholder called for ID: ${userId}`); // Added log
+    console.log(`deleteUser placeholder called for ID: ${userId}`);
 
     // Placeholder - Implement actual delete logic later
-    // Example:
-    // 1. Check authorization (e.g., if req.user.id === userId || req.user.isAdmin)
-    // 2. Perform delete: await pool.query('DELETE FROM users WHERE id = $1', [userId]);
-    // 3. Check result.rowCount to confirm deletion
-
     res.status(200).json({
       success: true,
       message: `Delete user ${userId} placeholder`,
       data: { id: userId } // Return the ID of the "deleted" user
     });
   } catch (error) {
-    console.error(`Error deleting user ${req.params.id}:`, error); // Log the error
+    console.error(`Error deleting user ${req.params.id}:`, error);
     res.status(500).json({
       success: false,
       message: 'Error deleting user',
@@ -170,19 +198,16 @@ const deleteUser = async (req, res) => {
 const getUserTeams = async (req, res) => {
   try {
     const userId = req.params.id;
-    console.log(`getUserTeams placeholder called for user ID: ${userId}`); // Added log
+    console.log(`getUserTeams placeholder called for user ID: ${userId}`);
 
     // Placeholder - Implement actual logic to fetch teams
-    // Example: Join users and teams tables via a user_teams mapping table
-    // const result = await pool.query('SELECT t.* FROM teams t JOIN user_teams ut ON t.id = ut.team_id WHERE ut.user_id = $1', [userId]);
-
     res.status(200).json({
       success: true,
       message: `Get teams for user ${userId} placeholder`,
       data: [] // Replace with result.rows when implemented
     });
   } catch (error) {
-    console.error(`Error fetching teams for user ${req.params.id}:`, error); // Log the error
+    console.error(`Error fetching teams for user ${req.params.id}:`, error);
     res.status(500).json({
       success: false,
       message: 'Error fetching user teams',
@@ -199,7 +224,7 @@ const getUserTeams = async (req, res) => {
 const getUserTags = async (req, res) => {
   try {
     const userId = req.params.id;
-    console.log(`getUserTags called for user ID: ${userId}`); // Added log
+    console.log(`getUserTags called for user ID: ${userId}`);
 
     // Fetch tags associated with the user using a JOIN
     const tagsResult = await pool.query(`
@@ -209,7 +234,7 @@ const getUserTags = async (req, res) => {
       WHERE ut.user_id = $1
     `, [userId]);
 
-    console.log(`Found ${tagsResult.rows.length} tags for user ID: ${userId}`); // Added log
+    console.log(`Found ${tagsResult.rows.length} tags for user ID: ${userId}`);
 
     // Send successful response with the list of tags
     res.status(200).json({
@@ -218,7 +243,7 @@ const getUserTags = async (req, res) => {
       data: tagsResult.rows
     });
   } catch (error) {
-    console.error(`Error fetching tags for user ${req.params.id}:`, error); // Log the error
+    console.error(`Error fetching tags for user ${req.params.id}:`, error);
     res.status(500).json({
       success: false,
       message: 'Error fetching user tags',
@@ -236,7 +261,7 @@ const updateUserTags = async (req, res) => {
   const userId = req.params.id;
   // Expecting body like { tags: [{ tag_id: 1 }, { tag_id: 5 }] } (snake_case from frontend interceptor)
   const { tags } = req.body;
-  console.log(`updateUserTags called for user ID: ${userId} with tags:`, tags); // Added log
+  console.log(`updateUserTags called for user ID: ${userId} with tags:`, tags);
 
   // --- Input Validation ---
   // Ensure tags is an array
@@ -258,7 +283,6 @@ const updateUserTags = async (req, res) => {
       });
   }
   // --- End Validation ---
-
 
   // Get a client from the pool for transaction management
   const client = await pool.connect();
@@ -302,7 +326,7 @@ const updateUserTags = async (req, res) => {
   } catch (error) {
     // If any error occurs, rollback the transaction
     await client.query('ROLLBACK');
-    console.error(`Error updating tags for user ${userId}, transaction rolled back:`, error); // Log the error
+    console.error(`Error updating tags for user ${userId}, transaction rolled back:`, error);
     res.status(500).json({
       success: false,
       message: 'Error updating user tags',
@@ -319,7 +343,7 @@ const updateUserTags = async (req, res) => {
 module.exports = {
   getAllUsers,
   getUserById,
-  updateUser, // Exporting the debug version
+  updateUser,
   deleteUser,
   getUserTeams,
   getUserTags,
