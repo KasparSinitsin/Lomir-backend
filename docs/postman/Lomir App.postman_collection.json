@@ -23,15 +23,12 @@
 						}
 					}
 				},
-			"url": {
-  "raw": "https://lomir-backend.onrender.com/api/auth/register",
-  "protocol": "https",
-  "host": [
-    "https://lomir-backend.onrender",
-    "com"
-  ],
-  "path": ["api", "auth", "register"]
-}
+				"url": {
+					"raw": "https://lomir-backend.onrender.com/api/auth/register",
+					"protocol": "https",
+					"host": ["lomir-backend", "onrender", "com"],
+					"path": ["api", "auth", "register"]
+				}
 			},
 			"response": []
 		},
@@ -53,12 +50,9 @@
 					}
 				},
 				"url": {
-					"raw": "http://localhost:5001/api/auth/login",
-					"protocol": "http",
-					"host": [
-						"localhost"
-					],
-					"port": "5001",
+					"raw": "https://lomir-backend.onrender.com/api/auth/login",
+					"protocol": "https",
+					"host": ["lomir-backend", "onrender", "com"],
 					"path": [
 						"api",
 						"auth",
@@ -95,12 +89,9 @@
 					}
 				},
 				"url": {
-					"raw": "http://localhost:5001/api/auth/me",
-					"protocol": "http",
-					"host": [
-						"localhost"
-					],
-					"port": "5001",
+					"raw": "https://lomir-backend.onrender.com/api/auth/me",
+					"protocol": "https",
+					"host": ["lomir-backend", "onrender", "com"],
 					"path": [
 						"api",
 						"auth",
