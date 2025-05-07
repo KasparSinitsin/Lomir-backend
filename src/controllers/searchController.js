@@ -47,6 +47,7 @@ const searchController = {
           u.last_name,
           u.bio,
           u.postal_code,
+          u.avatar_url,
           (SELECT STRING_AGG(t.name, ', ')
             FROM user_tags ut
             JOIN tags t ON ut.tag_id = t.id
@@ -119,6 +120,7 @@ const searchController = {
           u.last_name,
           u.bio,
           u.postal_code,
+          u.avatar_url,
           (SELECT STRING_AGG(t.name, ', ')
             FROM user_tags ut
             JOIN tags t ON ut.tag_id = t.id
