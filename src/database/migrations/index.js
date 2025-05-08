@@ -9,6 +9,7 @@ const createMessagesTable = require('./07_create_messages');
 const createBadgesTable = require('./08_create_badges');
 const createUserBadgesTable = require('./09_create_user_badges');
 const enhanceTagsTable = require('./10_enhance_tags_table');
+const addUserVisibilityColumn = require('./add_visibility_to_users');
 
 const runMigrations = async () => {
   try {
@@ -24,6 +25,7 @@ const runMigrations = async () => {
     await createBadgesTable();
     await createUserBadgesTable();
     await enhanceTagsTable();
+    await addUserVisibilityColumn();
     
     console.log('All migrations completed successfully!');
   } catch (error) {
