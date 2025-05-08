@@ -81,7 +81,7 @@ const updateUser = async (req, res) => {
     console.log('Request body:', req.body);
 
     // Extract all relevant fields from request body
-    const { first_name, last_name, bio, postal_code, avatar_url } = req.body;
+    const { first_name, last_name, bio, postal_code, avatar_url, is_public } = req.body;
 
     // Build SET clause dynamically
     const updateFields = [];
@@ -112,6 +112,11 @@ const updateUser = async (req, res) => {
     if (avatar_url !== undefined) {
       updateFields.push(`avatar_url = $${paramPosition}`);
       queryParams.push(avatar_url);
+      paramPosition++;
+    }
+    if (is_public !== undefined) {
+      updateFields.push(`is_public = $${paramPosition}`);
+      queryParams.push(is_public);
       paramPosition++;
     }
 

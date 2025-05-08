@@ -5,6 +5,7 @@ const searchController = {
     try {
       const { query, authenticated } = req.query;
       const isAuthenticated = authenticated === 'true';
+      const userId = req.user?.id; // Get the current user's ID if authenticated
 
       if (!query || query.trim().length < 2) {
         return res.status(400).json({
@@ -39,6 +40,7 @@ const searchController = {
         LIMIT 20
       `;
 
+      // Updated user query to respect profile visibility settings
       const userQuery = `
         SELECT
           u.id,
@@ -61,6 +63,10 @@ const searchController = {
             u.last_name ILIKE $1 OR
             u.bio ILIKE $1 OR
             t.name ILIKE $1
+        )
+        AND (
+          u.is_public = TRUE OR
+          ${userId ? `u.id = ${userId}` : 'FALSE'} 
         )
         GROUP BY
           u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code
@@ -93,6 +99,7 @@ const searchController = {
     try {
       const { authenticated } = req.query;
       const isAuthenticated = authenticated === 'true';
+      const userId = req.user?.id; // Get the current user's ID if authenticated
 
       const teamQuery = `
         SELECT
@@ -112,6 +119,7 @@ const searchController = {
         LIMIT 20
       `;
 
+      // Updated user query to respect profile visibility settings
       const userQuery = `
         SELECT
           u.id,
@@ -126,6 +134,10 @@ const searchController = {
             JOIN tags t ON ut.tag_id = t.id
             WHERE ut.user_id = u.id) as tags
         FROM users u
+        WHERE (
+          u.is_public = TRUE OR
+          ${userId ? `u.id = ${userId}` : 'FALSE'}
+        )
         GROUP BY
           u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code
         LIMIT 20
@@ -152,6 +164,7 @@ const searchController = {
       });
     }
   },
+
 
   async search(req, res) {
     res.status(200).json({
