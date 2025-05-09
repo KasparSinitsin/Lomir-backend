@@ -37,10 +37,10 @@ const getUserById = async (req, res) => {
     console.log(`getUserById called for ID: ${userId}`);
 
     // Use pool directly for the query
-    const result = await pool.query(
-      'SELECT id, username, email, first_name, last_name, bio, avatar_url, postal_code, is_public, created_at FROM users WHERE id = $1',
-      [userId]
-    );
+const result = await pool.query(
+  'SELECT id, username, email, first_name, last_name, bio, avatar_url, postal_code, is_public, created_at FROM users WHERE id = $1',
+  [userId]
+);
 
     // Check if user was found
     if (result.rows.length === 0) {
