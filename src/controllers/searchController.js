@@ -16,6 +16,7 @@ const searchController = {
 
       const searchTerm = `%${query.trim()}%`;
 
+      // Updated team query to properly respect visibility
       const teamQuery = `
         SELECT
           t.id,
@@ -34,13 +35,21 @@ const searchController = {
             tag.name ILIKE $1
           )
           AND t.archived_at IS NULL
-          ${!isAuthenticated ? 'AND t.is_public = TRUE' : ''}
+          AND (
+            t.is_public = TRUE
+            ${userId ? 
+              `OR EXISTS (
+                SELECT 1 FROM team_members
+                WHERE team_id = t.id AND user_id = ${userId}
+              )` 
+              : ''}
+          )
         GROUP BY
           t.id, t.name, t.description, t.is_public, t.max_members
         LIMIT 20
       `;
 
-      // Updated user query to respect profile visibility settings
+      // User query that respects profile visibility settings
       const userQuery = `
         SELECT
           u.id,
@@ -78,10 +87,19 @@ const searchController = {
         db.pool.query(userQuery, [searchTerm])
       ]);
 
+      // Log search results for debugging
+      console.log(`Search for "${query}" found ${teamResults.rows.length} teams and ${userResults.rows.length} users`);
+      
+      // Ensure proper boolean values for is_public in teams
+      const teamsWithFixedVisibility = teamResults.rows.map(team => ({
+        ...team,
+        is_public: team.is_public === true
+      }));
+
       res.status(200).json({
         success: true,
         data: {
-          teams: teamResults.rows,
+          teams: teamsWithFixedVisibility,
           users: userResults.rows
         }
       });
@@ -101,6 +119,7 @@ const searchController = {
       const isAuthenticated = authenticated === 'true';
       const userId = req.user?.id; // Get the current user's ID if authenticated
 
+      // Updated team query to respect visibility
       const teamQuery = `
         SELECT
           t.id,
@@ -113,7 +132,15 @@ const searchController = {
         LEFT JOIN team_members tm ON t.id = tm.team_id
         WHERE
           t.archived_at IS NULL
-          ${!isAuthenticated ? 'AND t.is_public = TRUE' : ''}
+          AND (
+            t.is_public = TRUE
+            ${userId ? 
+              `OR EXISTS (
+                SELECT 1 FROM team_members
+                WHERE team_id = t.id AND user_id = ${userId}
+              )` 
+              : ''}
+          )
         GROUP BY
           t.id, t.name, t.description, t.is_public, t.max_members
         LIMIT 20
@@ -148,10 +175,16 @@ const searchController = {
         db.pool.query(userQuery)
       ]);
 
+      // Ensure proper boolean values for is_public in teams
+      const teamsWithFixedVisibility = teamResults.rows.map(team => ({
+        ...team,
+        is_public: team.is_public === true
+      }));
+
       res.status(200).json({
         success: true,
         data: {
-          teams: teamResults.rows,
+          teams: teamsWithFixedVisibility,
           users: userResults.rows
         }
       });
@@ -165,30 +198,214 @@ const searchController = {
     }
   },
 
-
   async search(req, res) {
-    res.status(200).json({
-      success: true,
-      message: 'Protected general search',
-      data: { results: [] }
-    });
+    try {
+      const { query, tags, location, distance } = req.query;
+      const userId = req.user?.id;
+      
+      // Build dynamic search query based on provided parameters
+      let searchQuery = `
+        SELECT
+          t.id,
+          t.name, 
+          t.description,
+          t.is_public,
+          t.max_members,
+          COUNT(tm.id) as member_count
+        FROM teams t
+        LEFT JOIN team_members tm ON t.id = tm.team_id
+      `;
+      
+      // Add tag joins if searching by tags
+      if (tags) {
+        searchQuery += `
+          JOIN team_tags tt ON t.id = tt.team_id
+          JOIN tags tag ON tt.tag_id = tag.id
+        `;
+      }
+      
+      // Start WHERE clause
+      searchQuery += ` WHERE t.archived_at IS NULL `;
+      
+      // Add visibility condition
+      searchQuery += `
+        AND (
+          t.is_public = TRUE
+          ${userId ? 
+            `OR EXISTS (
+              SELECT 1 FROM team_members
+              WHERE team_id = t.id AND user_id = ${userId}
+            )` 
+            : ''}
+        )
+      `;
+      
+      // Add search term condition if query is provided
+      if (query) {
+        searchQuery += ` AND (t.name ILIKE '%${query}%' OR t.description ILIKE '%${query}%') `;
+      }
+      
+      // Add tag condition if tags are provided
+      if (tags) {
+        const tagIds = Array.isArray(tags) ? tags : [tags];
+        searchQuery += ` AND tag.id IN (${tagIds.join(',')}) `;
+      }
+      
+      // Add location condition if location is provided
+      if (location) {
+        // This would be more complex in a real implementation with geospatial queries
+        searchQuery += ` AND t.postal_code = '${location}' `;
+      }
+      
+      // Group by and limit
+      searchQuery += `
+        GROUP BY t.id, t.name, t.description, t.is_public, t.max_members
+        LIMIT 20
+      `;
+      
+      const result = await db.pool.query(searchQuery);
+      
+      // Ensure proper boolean values for is_public in teams
+      const teamsWithFixedVisibility = result.rows.map(team => ({
+        ...team,
+        is_public: team.is_public === true
+      }));
+      
+      res.status(200).json({
+        success: true,
+        data: {
+          results: teamsWithFixedVisibility
+        }
+      });
+    } catch (error) {
+      console.error('Error during search:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error during search',
+        error: error.message
+      });
+    }
   },
 
   async searchByTag(req, res) {
-    const tagId = req.params.tagId;
-    res.status(200).json({
-      success: true,
-      message: `Search by tag ${tagId} placeholder`,
-      data: { results: [] }
-    });
+    try {
+      const tagId = req.params.tagId;
+      const userId = req.user?.id;
+      
+      // Define the query to get teams with the specified tag
+      const query = `
+        SELECT 
+          t.id,
+          t.name,
+          t.description,
+          t.is_public,
+          t.max_members,
+          COUNT(tm.id) as member_count
+        FROM teams t
+        JOIN team_tags tt ON t.id = tt.team_id
+        LEFT JOIN team_members tm ON t.id = tm.team_id
+        WHERE 
+          tt.tag_id = $1
+          AND t.archived_at IS NULL
+          AND (
+            t.is_public = TRUE
+            ${userId ? 
+              `OR EXISTS (
+                SELECT 1 FROM team_members
+                WHERE team_id = t.id AND user_id = ${userId}
+              )` 
+              : ''}
+          )
+        GROUP BY t.id, t.name, t.description, t.is_public, t.max_members
+        LIMIT 20
+      `;
+      
+      const result = await db.pool.query(query, [tagId]);
+      
+      // Ensure proper boolean values for is_public in teams
+      const teamsWithFixedVisibility = result.rows.map(team => ({
+        ...team,
+        is_public: team.is_public === true
+      }));
+      
+      res.status(200).json({
+        success: true,
+        data: {
+          results: teamsWithFixedVisibility
+        }
+      });
+    } catch (error) {
+      console.error(`Error searching by tag ${req.params.tagId}:`, error);
+      res.status(500).json({
+        success: false,
+        message: 'Error during tag search',
+        error: error.message
+      });
+    }
   },
 
   async searchByLocation(req, res) {
-    res.status(200).json({
-      success: true,
-      message: 'Search by location placeholder',
-      data: { results: [] }
-    });
+    try {
+      const { postalCode, distance } = req.query;
+      const userId = req.user?.id;
+      
+      if (!postalCode) {
+        return res.status(400).json({
+          success: false,
+          message: 'Postal code is required for location search'
+        });
+      }
+      
+      // A simple implementation - in a real-world scenario, you would use
+      // geospatial queries with coordinates and distance calculations
+      const query = `
+        SELECT 
+          t.id,
+          t.name,
+          t.description,
+          t.is_public,
+          t.max_members,
+          COUNT(tm.id) as member_count
+        FROM teams t
+        LEFT JOIN team_members tm ON t.id = tm.team_id
+        WHERE 
+          t.postal_code = $1
+          AND t.archived_at IS NULL
+          AND (
+            t.is_public = TRUE
+            ${userId ? 
+              `OR EXISTS (
+                SELECT 1 FROM team_members
+                WHERE team_id = t.id AND user_id = ${userId}
+              )` 
+              : ''}
+          )
+        GROUP BY t.id, t.name, t.description, t.is_public, t.max_members
+        LIMIT 20
+      `;
+      
+      const result = await db.pool.query(query, [postalCode]);
+      
+      // Ensure proper boolean values for is_public in teams
+      const teamsWithFixedVisibility = result.rows.map(team => ({
+        ...team,
+        is_public: team.is_public === true
+      }));
+      
+      res.status(200).json({
+        success: true,
+        data: {
+          results: teamsWithFixedVisibility
+        }
+      });
+    } catch (error) {
+      console.error('Error during location search:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error during location search',
+        error: error.message
+      });
+    }
   }
 };
 

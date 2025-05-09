@@ -62,7 +62,7 @@ const createTeam = async (req, res) => {
       await client.query('ROLLBACK'); // Rollback on validation error
       return res.status(400).json({
         success: false,
-        message: 'Invalid input data', // More specific message
+        message: 'Invalid input data',
         errors: error.details.map(detail => detail.message)
       });
     }
@@ -70,6 +70,9 @@ const createTeam = async (req, res) => {
 
     await client.query('BEGIN');
     console.log('--> Transaction started');
+
+    // Ensure is_public is a proper boolean
+    const isPublicBoolean = value.is_public === true || value.is_public === 'true' || value.is_public === 1;
 
     const teamResult = await client.query(`
       INSERT INTO teams (
@@ -85,7 +88,7 @@ const createTeam = async (req, res) => {
       value.name,
       value.description,
       creatorId,
-      value.is_public,
+      isPublicBoolean, // Use our converted boolean
       value.max_members,
       value.postal_code
     ]);
@@ -386,11 +389,12 @@ const updateTeam = async (req, res) => {
         paramCounter++;
       }
 
-      if (value.is_public !== undefined) {
-        updateFields.push(`is_public = $${paramCounter}`);
-        queryParams.push(value.is_public);
-        paramCounter++;
-      }
+    if (value.is_public !== undefined) {
+      const isPublicBoolean = value.is_public === true || value.is_public === 'true' || value.is_public === 1;
+      updateFields.push(`is_public = $${paramCounter}`);
+      queryParams.push(isPublicBoolean); 
+      paramCounter++;
+    }
 
       if (value.max_members) {
         updateFields.push(`max_members = $${paramCounter}`);
