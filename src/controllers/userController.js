@@ -38,7 +38,7 @@ const getUserById = async (req, res) => {
 
     // Use pool directly for the query
     const result = await pool.query(
-      'SELECT id, username, email, first_name, last_name, bio, avatar_url, postal_code, created_at FROM users WHERE id = $1',
+      'SELECT id, username, email, first_name, last_name, bio, avatar_url, postal_code, is_public, created_at FROM users WHERE id = $1',
       [userId]
     );
 
@@ -114,10 +114,13 @@ const updateUser = async (req, res) => {
       queryParams.push(avatar_url);
       paramPosition++;
     }
+    
+    // Make sure is_public is explicitly handled
     if (is_public !== undefined) {
       updateFields.push(`is_public = $${paramPosition}`);
       queryParams.push(is_public);
       paramPosition++;
+      console.log(`Setting is_public to: ${is_public} (${typeof is_public})`);
     }
 
     // Always update the updated_at timestamp
@@ -139,7 +142,7 @@ const updateUser = async (req, res) => {
       UPDATE users 
       SET ${updateFields.join(', ')} 
       WHERE id = $${paramPosition}
-      RETURNING *
+      RETURNING id, username, email, first_name, last_name, bio, avatar_url, postal_code, is_public, created_at, updated_at
     `;
 
     console.log('Executing query:', query);
@@ -154,6 +157,9 @@ const updateUser = async (req, res) => {
       });
     }
 
+    // Log the response data before sending it
+    console.log('Response data being sent to client:', result.rows[0]);
+    
     res.status(200).json({
       success: true,
       message: 'User updated successfully',
