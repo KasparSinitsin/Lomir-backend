@@ -465,10 +465,18 @@ const updateTeam = async (req, res) => {
 
       await client.query('COMMIT');
 
-      res.status(200).json({
-        success: true,
-        message: 'Team updated successfully'
-      });
+// Fetch the updated team data to return
+const updatedTeamResult = await client.query(`
+  SELECT * FROM teams WHERE id = $1
+`, [teamId]);
+
+const updatedTeam = updatedTeamResult.rows[0];
+
+res.status(200).json({
+  success: true,
+  message: 'Team updated successfully',
+  data: updatedTeam
+});
     } catch (dbError) {
       await client.query('ROLLBACK');
       console.error('Database error during team update:', dbError); // More specific message
