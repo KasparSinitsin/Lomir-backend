@@ -8,7 +8,7 @@ const seedBadges = async () => {
     // Insert badges by category
     // Collaboration Skills (Blue)
     await db.query(`
-      INSERT INTO badges (name, description, category, image_url, color)
+      INSERT INTO badges (name, description, category, teamavatar_url, color)
       VALUES 
         ('Team Player', 'Consistently contributes to team goals and supports fellow members', 'Collaboration Skills', 'puzzle_pieces.svg', '#3B82F6'),
         ('Mediator', 'Helps resolve conflicts and find middle ground between different opinions', 'Collaboration Skills', 'balanced_scales.svg', '#3B82F6'),
@@ -20,7 +20,7 @@ const seedBadges = async () => {
     
     // Technical Expertise (Green)
     await db.query(`
-      INSERT INTO badges (name, description, category, image_url, color)
+      INSERT INTO badges (name, description, category, teamavatar_url, color)
       VALUES 
         ('Coder', 'Skilled in programming languages and development', 'Technical Expertise', 'code_brackets.svg', '#10B981'),
         ('Designer', 'Creates visually appealing and user-friendly interfaces', 'Technical Expertise', 'paintbrush.svg', '#10B981'),
@@ -32,7 +32,7 @@ const seedBadges = async () => {
     
     // Creative Thinking (Purple)
     await db.query(`
-      INSERT INTO badges (name, description, category, image_url, color)
+      INSERT INTO badges (name, description, category, teamavatar_url, color)
       VALUES 
         ('Innovator', 'Consistently brings fresh ideas and novel approaches', 'Creative Thinking', 'lightbulb.svg', '#8B5CF6'),
         ('Problem Solver', 'Finds creative solutions to challenging situations', 'Creative Thinking', 'key.svg', '#8B5CF6'),
@@ -44,7 +44,7 @@ const seedBadges = async () => {
     
     // Leadership Qualities (Red)
     await db.query(`
-      INSERT INTO badges (name, description, category, image_url, color)
+      INSERT INTO badges (name, description, category, teamavatar_url, color)
       VALUES 
         ('Decision Maker', 'Makes timely, thoughtful choices that move projects forward', 'Leadership Qualities', 'compass.svg', '#EF4444'),
         ('Mentor', 'Helps others develop their skills through guidance and support', 'Leadership Qualities', 'torch.svg', '#EF4444'),
@@ -56,7 +56,7 @@ const seedBadges = async () => {
     
     // Personal Attributes (Yellow)
     await db.query(`
-      INSERT INTO badges (name, description, category, image_url, color)
+      INSERT INTO badges (name, description, category, teamavatar_url, color)
       VALUES 
         ('Quick Learner', 'Rapidly adapts to new information and technologies', 'Personal Attributes', 'brain_lightning.svg', '#F59E0B'),
         ('Empathetic', 'Understands others perspectives and emotional needs', 'Personal Attributes', 'heart.svg', '#F59E0B'),
