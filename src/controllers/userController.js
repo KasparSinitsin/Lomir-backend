@@ -81,7 +81,7 @@ const updateUser = async (req, res) => {
     console.log('Request body:', req.body);
 
     // Extract all relevant fields from request body
-    const { first_name, last_name, bio, postal_code, avatar_url, is_public } = req.body;
+    const { first_name, last_name, email, bio, postal_code, avatar_url, is_public } = req.body;
 
     // Build SET clause dynamically
     const updateFields = [];
@@ -99,6 +99,25 @@ const updateUser = async (req, res) => {
       queryParams.push(last_name);
       paramPosition++;
     }
+    if (email !== undefined) {
+      // Check if email is already taken by another user
+      const emailCheck = await pool.query(
+        'SELECT id FROM users WHERE email = $1 AND id != $2',
+        [email, userId]
+      );
+      
+      if (emailCheck.rows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email already in use by another account'
+        });
+      }
+      
+      updateFields.push(`email = $${paramPosition}`);
+      queryParams.push(email);
+      paramPosition++;
+    }
+
     if (bio !== undefined) {
       updateFields.push(`bio = $${paramPosition}`);
       queryParams.push(bio);
