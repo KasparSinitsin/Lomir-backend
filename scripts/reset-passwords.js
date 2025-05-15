@@ -1,4 +1,3 @@
-// scripts/reset-passwords.js
 const bcrypt = require('bcrypt');
 const db = require('../src/config/database');
 
