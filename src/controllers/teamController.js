@@ -88,16 +88,18 @@ const createTeam = async (req, res) => {
         creator_id, 
         is_public, 
         max_members, 
-        postal_code
+        postal_code,
+        teamavatar_url
       ) VALUES ($1, $2, $3, $4, $5, $6) 
-      RETURNING id, name, description, is_public, max_members, postal_code, created_at
+      RETURNING id, name, description, is_public, max_members, postal_code, teamavatar_url, created_at
     `, [
       value.name,
       value.description,
       creatorId,
       isPublicBoolean, // Use our converted boolean
       value.max_members,
-      value.postal_code
+      value.postal_code,
+      value.teamavatar_url || null // Handle null or undefined values gracefully
     ]);
     const team = teamResult.rows[0];
     console.log('--> Team inserted:', team);
