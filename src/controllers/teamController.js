@@ -237,7 +237,7 @@ const getTeamById = async (req, res) => {
     // Get team members
     const membersResult = await db.pool.query(
       `
-  SELECT tm.user_id, tm.role, tm.joined_at, u.username, u.email, u.avatar_url
+  SELECT tm.user_id, tm.role, tm.joined_at, u.username, u.email, u.avatar_url, u.first_name, u.last_name
   FROM team_members tm
   JOIN users u ON tm.user_id = u.id
   WHERE tm.team_id = $1
