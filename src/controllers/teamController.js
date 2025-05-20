@@ -41,11 +41,18 @@ const teamCreationSchema = Joi.object({
       'any.required': 'Maximum members is required'
     }),
 
+  teamavatar_url: Joi.string()
+    .uri()
+    .allow(null, '')
+    .messages({
+      'string.uri': 'Team avatar URL must be a valid URL'
+    }),
+
     tags: Joi.array().items(
       Joi.object({
         tag_id: Joi.number().integer().required(),
       })
-    ).default([]) // Made this default([]) so it's optional
+    ).default([]) // Default([]) so it's optional
   });
 
 const createTeam = async (req, res) => {
