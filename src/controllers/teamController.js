@@ -359,6 +359,7 @@ const updateTeam = async (req, res) => {
       max_members: Joi.number().min(2).max(20),
       postal_code: Joi.string(),
       status: Joi.string().valid('active', 'inactive'),
+      teamavatar_url: Joi.string().uri().allow(null, ''),
       tags: Joi.array().items(Joi.object({
         tag_id: Joi.number().integer().required(),
       }))
@@ -385,6 +386,12 @@ const updateTeam = async (req, res) => {
       const updateFields = [];
       const queryParams = [];
       let paramCounter = 1;
+
+      if (value.teamavatar_url !== undefined) {
+  updateFields.push(`teamavatar_url = $${paramCounter}`);
+  queryParams.push(value.teamavatar_url);
+  paramCounter++;
+}
 
       if (value.name) {
         updateFields.push(`name = $${paramCounter}`);
