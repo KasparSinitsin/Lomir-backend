@@ -41,11 +41,18 @@ const teamCreationSchema = Joi.object({
       'any.required': 'Maximum members is required'
     }),
 
+  teamavatar_url: Joi.string()
+    .uri()
+    .allow(null, '')
+    .messages({
+      'string.uri': 'Team avatar URL must be a valid URL'
+    }),
+
     tags: Joi.array().items(
       Joi.object({
         tag_id: Joi.number().integer().required(),
       })
-    ).default([]) // Made this default([]) so it's optional
+    ).default([]) // Default([]) so it's optional
   });
 
 const createTeam = async (req, res) => {
@@ -74,24 +81,26 @@ const createTeam = async (req, res) => {
     // Ensure is_public is a proper boolean
     const isPublicBoolean = value.is_public === true || value.is_public === 'true' || value.is_public === 1;
 
-    const teamResult = await client.query(`
-      INSERT INTO teams (
-        name, 
-        description, 
-        creator_id, 
-        is_public, 
-        max_members, 
-        postal_code
-      ) VALUES ($1, $2, $3, $4, $5, $6) 
-      RETURNING id, name, description, is_public, max_members, postal_code, created_at
-    `, [
-      value.name,
-      value.description,
-      creatorId,
-      isPublicBoolean, // Use our converted boolean
-      value.max_members,
-      value.postal_code
-    ]);
+const teamResult = await client.query(`
+  INSERT INTO teams (
+    name, 
+    description, 
+    creator_id, 
+    is_public, 
+    max_members, 
+    postal_code,
+    teamavatar_url
+  ) VALUES ($1, $2, $3, $4, $5, $6, $7) 
+  RETURNING id, name, description, is_public, max_members, postal_code, teamavatar_url, created_at
+`, [
+  value.name,
+  value.description,
+  creatorId,
+  isPublicBoolean,
+  value.max_members,
+  value.postal_code || null,
+  value.teamavatar_url || null  // Add this line to include the teamavatar_url
+]);
     const team = teamResult.rows[0];
     console.log('--> Team inserted:', team);
 
@@ -350,6 +359,7 @@ const updateTeam = async (req, res) => {
       max_members: Joi.number().min(2).max(20),
       postal_code: Joi.string(),
       status: Joi.string().valid('active', 'inactive'),
+      teamavatar_url: Joi.string().uri().allow(null, ''),
       tags: Joi.array().items(Joi.object({
         tag_id: Joi.number().integer().required(),
       }))
@@ -376,6 +386,12 @@ const updateTeam = async (req, res) => {
       const updateFields = [];
       const queryParams = [];
       let paramCounter = 1;
+
+      if (value.teamavatar_url !== undefined) {
+  updateFields.push(`teamavatar_url = $${paramCounter}`);
+  queryParams.push(value.teamavatar_url);
+  paramCounter++;
+}
 
       if (value.name) {
         updateFields.push(`name = $${paramCounter}`);

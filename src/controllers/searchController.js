@@ -24,6 +24,7 @@ const searchController = {
           t.description,
           t.is_public,
           t.max_members,
+          t.teamavatar_url as "teamavatarUrl",
           COUNT(tm.id) as current_members_count
         FROM teams t
         LEFT JOIN team_members tm ON t.id = tm.team_id
@@ -127,6 +128,7 @@ const searchController = {
           t.description,
           t.is_public,
           t.max_members,
+          t.teamavatar_url as "teamavatarUrl",
           COUNT(tm.id) as current_members_count
         FROM teams t
         LEFT JOIN team_members tm ON t.id = tm.team_id
