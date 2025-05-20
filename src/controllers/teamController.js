@@ -81,26 +81,26 @@ const createTeam = async (req, res) => {
     // Ensure is_public is a proper boolean
     const isPublicBoolean = value.is_public === true || value.is_public === 'true' || value.is_public === 1;
 
-    const teamResult = await client.query(`
-      INSERT INTO teams (
-        name, 
-        description, 
-        creator_id, 
-        is_public, 
-        max_members, 
-        postal_code,
-        teamavatar_url
-      ) VALUES ($1, $2, $3, $4, $5, $6) 
-      RETURNING id, name, description, is_public, max_members, postal_code, teamavatar_url, created_at
-    `, [
-      value.name,
-      value.description,
-      creatorId,
-      isPublicBoolean, // Use our converted boolean
-      value.max_members,
-      value.postal_code,
-      value.teamavatar_url || null // Handle null or undefined values gracefully
-    ]);
+const teamResult = await client.query(`
+  INSERT INTO teams (
+    name, 
+    description, 
+    creator_id, 
+    is_public, 
+    max_members, 
+    postal_code,
+    teamavatar_url
+  ) VALUES ($1, $2, $3, $4, $5, $6, $7) 
+  RETURNING id, name, description, is_public, max_members, postal_code, teamavatar_url, created_at
+`, [
+  value.name,
+  value.description,
+  creatorId,
+  isPublicBoolean,
+  value.max_members,
+  value.postal_code || null,
+  value.teamavatar_url || null  // Add this line to include the teamavatar_url
+]);
     const team = teamResult.rows[0];
     console.log('--> Team inserted:', team);
 
