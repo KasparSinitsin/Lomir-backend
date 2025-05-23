@@ -2,193 +2,29 @@ const db = require('../config/database');
 
 const searchController = {
 
-async globalSearch(req, res) {
-  try {
-    const { query, authenticated } = req.query;
-    const userId = req.user?.id;
-
-    console.log(`=== SEARCH DEBUG ===`);
-    console.log(`Search query: "${query}"`);
-    console.log(`User ID from JWT: ${userId}`);
-    console.log(`User ID type: ${typeof userId}`);
-    console.log(`Authenticated param: ${authenticated}`);
-    console.log(`Full req.user:`, req.user);
-
-    if (!query || query.trim().length < 2) {
-      return res.status(400).json({
-        success: false,
-        message: 'Search query must be at least 2 characters long'
-      });
-    }
-
-    const searchTerm = `%${query.trim()}%`;
-
-      // Test the exact visibility condition for your Chess Freaks team
-    const testQuery = await db.pool.query(`
-      SELECT 
-        t.id,
-        t.name,
-        t.creator_id,
-        t.is_public,
-        (t.is_public = TRUE) as is_public_check,
-        (t.creator_id = $2) as is_creator_check,
-        EXISTS (
-          SELECT 1 FROM team_members 
-          WHERE team_id = t.id AND user_id = $2
-        ) as is_member_check
-      FROM teams t
-      WHERE t.name ILIKE $1 AND t.archived_at IS NULL
-    `, [searchTerm, userId]);
-
-    console.log(`Visibility test for "${query}":`, testQuery.rows);
-
-  // async globalSearch(req, res) {
-  //   try {
-  //     const { query, authenticated } = req.query;
-  //     const isAuthenticated = authenticated === 'true';
-  //     const userId = req.user?.id; // Get the current user's ID if authenticated
-
-  //     if (!query || query.trim().length < 2) {
-  //       return res.status(400).json({
-  //         success: false,
-  //         message: 'Search query must be at least 2 characters long'
-  //       });
-  //     }
-
-  //     const searchTerm = `%${query.trim()}%`;
-
-    const teamQuery = `
-      SELECT
-        t.id,
-        t.name,
-        t.description,
-        t.is_public,
-        t.max_members,
-        t.creator_id,
-        t.teamavatar_url as "teamavatarUrl",
-        COUNT(tm.id) as current_members_count
-      FROM teams t
-      LEFT JOIN team_members tm ON t.id = tm.team_id
-      LEFT JOIN team_tags tt ON t.id = tt.team_id
-      LEFT JOIN tags tag ON tt.tag_id = tag.id
-      WHERE (
-          t.name ILIKE $1 OR
-          t.description ILIKE $1 OR
-          tag.name ILIKE $1
-        )
-        AND t.archived_at IS NULL
-        AND (
-          t.is_public = TRUE
-          ${userId ? 
-            `OR t.creator_id = ${userId}
-             OR EXISTS (
-               SELECT 1 FROM team_members
-               WHERE team_id = t.id AND user_id = ${userId}
-             )` 
-            : ''}
-        )
-      GROUP BY
-        t.id, t.name, t.description, t.is_public, t.max_members, t.creator_id
-      LIMIT 20
-    `;
-
-    console.log(`Executing team query with userId: ${userId}`);
-
-      // User query that respects profile visibility settings
- const userQuery = `
-      SELECT
-        u.id,
-        u.username,
-        u.first_name,
-        u.last_name,
-        u.bio,
-        u.postal_code,
-        u.avatar_url,
-        (SELECT STRING_AGG(t.name, ', ')
-          FROM user_tags ut
-          JOIN tags t ON ut.tag_id = t.id
-          WHERE ut.user_id = u.id) as tags
-      FROM users u
-      LEFT JOIN user_tags ut ON u.id = ut.user_id
-      LEFT JOIN tags t ON ut.tag_id = t.id
-      WHERE (
-          u.username ILIKE $1 OR
-          u.first_name ILIKE $1 OR
-          u.last_name ILIKE $1 OR
-          u.bio ILIKE $1 OR
-          t.name ILIKE $1
-      )
-      AND (
-        u.is_public = TRUE OR
-        ${userId ? `u.id = ${userId}` : 'FALSE'} 
-      )
-      GROUP BY
-        u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code
-      LIMIT 20
-    `;
-
-    const [teamResults, userResults] = await Promise.all([
-      db.pool.query(teamQuery, [searchTerm]),
-      db.pool.query(userQuery, [searchTerm])
-    ]);
-
-    console.log(`Final team results:`, teamResults.rows);
-    console.log(`Final user results:`, userResults.rows);
-
-        const teamsWithFixedVisibility = teamResults.rows.map(team => ({
-      ...team,
-      is_public: team.is_public === true
-    }));
-
-    res.status(200).json({
-      success: true,
-      data: {
-        teams: teamsWithFixedVisibility,
-        users: userResults.rows
-      }
-    });
-  } catch (error) {
-    console.error('Search error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error performing search',
-      error: error.message
-    });
-  }
-},
-
-  //     // Log search results for debugging
-  //     console.log(`Search for "${query}" found ${teamResults.rows.length} teams and ${userResults.rows.length} users`);
-      
-  //     const teamsWithFixedVisibility = teamResults.rows.map(team => ({
-  //       ...team,
-  //       is_public: team.is_public === true
-  //     }));
-
-  //     res.status(200).json({
-  //       success: true,
-  //       data: {
-  //         teams: teamsWithFixedVisibility,
-  //         users: userResults.rows
-  //       }
-  //     });
-  //   } catch (error) {
-  //     console.error('Search error:', error);
-  //     res.status(500).json({
-  //       success: false,
-  //       message: 'Error performing search',
-  //       error: error.message
-  //     });
-  //   }
-  // },
-
-  async getAllUsersAndTeams(req, res) {
+  async globalSearch(req, res) {
     try {
-      const { authenticated } = req.query;
-      const isAuthenticated = authenticated === 'true';
+      const { query, authenticated } = req.query;
       const userId = req.user?.id;
 
-      const teamQuery = `
+      console.log(`=== SEARCH DEBUG ===`);
+      console.log(`Search query: "${query}"`);
+      console.log(`User ID from JWT: ${userId}`);
+      console.log(`User ID type: ${typeof userId}`);
+      console.log(`Authenticated param: ${authenticated}`);
+      console.log(`Full req.user:`, req.user);
+
+      if (!query || query.trim().length < 2) {
+        return res.status(400).json({
+          success: false,
+          message: 'Search query must be at least 2 characters long'
+        });
+      }
+
+      const searchTerm = `%${query.trim()}%`;
+      
+      // Base team query with parameter placeholders
+      let teamQuery = `
         SELECT
           t.id,
           t.name,
@@ -200,25 +36,47 @@ async globalSearch(req, res) {
           COUNT(tm.id) as current_members_count
         FROM teams t
         LEFT JOIN team_members tm ON t.id = tm.team_id
-        WHERE
-          t.archived_at IS NULL
+        LEFT JOIN team_tags tt ON t.id = tt.team_id
+        LEFT JOIN tags tag ON tt.tag_id = tag.id
+        WHERE (
+            t.name ILIKE $1 OR
+            t.description ILIKE $1 OR
+            tag.name ILIKE $1
+          )
+          AND t.archived_at IS NULL
+      `;
+      
+      // Initialize parameters array with the search term
+      const teamParams = [searchTerm];
+      
+      // Add visibility condition based on authentication
+      if (userId) {
+        // For authenticated users: show public teams OR teams they created OR teams they're a member of
+        teamQuery += `
           AND (
             t.is_public = TRUE
-            ${userId ? 
-              `OR t.creator_id = ${userId}
-               OR EXISTS (
-                 SELECT 1 FROM team_members
-                 WHERE team_id = t.id AND user_id = ${userId}
-               )` 
-              : ''}
+            OR t.creator_id = $2
+            OR EXISTS (
+              SELECT 1 FROM team_members
+              WHERE team_id = t.id AND user_id = $2
+            )
           )
+        `;
+        teamParams.push(userId);
+      } else {
+        // For non-authenticated users: show only public teams
+        teamQuery += ` AND t.is_public = TRUE`;
+      }
+      
+      // Add group by and limit
+      teamQuery += `
         GROUP BY
           t.id, t.name, t.description, t.is_public, t.max_members, t.creator_id
         LIMIT 20
       `;
 
-      // Updated user query to respect profile visibility settings
-      const userQuery = `
+      // User query with parameter placeholders
+      let userQuery = `
         SELECT
           u.id,
           u.username,
@@ -232,18 +90,173 @@ async globalSearch(req, res) {
             JOIN tags t ON ut.tag_id = t.id
             WHERE ut.user_id = u.id) as tags
         FROM users u
+        LEFT JOIN user_tags ut ON u.id = ut.user_id
+        LEFT JOIN tags t ON ut.tag_id = t.id
         WHERE (
-          u.is_public = TRUE OR
-          ${userId ? `u.id = ${userId}` : 'FALSE'}
+            u.username ILIKE $1 OR
+            u.first_name ILIKE $1 OR
+            u.last_name ILIKE $1 OR
+            u.bio ILIKE $1 OR
+            t.name ILIKE $1
         )
+      `;
+      
+      // Initialize parameters array with the search term
+      const userParams = [searchTerm];
+      
+      // Add visibility condition based on authentication
+      if (userId) {
+        // For authenticated users: show public profiles OR their own profile
+        userQuery += `
+          AND (
+            u.is_public = TRUE
+            OR u.id = $2
+          )
+        `;
+        userParams.push(userId);
+      } else {
+        // For non-authenticated users: show only public profiles
+        userQuery += ` AND u.is_public = TRUE`;
+      }
+      
+      // Add group by and limit
+      userQuery += `
         GROUP BY
-          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code
+          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.avatar_url
+        LIMIT 20
+      `;
+
+      console.log(`Executing team query with userId: ${userId}`);
+      console.log("Team query:", teamQuery);
+      console.log("Team params:", teamParams);
+
+      const [teamResults, userResults] = await Promise.all([
+        db.pool.query(teamQuery, teamParams),
+        db.pool.query(userQuery, userParams)
+      ]);
+
+      console.log(`Final team results:`, teamResults.rows);
+      console.log(`Final user results:`, userResults.rows);
+
+      // Ensure boolean values are correctly represented
+      const teamsWithFixedVisibility = teamResults.rows.map(team => ({
+        ...team,
+        is_public: team.is_public === true
+      }));
+
+      res.status(200).json({
+        success: true,
+        data: {
+          teams: teamsWithFixedVisibility,
+          users: userResults.rows
+        }
+      });
+    } catch (error) {
+      console.error('Search error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Error performing search',
+        error: error.message
+      });
+    }
+  },
+
+  async getAllUsersAndTeams(req, res) {
+    try {
+      const { authenticated } = req.query;
+      const userId = req.user?.id;
+
+      // Base team query with parameter placeholders
+      let teamQuery = `
+        SELECT
+          t.id,
+          t.name,
+          t.description,
+          t.is_public,
+          t.max_members,
+          t.creator_id,
+          t.teamavatar_url as "teamavatarUrl",
+          COUNT(tm.id) as current_members_count
+        FROM teams t
+        LEFT JOIN team_members tm ON t.id = tm.team_id
+        WHERE t.archived_at IS NULL
+      `;
+      
+      // Initialize parameters array
+      const teamParams = [];
+      
+      // Add visibility condition based on authentication
+      if (userId) {
+        // For authenticated users: show public teams OR teams they created OR teams they're a member of
+        teamQuery += `
+          AND (
+            t.is_public = TRUE
+            OR t.creator_id = $1
+            OR EXISTS (
+              SELECT 1 FROM team_members
+              WHERE team_id = t.id AND user_id = $1
+            )
+          )
+        `;
+        teamParams.push(userId);
+      } else {
+        // For non-authenticated users: show only public teams
+        teamQuery += ` AND t.is_public = TRUE`;
+      }
+      
+      // Add group by and limit
+      teamQuery += `
+        GROUP BY
+          t.id, t.name, t.description, t.is_public, t.max_members, t.creator_id
+        LIMIT 20
+      `;
+
+      // User query with parameter placeholders
+      let userQuery = `
+        SELECT
+          u.id,
+          u.username,
+          u.first_name,
+          u.last_name,
+          u.bio,
+          u.postal_code,
+          u.avatar_url,
+          (SELECT STRING_AGG(t.name, ', ')
+            FROM user_tags ut
+            JOIN tags t ON ut.tag_id = t.id
+            WHERE ut.user_id = u.id) as tags
+        FROM users u
+        WHERE 1=1
+      `;
+      
+      // Initialize parameters array
+      const userParams = [];
+      
+      // Add visibility condition based on authentication
+      if (userId) {
+        // For authenticated users: show public profiles OR their own profile
+        userQuery += `
+          AND (
+            u.is_public = TRUE
+            OR u.id = $1
+          )
+        `;
+        userParams.push(userId);
+      } else {
+        // For non-authenticated users: show only public profiles
+        userQuery += ` AND u.is_public = TRUE`;
+      }
+      
+      // Add group by and limit
+      userQuery += `
+        GROUP BY
+          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.avatar_url
         LIMIT 20
       `;
 
       const [teamResults, userResults] = await Promise.all([
-        db.pool.query(teamQuery),
-        db.pool.query(userQuery)
+        db.pool.query(teamQuery, teamParams),
+        db.pool.query(userQuery, userParams)
       ]);
 
       const teamsWithFixedVisibility = teamResults.rows.map(team => ({
@@ -268,103 +281,96 @@ async globalSearch(req, res) {
     }
   },
 
-async search(req, res) {
-  try {
-    const { query, tags, location, distance } = req.query;
-    const userId = req.user?.id;
-    
-    // Build dynamic search query based on provided parameters
-    let searchQuery = `
-      SELECT
-        t.id,
-        t.name, 
-        t.description,
-        t.is_public,
-        t.max_members,
-        t.creator_id,
-        COUNT(tm.id) as member_count
-      FROM teams t
-      LEFT JOIN team_members tm ON t.id = tm.team_id
-    `;
+  async search(req, res) {
+    try {
+      const { query, tags, location, distance } = req.query;
+      const userId = req.user?.id;
       
-   // Add tag joins if searching by tags
-    if (tags) {
-      searchQuery += `
-        JOIN team_tags tt ON t.id = tt.team_id
-        JOIN tags tag ON tt.tag_id = tag.id
+      // Build dynamic search query with parameter placeholders
+      let searchQuery = `
+        SELECT
+          t.id,
+          t.name, 
+          t.description,
+          t.is_public,
+          t.max_members,
+          t.creator_id,
+          COUNT(tm.id) as member_count
+        FROM teams t
+        LEFT JOIN team_members tm ON t.id = tm.team_id
       `;
-    }
+        
+      // Add tag joins if searching by tags
+      if (tags) {
+        searchQuery += `
+          JOIN team_tags tt ON t.id = tt.team_id
+          JOIN tags tag ON tt.tag_id = tag.id
+        `;
+      }
+        
+      // Start WHERE clause
+      searchQuery += ` WHERE t.archived_at IS NULL `;
       
-    // Start WHERE clause
-    searchQuery += ` WHERE t.archived_at IS NULL `;
+      // Initialize parameters array
+      const queryParams = [];
+      let paramIndex = 1;
       
-    // Add proper visibility condition including creator check
-    searchQuery += `
-      AND (
-        t.is_public = TRUE
-        ${userId ? 
-          `OR t.creator_id = ${userId}
-           OR EXISTS (
-             SELECT 1 FROM team_members
-             WHERE team_id = t.id AND user_id = ${userId}
-           )` 
-          : ''}
-      )
-    `;
-
-        // FIXED: Use parameterized query to prevent SQL injection
-    const queryParams = [];
-    let paramIndex = 1;
-    
-    if (query) {
-      searchQuery += ` AND (t.name ILIKE $${paramIndex} OR t.description ILIKE $${paramIndex}) `;
-      queryParams.push(`%${query}%`);
-      paramIndex++;
-    }
-    
-    if (tags) {
-      const tagIds = Array.isArray(tags) ? tags : [tags];
-      const tagPlaceholders = tagIds.map(() => `$${paramIndex++}`).join(',');
-      searchQuery += ` AND tag.id IN (${tagPlaceholders}) `;
-      queryParams.push(...tagIds);
-    }
-    
-    if (location) {
-      searchQuery += ` AND t.postal_code = $${paramIndex} `;
-      queryParams.push(location);
-      paramIndex++;
-    }
+      // Add visibility condition based on authentication
+      if (userId) {
+        // For authenticated users: show public teams OR teams they created OR teams they're a member of
+        searchQuery += `
+          AND (
+            t.is_public = TRUE
+            OR t.creator_id = $${paramIndex}
+            OR EXISTS (
+              SELECT 1 FROM team_members
+              WHERE team_id = t.id AND user_id = $${paramIndex}
+            )
+          )
+        `;
+        queryParams.push(userId);
+        paramIndex++;
+      } else {
+        // For non-authenticated users: show only public teams
+        searchQuery += ` AND t.is_public = TRUE`;
+      }
       
       // Add search term condition if query is provided
       if (query) {
-        searchQuery += ` AND (t.name ILIKE '%${query}%' OR t.description ILIKE '%${query}%') `;
+        searchQuery += ` AND (t.name ILIKE $${paramIndex} OR t.description ILIKE $${paramIndex}) `;
+        queryParams.push(`%${query}%`);
+        paramIndex++;
       }
       
       // Add tag condition if tags are provided
       if (tags) {
         const tagIds = Array.isArray(tags) ? tags : [tags];
-        searchQuery += ` AND tag.id IN (${tagIds.join(',')}) `;
+        const tagPlaceholders = tagIds.map((_, i) => `$${paramIndex + i}`).join(',');
+        searchQuery += ` AND tag.id IN (${tagPlaceholders}) `;
+        queryParams.push(...tagIds);
+        paramIndex += tagIds.length;
       }
       
       // Add location condition if location is provided
       if (location) {
-        // This would be more complex in a real implementation with geospatial queries
-        searchQuery += ` AND t.postal_code = '${location}' `;
+        searchQuery += ` AND t.postal_code = $${paramIndex} `;
+        queryParams.push(location);
+        paramIndex++;
       }
       
       // Group by and limit
-   searchQuery += `
-      GROUP BY t.id, t.name, t.description, t.is_public, t.max_members, t.creator_id
-      LIMIT 20
-    `;
+      searchQuery += `
+        GROUP BY t.id, t.name, t.description, t.is_public, t.max_members, t.creator_id
+        LIMIT 20
+      `;
       
-    const result = await db.pool.query(searchQuery, queryParams);
+      const result = await db.pool.query(searchQuery, queryParams);
       
       // Ensure proper boolean values for is_public in teams
-    const teamsWithFixedVisibility = result.rows.map(team => ({
-      ...team,
-      is_public: team.is_public === true
-    }));
+      const teamsWithFixedVisibility = result.rows.map(team => ({
+        ...team,
+        is_public: team.is_public === true
+      }));
       
       res.status(200).json({
         success: true,
@@ -388,7 +394,7 @@ async search(req, res) {
       const userId = req.user?.id;
       
       // Define the query to get teams with the specified tag
-      const query = `
+      let query = `
         SELECT 
           t.id,
           t.name,
@@ -402,20 +408,38 @@ async search(req, res) {
         WHERE 
           tt.tag_id = $1
           AND t.archived_at IS NULL
+      `;
+      
+      const queryParams = [tagId];
+      let paramIndex = 2;
+      
+      // Add visibility condition based on authentication
+      if (userId) {
+        // For authenticated users: show public teams OR teams they created OR teams they're a member of
+        query += `
           AND (
             t.is_public = TRUE
-            ${userId ? 
-              `OR EXISTS (
-                SELECT 1 FROM team_members
-                WHERE team_id = t.id AND user_id = ${userId}
-              )` 
-              : ''}
+            OR t.creator_id = $${paramIndex}
+            OR EXISTS (
+              SELECT 1 FROM team_members
+              WHERE team_id = t.id AND user_id = $${paramIndex}
+            )
           )
+        `;
+        queryParams.push(userId);
+        paramIndex++;
+      } else {
+        // For non-authenticated users: show only public teams
+        query += ` AND t.is_public = TRUE`;
+      }
+      
+      // Add group by and limit
+      query += `
         GROUP BY t.id, t.name, t.description, t.is_public, t.max_members
         LIMIT 20
       `;
       
-      const result = await db.pool.query(query, [tagId]);
+      const result = await db.pool.query(query, queryParams);
       
       // Ensure proper boolean values for is_public in teams
       const teamsWithFixedVisibility = result.rows.map(team => ({
@@ -453,7 +477,7 @@ async search(req, res) {
       
       // A simple implementation - in a real-world scenario, you would use
       // geospatial queries with coordinates and distance calculations
-      const query = `
+      let query = `
         SELECT 
           t.id,
           t.name,
@@ -466,20 +490,38 @@ async search(req, res) {
         WHERE 
           t.postal_code = $1
           AND t.archived_at IS NULL
+      `;
+      
+      const queryParams = [postalCode];
+      let paramIndex = 2;
+      
+      // Add visibility condition based on authentication
+      if (userId) {
+        // For authenticated users: show public teams OR teams they created OR teams they're a member of
+        query += `
           AND (
             t.is_public = TRUE
-            ${userId ? 
-              `OR EXISTS (
-                SELECT 1 FROM team_members
-                WHERE team_id = t.id AND user_id = ${userId}
-              )` 
-              : ''}
+            OR t.creator_id = $${paramIndex}
+            OR EXISTS (
+              SELECT 1 FROM team_members
+              WHERE team_id = t.id AND user_id = $${paramIndex}
+            )
           )
+        `;
+        queryParams.push(userId);
+        paramIndex++;
+      } else {
+        // For non-authenticated users: show only public teams
+        query += ` AND t.is_public = TRUE`;
+      }
+      
+      // Add group by and limit
+      query += `
         GROUP BY t.id, t.name, t.description, t.is_public, t.max_members
         LIMIT 20
       `;
       
-      const result = await db.pool.query(query, [postalCode]);
+      const result = await db.pool.query(query, queryParams);
       
       // Ensure proper boolean values for is_public in teams
       const teamsWithFixedVisibility = result.rows.map(team => ({
