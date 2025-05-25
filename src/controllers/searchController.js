@@ -22,36 +22,36 @@ const searchController = {
 
       const searchTerm = `%${query.trim()}%`;
 
-      // UPDATED TEAM QUERY - Now includes tags in the results
+      // Team query - including tags and visibility conditions
       let teamQuery = `
-        SELECT
-          t.id,
-          t.name,
-          t.description,
-          t.is_public,
-          t.max_members,
-          t.creator_id,
-          t.teamavatar_url as "teamavatarUrl",
-          COUNT(DISTINCT tm.id) as current_members_count,
-          STRING_AGG(
-            DISTINCT CASE 
-              WHEN tag.id IS NOT NULL 
-              THEN json_build_object('id', tag.id, 'name', tag.name, 'category', tag.category)::text 
-              ELSE NULL 
-            END, 
-            ','
-          ) as tags_json
-        FROM teams t
-        LEFT JOIN team_members tm ON t.id = tm.team_id
-        LEFT JOIN team_tags tt ON t.id = tt.team_id
-        LEFT JOIN tags tag ON tt.tag_id = tag.id
-        WHERE (
-            t.name ILIKE $1 OR
-            t.description ILIKE $1 OR
-            tag.name ILIKE $1
-          )
-          AND t.archived_at IS NULL
-      `;
+  SELECT
+    t.id,
+    t.name,
+    t.description,
+    t.is_public,
+    t.max_members,
+    t.creator_id,
+    t.teamavatar_url as "teamavatarUrl",
+    COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
+    STRING_AGG(
+      DISTINCT CASE 
+        WHEN tag.id IS NOT NULL 
+        THEN json_build_object('id', tag.id, 'name', tag.name, 'category', tag.category)::text 
+        ELSE NULL 
+      END, 
+      ','
+    ) as tags_json
+  FROM teams t
+  LEFT JOIN team_members tm ON t.id = tm.team_id
+  LEFT JOIN team_tags tt ON t.id = tt.team_id
+  LEFT JOIN tags tag ON tt.tag_id = tag.id
+  WHERE (
+      t.name ILIKE $1 OR
+      t.description ILIKE $1 OR
+      tag.name ILIKE $1
+    )
+    AND t.archived_at IS NULL
+`;
 
       // Initialize parameters array with the search term
       const teamParams = [searchTerm];
@@ -142,34 +142,34 @@ const searchController = {
       // Process team results to parse the tags JSON
       const teamsWithFixedVisibility = teamResults.rows.map((team) => {
         let parsedTags = [];
-        
+
         if (team.tags_json) {
           try {
             // Split the concatenated JSON strings and parse each one
-            const tagStrings = team.tags_json.split(',');
+            const tagStrings = team.tags_json.split(",");
             parsedTags = tagStrings
-              .filter(tagStr => tagStr && tagStr.trim() !== 'null')
-              .map(tagStr => {
+              .filter((tagStr) => tagStr && tagStr.trim() !== "null")
+              .map((tagStr) => {
                 try {
                   return JSON.parse(tagStr.trim());
                 } catch (parseError) {
-                  console.warn('Error parsing tag JSON:', tagStr, parseError);
+                  console.warn("Error parsing tag JSON:", tagStr, parseError);
                   return null;
                 }
               })
-              .filter(tag => tag !== null);
+              .filter((tag) => tag !== null);
           } catch (error) {
-            console.warn('Error processing team tags:', error);
+            console.warn("Error processing team tags:", error);
           }
         }
 
         // Remove the tags_json field and add the parsed tags
         const { tags_json, ...teamWithoutTagsJson } = team;
-        
+
         return {
           ...teamWithoutTagsJson,
           is_public: team.is_public === true,
-          tags: parsedTags
+          tags: parsedTags,
         };
       });
 
@@ -203,129 +203,138 @@ const searchController = {
       const { authenticated } = req.query;
       const userId = req.user?.id;
 
-      // UPDATED TEAM QUERY for getAllUsersAndTeams - Now includes tags
-      let teamQuery = `
-        SELECT
-          t.id,
-          t.name,
-          t.description,
-          t.is_public,
-          t.max_members,
-          t.creator_id,
-          t.teamavatar_url as "teamavatarUrl",
-          COUNT(DISTINCT tm.id) as current_members_count,
-          STRING_AGG(
-            DISTINCT CASE 
-              WHEN tag.id IS NOT NULL 
-              THEN json_build_object('id', tag.id, 'name', tag.name, 'category', tag.category)::text 
-              ELSE NULL 
-            END, 
-            ','
-          ) as tags_json
-        FROM teams t
-        LEFT JOIN team_members tm ON t.id = tm.team_id
-        LEFT JOIN team_tags tt ON t.id = tt.team_id
-        LEFT JOIN tags tag ON tt.tag_id = tag.id
-        WHERE t.archived_at IS NULL
-      `;
+      console.log(
+        `getAllUsersAndTeams: userId=${userId}, authenticated=${authenticated}`
+      );
 
-      const teamParams = [];
+      // TEAM QUERY - Fixed parameter handling
+      let teamQuery = `
+      SELECT
+        t.id,
+        t.name,
+        t.description,
+        t.is_public,
+        t.max_members,
+        t.creator_id,
+        t.teamavatar_url as "teamavatarUrl",
+        COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
+        STRING_AGG(
+          DISTINCT CASE 
+            WHEN tag.id IS NOT NULL 
+            THEN json_build_object('id', tag.id, 'name', tag.name, 'category', tag.category)::text 
+            ELSE NULL 
+          END, 
+          ','
+        ) as tags_json
+      FROM teams t
+      LEFT JOIN team_members tm ON t.id = tm.team_id
+      LEFT JOIN team_tags tt ON t.id = tt.team_id
+      LEFT JOIN tags tag ON tt.tag_id = tag.id
+      WHERE t.archived_at IS NULL
+    `;
+
+      let teamParams = [];
 
       if (userId) {
         teamQuery += `
-          AND (
-            t.is_public = TRUE
-            OR t.creator_id = $1
-            OR EXISTS (
-              SELECT 1 FROM team_members
-              WHERE team_id = t.id AND user_id = $1
-            )
+        AND (
+          t.is_public = TRUE
+          OR t.creator_id = $1
+          OR EXISTS (
+            SELECT 1 FROM team_members
+            WHERE team_id = t.id AND user_id = $1
           )
-        `;
+        )
+      `;
         teamParams.push(userId);
       } else {
         teamQuery += ` AND t.is_public = TRUE`;
       }
 
       teamQuery += `
-        GROUP BY
-          t.id, t.name, t.description, t.is_public, t.max_members, t.creator_id, t.teamavatar_url
-        LIMIT 20
-      `;
+      GROUP BY
+        t.id, t.name, t.description, t.is_public, t.max_members, t.creator_id, t.teamavatar_url
+      LIMIT 20
+    `;
 
-      // User query remains the same
+      // USER QUERY - Fixed parameter handling
       let userQuery = `
-        SELECT
-          u.id,
-          u.username,
-          u.first_name,
-          u.last_name,
-          u.bio,
-          u.postal_code,
-          u.avatar_url,
-          u.is_public,
-          (SELECT STRING_AGG(t.name, ', ')
-            FROM user_tags ut
-            JOIN tags t ON ut.tag_id = t.id
-            WHERE ut.user_id = u.id) as tags
-        FROM users u
-        WHERE 1=1
-      `;
+      SELECT
+        u.id,
+        u.username,
+        u.first_name,
+        u.last_name,
+        u.bio,
+        u.postal_code,
+        u.avatar_url,
+        u.is_public,
+        (SELECT STRING_AGG(t.name, ', ')
+          FROM user_tags ut
+          JOIN tags t ON ut.tag_id = t.id
+          WHERE ut.user_id = u.id) as tags
+      FROM users u
+      WHERE 1=1
+    `;
 
-      const userParams = [];
+      let userParams = [];
 
       if (userId) {
         userQuery += `
-          AND (
-            u.is_public = TRUE
-            OR u.id = $1
-          )
-        `;
+        AND (
+          u.is_public = TRUE
+          OR u.id = $1
+        )
+      `;
         userParams.push(userId);
       } else {
         userQuery += ` AND u.is_public = TRUE`;
       }
 
       userQuery += `
-        GROUP BY
-          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.avatar_url, u.is_public
-        LIMIT 20
-      `;
+      GROUP BY
+        u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.avatar_url, u.is_public
+      LIMIT 20
+    `;
+
+      console.log("Team query:", teamQuery);
+      console.log("Team params:", teamParams);
+      console.log("User query:", userQuery);
+      console.log("User params:", userParams);
 
       const [teamResults, userResults] = await Promise.all([
         db.pool.query(teamQuery, teamParams),
         db.pool.query(userQuery, userParams),
       ]);
 
-      // Process team results to parse the tags JSON (same as in globalSearch)
+      // Process team results to parse the tags JSON
       const teamsWithFixedVisibility = teamResults.rows.map((team) => {
         let parsedTags = [];
-        
+
         if (team.tags_json) {
           try {
-            const tagStrings = team.tags_json.split(',');
+            const tagStrings = team.tags_json.split(",");
             parsedTags = tagStrings
-              .filter(tagStr => tagStr && tagStr.trim() !== 'null')
-              .map(tagStr => {
+              .filter((tagStr) => tagStr && tagStr.trim() !== "null")
+              .map((tagStr) => {
                 try {
                   return JSON.parse(tagStr.trim());
                 } catch (parseError) {
-                  console.warn('Error parsing tag JSON:', tagStr, parseError);
+                  console.warn("Error parsing tag JSON:", tagStr, parseError);
                   return null;
                 }
               })
-              .filter(tag => tag !== null);
+              .filter((tag) => tag !== null);
           } catch (error) {
-            console.warn('Error processing team tags:', error);
+            console.warn("Error processing team tags:", error);
           }
         }
 
         const { tags_json, ...teamWithoutTagsJson } = team;
-        
+
         return {
           ...teamWithoutTagsJson,
           is_public: team.is_public === true,
-          tags: parsedTags
+          tags: parsedTags,
         };
       });
 
@@ -333,6 +342,9 @@ const searchController = {
         ...user,
         is_public: user.is_public === true,
       }));
+
+      console.log(`Final processed team results:`, teamsWithFixedVisibility);
+      console.log(`Final user results:`, usersWithFixedVisibility);
 
       res.status(200).json({
         success: true,
