@@ -217,7 +217,7 @@ const getTeamById = async (req, res) => {
   try {
     const teamId = req.params.id;
 
-    // Fetch team details
+    // Fetch team details using db.pool instead of undefined client
     const teamResult = await db.pool.query(
       `
       SELECT * FROM teams WHERE id = $1 AND archived_at IS NULL
@@ -237,11 +237,12 @@ const getTeamById = async (req, res) => {
     // Get team members
     const membersResult = await db.pool.query(
       `
-  SELECT tm.user_id, tm.role, tm.joined_at, u.username, u.email, u.avatar_url, u.first_name, u.last_name
-  FROM team_members tm
-  JOIN users u ON tm.user_id = u.id
-  WHERE tm.team_id = $1
-`,
+      SELECT tm.user_id, tm.role, tm.joined_at, u.username, u.email, u.avatar_url, 
+             u.first_name, u.last_name, u.is_public
+      FROM team_members tm
+      JOIN users u ON tm.user_id = u.id
+      WHERE tm.team_id = $1
+    `,
       [teamId]
     );
 
@@ -265,10 +266,10 @@ const getTeamById = async (req, res) => {
       data: team,
     });
   } catch (error) {
-    console.error("Database error while fetching team:", error); // More specific message
+    console.error("Database error while fetching team:", error);
     res.status(500).json({
       success: false,
-      message: "Database error while fetching team details", // More specific message
+      message: "Database error while fetching team details",
       error: error.message,
     });
   }
