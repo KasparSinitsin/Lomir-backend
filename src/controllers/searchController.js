@@ -22,7 +22,7 @@ const searchController = {
 
       const searchTerm = `%${query.trim()}%`;
 
-      // Base team query with parameter placeholders
+      // UPDATED TEAM QUERY - Now includes tags in the results
       let teamQuery = `
         SELECT
           t.id,
@@ -32,7 +32,15 @@ const searchController = {
           t.max_members,
           t.creator_id,
           t.teamavatar_url as "teamavatarUrl",
-          COUNT(tm.id) as current_members_count
+          COUNT(DISTINCT tm.id) as current_members_count,
+          STRING_AGG(
+            DISTINCT CASE 
+              WHEN tag.id IS NOT NULL 
+              THEN json_build_object('id', tag.id, 'name', tag.name, 'category', tag.category)::text 
+              ELSE NULL 
+            END, 
+            ','
+          ) as tags_json
         FROM teams t
         LEFT JOIN team_members tm ON t.id = tm.team_id
         LEFT JOIN team_tags tt ON t.id = tt.team_id
@@ -50,7 +58,6 @@ const searchController = {
 
       // Add visibility condition based on authentication
       if (userId) {
-        // For authenticated users: show public teams OR teams they created OR teams they're a member of
         teamQuery += `
           AND (
             t.is_public = TRUE
@@ -63,18 +70,17 @@ const searchController = {
         `;
         teamParams.push(userId);
       } else {
-        // For non-authenticated users: show only public teams
         teamQuery += ` AND t.is_public = TRUE`;
       }
 
-      // Add group by and limit
+      // Add group by and limit - UPDATED to include all non-aggregated columns
       teamQuery += `
         GROUP BY
-          t.id, t.name, t.description, t.is_public, t.max_members, t.creator_id
+          t.id, t.name, t.description, t.is_public, t.max_members, t.creator_id, t.teamavatar_url
         LIMIT 20
       `;
 
-      // User query with parameter placeholders - UPDATED TO INCLUDE is_public
+      // User query remains the same as it was working correctly
       let userQuery = `
         SELECT
           u.id,
@@ -101,12 +107,9 @@ const searchController = {
         )
       `;
 
-      // Initialize parameters array with the search term
       const userParams = [searchTerm];
 
-      // Add visibility condition based on authentication
       if (userId) {
-        // For authenticated users: show public profiles OR their own profile
         userQuery += `
           AND (
             u.is_public = TRUE
@@ -115,11 +118,9 @@ const searchController = {
         `;
         userParams.push(userId);
       } else {
-        // For non-authenticated users: show only public profiles
         userQuery += ` AND u.is_public = TRUE`;
       }
 
-      // Add group by and limit - UPDATED TO INCLUDE is_public
       userQuery += `
         GROUP BY
           u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.avatar_url, u.is_public
@@ -135,19 +136,50 @@ const searchController = {
         db.pool.query(userQuery, userParams),
       ]);
 
-      console.log(`Final team results:`, teamResults.rows);
-      console.log(`Final user results:`, userResults.rows);
+      console.log(`Raw team results:`, teamResults.rows);
+      console.log(`Raw user results:`, userResults.rows);
 
-      // Ensure boolean values are correctly represented
-      const teamsWithFixedVisibility = teamResults.rows.map((team) => ({
-        ...team,
-        is_public: team.is_public === true,
-      }));
+      // Process team results to parse the tags JSON
+      const teamsWithFixedVisibility = teamResults.rows.map((team) => {
+        let parsedTags = [];
+        
+        if (team.tags_json) {
+          try {
+            // Split the concatenated JSON strings and parse each one
+            const tagStrings = team.tags_json.split(',');
+            parsedTags = tagStrings
+              .filter(tagStr => tagStr && tagStr.trim() !== 'null')
+              .map(tagStr => {
+                try {
+                  return JSON.parse(tagStr.trim());
+                } catch (parseError) {
+                  console.warn('Error parsing tag JSON:', tagStr, parseError);
+                  return null;
+                }
+              })
+              .filter(tag => tag !== null);
+          } catch (error) {
+            console.warn('Error processing team tags:', error);
+          }
+        }
+
+        // Remove the tags_json field and add the parsed tags
+        const { tags_json, ...teamWithoutTagsJson } = team;
+        
+        return {
+          ...teamWithoutTagsJson,
+          is_public: team.is_public === true,
+          tags: parsedTags
+        };
+      });
 
       const usersWithFixedVisibility = userResults.rows.map((user) => ({
         ...user,
         is_public: user.is_public === true,
       }));
+
+      console.log(`Final processed team results:`, teamsWithFixedVisibility);
+      console.log(`Final user results:`, usersWithFixedVisibility);
 
       res.status(200).json({
         success: true,
@@ -171,7 +203,7 @@ const searchController = {
       const { authenticated } = req.query;
       const userId = req.user?.id;
 
-      // Base team query with parameter placeholders
+      // UPDATED TEAM QUERY for getAllUsersAndTeams - Now includes tags
       let teamQuery = `
         SELECT
           t.id,
@@ -181,18 +213,25 @@ const searchController = {
           t.max_members,
           t.creator_id,
           t.teamavatar_url as "teamavatarUrl",
-          COUNT(tm.id) as current_members_count
+          COUNT(DISTINCT tm.id) as current_members_count,
+          STRING_AGG(
+            DISTINCT CASE 
+              WHEN tag.id IS NOT NULL 
+              THEN json_build_object('id', tag.id, 'name', tag.name, 'category', tag.category)::text 
+              ELSE NULL 
+            END, 
+            ','
+          ) as tags_json
         FROM teams t
         LEFT JOIN team_members tm ON t.id = tm.team_id
+        LEFT JOIN team_tags tt ON t.id = tt.team_id
+        LEFT JOIN tags tag ON tt.tag_id = tag.id
         WHERE t.archived_at IS NULL
       `;
 
-      // Initialize parameters array
       const teamParams = [];
 
-      // Add visibility condition based on authentication
       if (userId) {
-        // For authenticated users: show public teams OR teams they created OR teams they're a member of
         teamQuery += `
           AND (
             t.is_public = TRUE
@@ -205,18 +244,16 @@ const searchController = {
         `;
         teamParams.push(userId);
       } else {
-        // For non-authenticated users: show only public teams
         teamQuery += ` AND t.is_public = TRUE`;
       }
 
-      // Add group by and limit
       teamQuery += `
         GROUP BY
-          t.id, t.name, t.description, t.is_public, t.max_members, t.creator_id
+          t.id, t.name, t.description, t.is_public, t.max_members, t.creator_id, t.teamavatar_url
         LIMIT 20
       `;
 
-      // User query with parameter placeholders - UPDATED TO INCLUDE is_public
+      // User query remains the same
       let userQuery = `
         SELECT
           u.id,
@@ -235,12 +272,9 @@ const searchController = {
         WHERE 1=1
       `;
 
-      // Initialize parameters array
       const userParams = [];
 
-      // Add visibility condition based on authentication
       if (userId) {
-        // For authenticated users: show public profiles OR their own profile
         userQuery += `
           AND (
             u.is_public = TRUE
@@ -249,11 +283,9 @@ const searchController = {
         `;
         userParams.push(userId);
       } else {
-        // For non-authenticated users: show only public profiles
         userQuery += ` AND u.is_public = TRUE`;
       }
 
-      // Add group by and limit - UPDATED TO INCLUDE is_public
       userQuery += `
         GROUP BY
           u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.avatar_url, u.is_public
@@ -265,10 +297,37 @@ const searchController = {
         db.pool.query(userQuery, userParams),
       ]);
 
-      const teamsWithFixedVisibility = teamResults.rows.map((team) => ({
-        ...team,
-        is_public: team.is_public === true,
-      }));
+      // Process team results to parse the tags JSON (same as in globalSearch)
+      const teamsWithFixedVisibility = teamResults.rows.map((team) => {
+        let parsedTags = [];
+        
+        if (team.tags_json) {
+          try {
+            const tagStrings = team.tags_json.split(',');
+            parsedTags = tagStrings
+              .filter(tagStr => tagStr && tagStr.trim() !== 'null')
+              .map(tagStr => {
+                try {
+                  return JSON.parse(tagStr.trim());
+                } catch (parseError) {
+                  console.warn('Error parsing tag JSON:', tagStr, parseError);
+                  return null;
+                }
+              })
+              .filter(tag => tag !== null);
+          } catch (error) {
+            console.warn('Error processing team tags:', error);
+          }
+        }
+
+        const { tags_json, ...teamWithoutTagsJson } = team;
+        
+        return {
+          ...teamWithoutTagsJson,
+          is_public: team.is_public === true,
+          tags: parsedTags
+        };
+      });
 
       const usersWithFixedVisibility = userResults.rows.map((user) => ({
         ...user,
