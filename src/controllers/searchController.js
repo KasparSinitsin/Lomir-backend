@@ -198,15 +198,17 @@ const searchController = {
     }
   },
 
-async getAllUsersAndTeams(req, res) {
-  try {
-    const { authenticated } = req.query;
-    const userId = req.user?.id;
+  async getAllUsersAndTeams(req, res) {
+    try {
+      const { authenticated } = req.query;
+      const userId = req.user?.id;
 
-    console.log(`getAllUsersAndTeams: userId=${userId}, authenticated=${authenticated}`);
+      console.log(
+        `getAllUsersAndTeams: userId=${userId}, authenticated=${authenticated}`
+      );
 
-    // TEAM QUERY - Fixed parameter handling
-    let teamQuery = `
+      // TEAM QUERY - Fixed parameter handling
+      let teamQuery = `
       SELECT
         t.id,
         t.name,
@@ -231,10 +233,10 @@ async getAllUsersAndTeams(req, res) {
       WHERE t.archived_at IS NULL
     `;
 
-    let teamParams = [];
+      let teamParams = [];
 
-    if (userId) {
-      teamQuery += `
+      if (userId) {
+        teamQuery += `
         AND (
           t.is_public = TRUE
           OR t.creator_id = $1
@@ -244,19 +246,19 @@ async getAllUsersAndTeams(req, res) {
           )
         )
       `;
-      teamParams.push(userId);
-    } else {
-      teamQuery += ` AND t.is_public = TRUE`;
-    }
+        teamParams.push(userId);
+      } else {
+        teamQuery += ` AND t.is_public = TRUE`;
+      }
 
-    teamQuery += `
+      teamQuery += `
       GROUP BY
         t.id, t.name, t.description, t.is_public, t.max_members, t.creator_id, t.teamavatar_url
       LIMIT 20
     `;
 
-    // USER QUERY - Fixed parameter handling
-    let userQuery = `
+      // USER QUERY - Fixed parameter handling
+      let userQuery = `
       SELECT
         u.id,
         u.username,
@@ -274,92 +276,92 @@ async getAllUsersAndTeams(req, res) {
       WHERE 1=1
     `;
 
-    let userParams = [];
+      let userParams = [];
 
-    if (userId) {
-      userQuery += `
+      if (userId) {
+        userQuery += `
         AND (
           u.is_public = TRUE
           OR u.id = $1
         )
       `;
-      userParams.push(userId);
-    } else {
-      userQuery += ` AND u.is_public = TRUE`;
-    }
+        userParams.push(userId);
+      } else {
+        userQuery += ` AND u.is_public = TRUE`;
+      }
 
-    userQuery += `
+      userQuery += `
       GROUP BY
         u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.avatar_url, u.is_public
       LIMIT 20
     `;
 
-    console.log('Team query:', teamQuery);
-    console.log('Team params:', teamParams);
-    console.log('User query:', userQuery);
-    console.log('User params:', userParams);
+      console.log("Team query:", teamQuery);
+      console.log("Team params:", teamParams);
+      console.log("User query:", userQuery);
+      console.log("User params:", userParams);
 
-    const [teamResults, userResults] = await Promise.all([
-      db.pool.query(teamQuery, teamParams),
-      db.pool.query(userQuery, userParams),
-    ]);
+      const [teamResults, userResults] = await Promise.all([
+        db.pool.query(teamQuery, teamParams),
+        db.pool.query(userQuery, userParams),
+      ]);
 
-    // Process team results to parse the tags JSON
-    const teamsWithFixedVisibility = teamResults.rows.map((team) => {
-      let parsedTags = [];
-      
-      if (team.tags_json) {
-        try {
-          const tagStrings = team.tags_json.split(',');
-          parsedTags = tagStrings
-            .filter(tagStr => tagStr && tagStr.trim() !== 'null')
-            .map(tagStr => {
-              try {
-                return JSON.parse(tagStr.trim());
-              } catch (parseError) {
-                console.warn('Error parsing tag JSON:', tagStr, parseError);
-                return null;
-              }
-            })
-            .filter(tag => tag !== null);
-        } catch (error) {
-          console.warn('Error processing team tags:', error);
+      // Process team results to parse the tags JSON
+      const teamsWithFixedVisibility = teamResults.rows.map((team) => {
+        let parsedTags = [];
+
+        if (team.tags_json) {
+          try {
+            const tagStrings = team.tags_json.split(",");
+            parsedTags = tagStrings
+              .filter((tagStr) => tagStr && tagStr.trim() !== "null")
+              .map((tagStr) => {
+                try {
+                  return JSON.parse(tagStr.trim());
+                } catch (parseError) {
+                  console.warn("Error parsing tag JSON:", tagStr, parseError);
+                  return null;
+                }
+              })
+              .filter((tag) => tag !== null);
+          } catch (error) {
+            console.warn("Error processing team tags:", error);
+          }
         }
-      }
 
-      const { tags_json, ...teamWithoutTagsJson } = team;
-      
-      return {
-        ...teamWithoutTagsJson,
-        is_public: team.is_public === true,
-        tags: parsedTags
-      };
-    });
+        const { tags_json, ...teamWithoutTagsJson } = team;
 
-    const usersWithFixedVisibility = userResults.rows.map((user) => ({
-      ...user,
-      is_public: user.is_public === true,
-    }));
+        return {
+          ...teamWithoutTagsJson,
+          is_public: team.is_public === true,
+          tags: parsedTags,
+        };
+      });
 
-    console.log(`Final processed team results:`, teamsWithFixedVisibility);
-    console.log(`Final user results:`, usersWithFixedVisibility);
+      const usersWithFixedVisibility = userResults.rows.map((user) => ({
+        ...user,
+        is_public: user.is_public === true,
+      }));
 
-    res.status(200).json({
-      success: true,
-      data: {
-        teams: teamsWithFixedVisibility,
-        users: usersWithFixedVisibility,
-      },
-    });
-  } catch (error) {
-    console.error("Error fetching all users and teams:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error fetching data",
-      error: error.message,
-    });
-  }
-},
+      console.log(`Final processed team results:`, teamsWithFixedVisibility);
+      console.log(`Final user results:`, usersWithFixedVisibility);
+
+      res.status(200).json({
+        success: true,
+        data: {
+          teams: teamsWithFixedVisibility,
+          users: usersWithFixedVisibility,
+        },
+      });
+    } catch (error) {
+      console.error("Error fetching all users and teams:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error fetching data",
+        error: error.message,
+      });
+    }
+  },
 
   async search(req, res) {
     try {

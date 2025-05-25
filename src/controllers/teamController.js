@@ -217,11 +217,16 @@ const getTeamById = async (req, res) => {
   try {
     const teamId = req.params.id;
 
-    // Fetch team details using db.pool instead of undefined client
+    // Fetch team details with member count
     const teamResult = await db.pool.query(
       `
-      SELECT * FROM teams WHERE id = $1 AND archived_at IS NULL
-    `,
+      SELECT t.*, 
+             COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count
+      FROM teams t
+      LEFT JOIN team_members tm ON t.id = tm.team_id
+      WHERE t.id = $1 AND t.archived_at IS NULL
+      GROUP BY t.id
+      `,
       [teamId]
     );
 
@@ -234,7 +239,7 @@ const getTeamById = async (req, res) => {
 
     const team = teamResult.rows[0];
 
-    // Get team members
+    // Get team members with their details
     const membersResult = await db.pool.query(
       `
       SELECT tm.user_id, tm.role, tm.joined_at, u.username, u.email, u.avatar_url, 
@@ -242,24 +247,44 @@ const getTeamById = async (req, res) => {
       FROM team_members tm
       JOIN users u ON tm.user_id = u.id
       WHERE tm.team_id = $1
-    `,
+      ORDER BY 
+        CASE tm.role 
+          WHEN 'creator' THEN 1 
+          WHEN 'admin' THEN 2 
+          ELSE 3 
+        END,
+        tm.joined_at ASC
+      `,
       [teamId]
     );
 
     // Get team tags
     const tagsResult = await db.pool.query(
       `
-      SELECT tt.tag_id, t.name, t.category
+      SELECT tt.tag_id, t.name, t.category, t.supercategory
       FROM team_tags tt
       JOIN tags t ON tt.tag_id = t.id
       WHERE tt.team_id = $1
-    `,
+      ORDER BY t.supercategory, t.category, t.name
+      `,
       [teamId]
     );
 
-    // Construct response
+    // Construct response with proper member count
     team.members = membersResult.rows;
     team.tags = tagsResult.rows;
+
+    // Ensure boolean values
+    team.is_public = team.is_public === true;
+
+    console.log(`Team ${teamId} details:`, {
+      id: team.id,
+      name: team.name,
+      current_members_count: team.current_members_count,
+      max_members: team.max_members,
+      members_length: team.members.length,
+      is_public: team.is_public,
+    });
 
     res.status(200).json({
       success: true,
@@ -277,27 +302,33 @@ const getTeamById = async (req, res) => {
 
 const getUserTeams = async (req, res) => {
   try {
+    // Use the authenticated user's ID from the token
     const userId = req.user.id;
 
     const teamsResult = await db.pool.query(
       `
       SELECT t.*, 
-      COALESCE(COUNT(DISTINCT tm.user_id), 0) AS current_members_count
+             COALESCE(COUNT(DISTINCT tm.user_id), 0) AS current_members_count,
+             tmr.role as user_role
       FROM teams t
+      JOIN team_members tmr ON t.id = tmr.team_id AND tmr.user_id = $1
       LEFT JOIN team_members tm ON t.id = tm.team_id
-      WHERE EXISTS (
-        SELECT 1 FROM team_members tm2 
-        WHERE tm2.team_id = t.id AND tm2.user_id = $1
-      ) AND t.archived_at IS NULL
-      GROUP BY t.id
+      WHERE t.archived_at IS NULL
+      GROUP BY t.id, tmr.role
       ORDER BY t.created_at DESC
-    `,
+      `,
       [userId]
     );
 
+    // Ensure proper boolean values
+    const teamsWithFixedData = teamsResult.rows.map((team) => ({
+      ...team,
+      is_public: team.is_public === true,
+    }));
+
     res.status(200).json({
       success: true,
-      data: teamsResult.rows,
+      data: teamsWithFixedData,
     });
   } catch (error) {
     console.error("Database error while fetching user teams:", error);
