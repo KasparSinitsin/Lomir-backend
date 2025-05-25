@@ -277,16 +277,18 @@ const getTeamById = async (req, res) => {
 
 const getUserTeams = async (req, res) => {
   try {
-    // Use the authenticated user's ID from the token
     const userId = req.user.id;
 
     const teamsResult = await db.pool.query(
       `
       SELECT t.*, 
-      COUNT(tm.id) AS members_count
+      COALESCE(COUNT(DISTINCT tm.user_id), 0) AS current_members_count
       FROM teams t
-      JOIN team_members tm ON t.id = tm.team_id
-      WHERE tm.user_id = $1 AND t.archived_at IS NULL
+      LEFT JOIN team_members tm ON t.id = tm.team_id
+      WHERE EXISTS (
+        SELECT 1 FROM team_members tm2 
+        WHERE tm2.team_id = t.id AND tm2.user_id = $1
+      ) AND t.archived_at IS NULL
       GROUP BY t.id
       ORDER BY t.created_at DESC
     `,
@@ -298,10 +300,10 @@ const getUserTeams = async (req, res) => {
       data: teamsResult.rows,
     });
   } catch (error) {
-    console.error("Database error while fetching user teams:", error); // More specific message
+    console.error("Database error while fetching user teams:", error);
     res.status(500).json({
       success: false,
-      message: "Database error while fetching user teams", // More specific message
+      message: "Database error while fetching user teams",
       error: error.message,
     });
   }
