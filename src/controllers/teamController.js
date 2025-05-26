@@ -242,19 +242,21 @@ const getTeamById = async (req, res) => {
     // Get team members with their details
     const membersResult = await db.pool.query(
       `
-      SELECT tm.user_id, tm.role, tm.joined_at, u.username, u.email, u.avatar_url, 
-             u.first_name, u.last_name, u.is_public
-      FROM team_members tm
-      JOIN users u ON tm.user_id = u.id
-      WHERE tm.team_id = $1
-      ORDER BY 
-        CASE tm.role 
-          WHEN 'creator' THEN 1 
-          WHEN 'admin' THEN 2 
-          ELSE 3 
-        END,
-        tm.joined_at ASC
-      `,
+  SELECT tm.user_id, tm.role, tm.joined_at, 
+         u.username, u.email, u.avatar_url, 
+         u.first_name, u.last_name, u.is_public,
+         u.postal_code
+  FROM team_members tm
+  JOIN users u ON tm.user_id = u.id
+  WHERE tm.team_id = $1
+  ORDER BY 
+    CASE tm.role 
+      WHEN 'creator' THEN 1 
+      WHEN 'admin' THEN 2 
+      ELSE 3 
+    END,
+    tm.joined_at ASC
+  `,
       [teamId]
     );
 
