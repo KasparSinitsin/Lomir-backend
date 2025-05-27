@@ -1,5 +1,13 @@
 const db = require("../config/database");
 const Joi = require("joi");
+const cloudinary = require("../config/cloudinary");
+
+const extractCloudinaryPublicId = (url) => {
+  if (!url || typeof url !== "string") return null;
+
+  const match = url.match(/\/image\/upload\/(?:v\d+\/)?(.+)\.[a-z]+$/);
+  return match ? match[1] : null;
+};
 
 // Validation schema for team creation
 const teamCreationSchema = Joi.object({
@@ -405,6 +413,10 @@ const updateTeam = async (req, res) => {
       });
     }
 
+    // Get current team data to access old avatar URL
+    const currentTeam = teamCheck.rows[0];
+    const oldAvatarUrl = currentTeam.teamavatar_url;
+
     // Create validation schema for update (similar to creation but all fields optional)
     const updateSchema = Joi.object({
       name: Joi.string().min(3).max(100),
@@ -427,7 +439,7 @@ const updateTeam = async (req, res) => {
     if (error) {
       return res.status(400).json({
         success: false,
-        message: "Invalid input data", // More specific message
+        message: "Invalid input data",
         errors: error.details.map((detail) => detail.message),
       });
     }
@@ -443,10 +455,35 @@ const updateTeam = async (req, res) => {
       const queryParams = [];
       let paramCounter = 1;
 
+      // Handle team avatar URL with old image deletion
       if (value.teamavatar_url !== undefined) {
         updateFields.push(`teamavatar_url = $${paramCounter}`);
         queryParams.push(value.teamavatar_url);
         paramCounter++;
+
+        // Delete old image from Cloudinary if it exists and is different from new one
+        if (
+          oldAvatarUrl &&
+          oldAvatarUrl !== value.teamavatar_url &&
+          oldAvatarUrl.includes("cloudinary.com")
+        ) {
+          try {
+            const publicId = extractCloudinaryPublicId(oldAvatarUrl);
+            if (publicId) {
+              console.log(
+                `Attempting to delete old team avatar from Cloudinary: ${publicId}`
+              );
+              const deleteResult = await cloudinary.uploader.destroy(publicId);
+              console.log("Cloudinary deletion result:", deleteResult);
+            }
+          } catch (cloudinaryError) {
+            console.error(
+              "Error deleting old team avatar from Cloudinary:",
+              cloudinaryError
+            );
+            // Don't fail the update if Cloudinary deletion fails
+          }
+        }
       }
 
       if (value.name) {
@@ -517,7 +554,7 @@ const updateTeam = async (req, res) => {
           await client.query("ROLLBACK");
           return res.status(400).json({
             success: false,
-            message: "Invalid input data", // More specific message
+            message: "Invalid input data",
             errors: ["One or more of the provided tag IDs do not exist."],
           });
         }
@@ -563,10 +600,10 @@ const updateTeam = async (req, res) => {
       });
     } catch (dbError) {
       await client.query("ROLLBACK");
-      console.error("Database error during team update:", dbError); // More specific message
+      console.error("Database error during team update:", dbError);
       res.status(500).json({
         success: false,
-        message: "Database error while updating team", // More specific message
+        message: "Database error while updating team",
         errorDetails: dbError.message,
         fullError: dbError,
       });

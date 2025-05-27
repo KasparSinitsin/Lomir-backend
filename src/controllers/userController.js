@@ -1,6 +1,15 @@
-// Single import for database access
 const db = require("../config/database");
 const { pool } = db;
+const cloudinary = require("../config/cloudinary");
+
+// Helper function to extract Cloudinary public ID from URL
+const extractCloudinaryPublicId = (url) => {
+  if (!url || typeof url !== "string") return null;
+
+  // Match Cloudinary URL pattern and extract public ID
+  const match = url.match(/\/image\/upload\/(?:v\d+\/)?(.+)\.[a-z]+$/);
+  return match ? match[1] : null;
+};
 
 /**
  * @description Get all users (Placeholder)
@@ -90,6 +99,22 @@ const updateUser = async (req, res) => {
     console.log("updateUser called for ID:", userId);
     console.log("Request body:", req.body);
 
+    // First, get the current user data to access the old avatar URL
+    const currentUserResult = await pool.query(
+      "SELECT avatar_url FROM users WHERE id = $1",
+      [userId]
+    );
+
+    if (currentUserResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const currentUser = currentUserResult.rows[0];
+    const oldAvatarUrl = currentUser.avatar_url;
+
     // Extract all relevant fields from request body
     const {
       first_name,
@@ -146,10 +171,36 @@ const updateUser = async (req, res) => {
       queryParams.push(postal_code);
       paramPosition++;
     }
+
+    // Handle avatar URL update with old image deletion
     if (avatar_url !== undefined) {
       updateFields.push(`avatar_url = $${paramPosition}`);
       queryParams.push(avatar_url);
       paramPosition++;
+
+      // Delete old image from Cloudinary if it exists and is different from new one
+      if (
+        oldAvatarUrl &&
+        oldAvatarUrl !== avatar_url &&
+        oldAvatarUrl.includes("cloudinary.com")
+      ) {
+        try {
+          const publicId = extractCloudinaryPublicId(oldAvatarUrl);
+          if (publicId) {
+            console.log(
+              `Attempting to delete old avatar from Cloudinary: ${publicId}`
+            );
+            const deleteResult = await cloudinary.uploader.destroy(publicId);
+            console.log("Cloudinary deletion result:", deleteResult);
+          }
+        } catch (cloudinaryError) {
+          console.error(
+            "Error deleting old avatar from Cloudinary:",
+            cloudinaryError
+          );
+          // Don't fail the update if Cloudinary deletion fails
+        }
+      }
     }
 
     // Make sure is_public is explicitly handled
