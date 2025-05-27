@@ -690,6 +690,125 @@ const deleteTeam = async (req, res) => {
   }
 };
 
+const applyToJoinTeam = async (req, res) => {
+  try {
+    const teamId = req.params.id;
+    const applicantId = req.user.id;
+    const { message, isDraft = false } = req.body;
+
+    // Validation
+    if (!message || message.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Application message is required",
+      });
+    }
+
+    if (message.trim().length > 500) {
+      return res.status(400).json({
+        success: false,
+        message: "Message cannot exceed 500 characters",
+      });
+    }
+
+    // Check if team exists and is active
+    const teamCheck = await db.pool.query(
+      `SELECT id, name, creator_id, max_members FROM teams 
+       WHERE id = $1 AND archived_at IS NULL`,
+      [teamId]
+    );
+
+    if (teamCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Team not found",
+      });
+    }
+
+    const team = teamCheck.rows[0];
+
+    // Check if user is already a member
+    const memberCheck = await db.pool.query(
+      `SELECT id FROM team_members WHERE team_id = $1 AND user_id = $2`,
+      [teamId, applicantId]
+    );
+
+    if (memberCheck.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "You are already a member of this team",
+      });
+    }
+
+    // Check if team is full
+    const memberCount = await db.pool.query(
+      `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
+      [teamId]
+    );
+
+    if (parseInt(memberCount.rows[0].count) >= team.max_members) {
+      return res.status(400).json({
+        success: false,
+        message: "Team is already at maximum capacity",
+      });
+    }
+
+    // Check if user already has a pending application
+    const existingApplicationCheck = await db.pool.query(
+      `SELECT id FROM team_applications 
+       WHERE team_id = $1 AND applicant_id = $2 AND status = 'pending'`,
+      [teamId, applicantId]
+    );
+
+    if (existingApplicationCheck.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "You already have a pending application for this team",
+      });
+    }
+
+    const client = await db.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Insert or update application
+      const applicationResult = await client.query(
+        `INSERT INTO team_applications (team_id, applicant_id, message, status, created_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (team_id, applicant_id) 
+         DO UPDATE SET message = $3, status = $4, updated_at = NOW()
+         RETURNING id`,
+        [teamId, applicantId, message.trim(), isDraft ? "draft" : "pending"]
+      );
+
+      await client.query("COMMIT");
+
+      res.status(201).json({
+        success: true,
+        message: isDraft
+          ? "Application draft saved successfully"
+          : "Application sent successfully",
+        data: {
+          applicationId: applicationResult.rows[0].id,
+          status: isDraft ? "draft" : "pending",
+        },
+      });
+    } catch (dbError) {
+      await client.query("ROLLBACK");
+      throw dbError;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error("Apply to join team error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error processing application",
+      error: error.message,
+    });
+  }
+};
+
 const addTeamMember = async (req, res) => {
   try {
     const teamId = req.params.id;
@@ -971,4 +1090,5 @@ module.exports = {
   deleteTeam,
   addTeamMember,
   removeTeamMember,
+  applyToJoinTeam,
 };
