@@ -10,6 +10,16 @@ router.get("/my-teams", auth.authenticateToken, teamController.getUserTeams);
 router.get("/:id", teamController.getTeamById);
 router.put("/:id", auth.authenticateToken, teamController.updateTeam);
 router.delete("/:id", auth.authenticateToken, teamController.deleteTeam);
+router.get(
+  "/:id/applications",
+  auth.authenticateToken,
+  teamController.getTeamApplications
+);
+router.put(
+  "/applications/:applicationId",
+  auth.authenticateToken,
+  teamController.handleTeamApplication
+);
 router.post(
   "/:id/apply",
   auth.authenticateToken,
