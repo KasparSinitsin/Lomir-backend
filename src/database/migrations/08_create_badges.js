@@ -8,7 +8,7 @@ const createBadgesTable = async () => {
         name VARCHAR(50) UNIQUE NOT NULL,
         description TEXT,
         category VARCHAR(50),
-        image_url VARCHAR(255)
+        teamavatar_url VARCHAR(255)
       );
     `);
     console.log('Badges table created successfully');

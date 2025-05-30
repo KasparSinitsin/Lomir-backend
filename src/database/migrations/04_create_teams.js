@@ -8,7 +8,7 @@ const createTeamsTable = async () => {
         name VARCHAR(100) NOT NULL,
         description TEXT,
         creator_id INTEGER REFERENCES users(id),
-        image_url VARCHAR(255),
+        teamavatar_url VARCHAR(255),
         status VARCHAR(20) NOT NULL DEFAULT 'active',
         postal_code VARCHAR(20),
         latitude DECIMAL(10, 8),
