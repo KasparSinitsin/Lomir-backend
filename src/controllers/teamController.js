@@ -387,6 +387,91 @@ const getUserRoleInTeam = async (req, res) => {
   }
 };
 
+const getUserPendingApplications = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // Get user's pending applications with team details
+    const applicationsResult = await db.pool.query(
+      `SELECT 
+        ta.id, ta.team_id, ta.message, ta.status, ta.created_at,
+        t.name, t.description, t.teamavatar_url, t.max_members, t.is_public,
+        (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count
+       FROM team_applications ta
+       JOIN teams t ON ta.team_id = t.id
+       WHERE ta.applicant_id = $1 AND ta.status = 'pending'
+       ORDER BY ta.created_at DESC`,
+      [userId]
+    );
+
+    const applications = applicationsResult.rows.map((row) => ({
+      id: row.id,
+      message: row.message,
+      status: row.status,
+      created_at: row.created_at,
+      team: {
+        id: row.team_id,
+        name: row.name,
+        description: row.description,
+        teamavatar_url: row.teamavatar_url,
+        max_members: row.max_members,
+        is_public: row.is_public === true,
+        current_members_count: parseInt(row.current_members_count),
+      },
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: applications,
+    });
+  } catch (error) {
+    console.error("Error fetching user pending applications:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching applications",
+      error: error.message,
+    });
+  }
+};
+
+const cancelApplication = async (req, res) => {
+  try {
+    const applicationId = req.params.applicationId;
+    const userId = req.user.id;
+
+    // Check if application exists and belongs to this user
+    const applicationCheck = await db.pool.query(
+      `SELECT id FROM team_applications 
+       WHERE id = $1 AND applicant_id = $2 AND status = 'pending'`,
+      [applicationId, userId]
+    );
+
+    if (applicationCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Application not found or cannot be canceled",
+      });
+    }
+
+    // Delete the application
+    await db.pool.query(`DELETE FROM team_applications WHERE id = $1`, [
+      applicationId,
+    ]);
+
+    res.status(200).json({
+      success: true,
+      message: "Application canceled successfully",
+    });
+  } catch (error) {
+    console.error("Error canceling application:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error canceling application",
+      error: error.message,
+    });
+  }
+};
+
 const updateTeam = async (req, res) => {
   try {
     const teamId = req.params.id;
@@ -620,7 +705,6 @@ const updateTeam = async (req, res) => {
   }
 };
 
-
 const getTeamApplications = async (req, res) => {
   try {
     const teamId = req.params.id;
@@ -639,7 +723,7 @@ const getTeamApplications = async (req, res) => {
     if (authCheck.rows.length === 0) {
       return res.status(403).json({
         success: false,
-        message: "Not authorized to view applications for this team"
+        message: "Not authorized to view applications for this team",
       });
     }
 
@@ -656,7 +740,7 @@ const getTeamApplications = async (req, res) => {
       [teamId]
     );
 
-    const applications = applicationsResult.rows.map(row => ({
+    const applications = applicationsResult.rows.map((row) => ({
       id: row.id,
       message: row.message,
       status: row.status,
@@ -668,21 +752,20 @@ const getTeamApplications = async (req, res) => {
         last_name: row.last_name,
         bio: row.bio,
         avatar_url: row.avatar_url,
-        postal_code: row.postal_code
-      }
+        postal_code: row.postal_code,
+      },
     }));
 
     res.status(200).json({
       success: true,
-      data: applications
+      data: applications,
     });
-
   } catch (error) {
-    console.error('Error fetching team applications:', error);
+    console.error("Error fetching team applications:", error);
     res.status(500).json({
       success: false,
-      message: 'Error fetching team applications',
-      error: error.message
+      message: "Error fetching team applications",
+      error: error.message,
     });
   }
 };
@@ -706,37 +789,39 @@ const handleTeamApplication = async (req, res) => {
     if (applicationResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "Application not found"
+        message: "Application not found",
       });
     }
 
     const application = applicationResult.rows[0];
 
     // Check authorization
-    if (application.creator_id !== userId && application.role !== 'admin') {
+    if (application.creator_id !== userId && application.role !== "admin") {
       return res.status(403).json({
         success: false,
-        message: "Not authorized to handle this application"
+        message: "Not authorized to handle this application",
       });
     }
 
     const client = await db.pool.connect();
 
     try {
-      await client.query('BEGIN');
+      await client.query("BEGIN");
 
-      if (action === 'approve') {
+      if (action === "approve") {
         // Check if team is full
         const memberCountResult = await client.query(
           `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
           [application.team_id]
         );
 
-        if (parseInt(memberCountResult.rows[0].count) >= application.max_members) {
-          await client.query('ROLLBACK');
+        if (
+          parseInt(memberCountResult.rows[0].count) >= application.max_members
+        ) {
+          await client.query("ROLLBACK");
           return res.status(400).json({
             success: false,
-            message: "Team is already at maximum capacity"
+            message: "Team is already at maximum capacity",
           });
         }
 
@@ -754,7 +839,7 @@ const handleTeamApplication = async (req, res) => {
            WHERE id = $2`,
           [userId, applicationId]
         );
-      } else if (action === 'decline') {
+      } else if (action === "decline") {
         // Update application status
         await client.query(
           `UPDATE team_applications 
@@ -767,30 +852,27 @@ const handleTeamApplication = async (req, res) => {
       // TODO: Send notification/message to applicant with response
       // This would involve creating a message in your messages table
 
-      await client.query('COMMIT');
+      await client.query("COMMIT");
 
       res.status(200).json({
         success: true,
-        message: `Application ${action}d successfully`
+        message: `Application ${action}d successfully`,
       });
-
     } catch (dbError) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       throw dbError;
     } finally {
       client.release();
     }
-
   } catch (error) {
-    console.error('Error handling team application:', error);
+    console.error("Error handling team application:", error);
     res.status(500).json({
       success: false,
-      message: 'Error handling application',
-      error: error.message
+      message: "Error handling application",
+      error: error.message,
     });
   }
 };
-
 
 const deleteTeam = async (req, res) => {
   try {
@@ -1263,6 +1345,8 @@ module.exports = {
   addTeamMember,
   removeTeamMember,
   applyToJoinTeam,
-  getTeamApplications,     
-  handleTeamApplication,   
+  getTeamApplications,
+  handleTeamApplication,
+  getUserPendingApplications,
+  cancelApplication,
 };
