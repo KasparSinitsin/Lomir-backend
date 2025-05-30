@@ -41,4 +41,16 @@ router.get(
   teamController.getUserRoleInTeam
 );
 
+router.get(
+  "/applications/user",
+  auth.authenticateToken,
+  teamController.getUserPendingApplications
+);
+
+router.delete(
+  "/applications/:applicationId",
+  auth.authenticateToken,
+  teamController.cancelApplication
+);
+
 module.exports = router;
