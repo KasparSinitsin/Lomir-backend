@@ -75,6 +75,10 @@ app.use("/api/teams", teamRoutes);
 const userRoutes = require("./routes/userRoutes");
 app.use("/api/users", userRoutes);
 
+// Message routes
+const messageRoutes = require('./routes/messageRoutes');
+app.use('/api/messages', messageRoutes);
+
 // Tag routes
 // *** CHECK THIS PATH: Ensure './routes/api/tags' is the correct location of your tag routes file. ***
 // If it's in './routes/tagRoutes.js', use require('./routes/tagRoutes') instead.

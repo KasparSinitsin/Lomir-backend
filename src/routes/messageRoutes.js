@@ -4,9 +4,13 @@ const { authenticateToken } = require('../middlewares/auth');
 
 const router = express.Router();
 
-router.post('/', authenticateToken, messageController.sendMessage);
-router.get('/', authenticateToken, messageController.getMessages);
-router.get('/:id', authenticateToken, messageController.getMessageById);
-router.delete('/:id', authenticateToken, messageController.deleteMessage);
+// Start a new conversation
+router.post('/conversations', authenticateToken, messageController.startConversation);
+
+// Other message routes...
+router.get('/conversations', authenticateToken, messageController.getConversations);
+router.get('/conversations/:id', authenticateToken, messageController.getConversationById);
+router.get('/conversations/:id/messages', authenticateToken, messageController.getMessages);
+router.post('/conversations/:id/messages', authenticateToken, messageController.sendMessage);
 
 module.exports = router;
