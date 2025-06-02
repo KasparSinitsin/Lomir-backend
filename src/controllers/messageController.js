@@ -4,9 +4,9 @@ const db = require("../config/database");
 const startConversation = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { recipient_id, initial_message } = req.body; // Use snake_case
+    const { recipientId, initialMessage } = req.body; // Use camelCase as it comes from frontend
 
-    if (!recipient_id) {
+    if (!recipientId) {
       return res.status(400).json({
         success: false,
         message: "Recipient ID is required",
@@ -15,10 +15,8 @@ const startConversation = async (req, res) => {
 
     // Check if recipient exists
     const recipientResult = await db.query(
-      `
-      SELECT id FROM users WHERE id = $1
-    `,
-      [recipient_id]
+      `SELECT id FROM users WHERE id = $1`,
+      [recipientId]
     );
 
     if (recipientResult.rows.length === 0) {
@@ -29,20 +27,18 @@ const startConversation = async (req, res) => {
     }
 
     // Send initial message if provided
-    if (initial_message && initial_message.trim() !== "") {
+    if (initialMessage && initialMessage.trim() !== "") {
       await db.query(
-        `
-        INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-        VALUES ($1, $2, $3, NOW())
-      `,
-        [userId, recipient_id, initial_message.trim()]
+        `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+         VALUES ($1, $2, $3, NOW())`,
+        [userId, recipientId, initialMessage.trim()]
       );
     }
 
     res.status(201).json({
       success: true,
       data: {
-        conversationId: recipient_id, // Use recipient_id as conversation identifier
+        conversationId: recipientId, // Use recipient_id as conversation identifier
       },
     });
   } catch (error) {
@@ -55,77 +51,83 @@ const startConversation = async (req, res) => {
   }
 };
 
-// Get all conversations (both direct messages and team chats) for current user
+// Get all conversations for current user
 const getConversations = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Get direct message conversations
+    // Get all unique conversation partners for direct messages
     const directMessagesQuery = `
-      WITH latest_dm AS (
+      WITH conversation_partners AS (
         SELECT DISTINCT
           CASE 
             WHEN m.sender_id = $1 THEN m.receiver_id 
             ELSE m.sender_id 
           END as partner_id,
-          (SELECT content FROM messages m2 
-           WHERE ((m2.sender_id = $1 AND m2.receiver_id = CASE WHEN m.sender_id = $1 THEN m.receiver_id ELSE m.sender_id END) 
-                  OR (m2.sender_id = CASE WHEN m.sender_id = $1 THEN m.receiver_id ELSE m.sender_id END AND m2.receiver_id = $1))
-             AND m2.team_id IS NULL
-           ORDER BY m2.sent_at DESC LIMIT 1) as last_message,
-          (SELECT sent_at FROM messages m2 
-           WHERE ((m2.sender_id = $1 AND m2.receiver_id = CASE WHEN m.sender_id = $1 THEN m.receiver_id ELSE m.sender_id END) 
-                  OR (m2.sender_id = CASE WHEN m.sender_id = $1 THEN m.receiver_id ELSE m.sender_id END AND m2.receiver_id = $1))
-             AND m2.team_id IS NULL
-           ORDER BY m2.sent_at DESC LIMIT 1) as last_message_time
+          MAX(m.sent_at) as last_message_time
         FROM messages m
         WHERE (m.sender_id = $1 OR m.receiver_id = $1) 
           AND m.team_id IS NULL
+        GROUP BY partner_id
+      ),
+      latest_messages AS (
+        SELECT 
+          cp.partner_id,
+          cp.last_message_time,
+          m.content as last_message
+        FROM conversation_partners cp
+        JOIN messages m ON (
+          ((m.sender_id = $1 AND m.receiver_id = cp.partner_id) OR 
+           (m.sender_id = cp.partner_id AND m.receiver_id = $1)) 
+          AND m.sent_at = cp.last_message_time
+          AND m.team_id IS NULL
+        )
       )
       SELECT 
-        dm.partner_id as id,
+        lm.partner_id as id,
         'direct' as type,
-        u.username as name,
+        u.username,
         u.first_name,
         u.last_name,
         u.avatar_url,
-        dm.last_message,
-        dm.last_message_time as updated_at
-      FROM latest_dm dm
-      JOIN users u ON dm.partner_id = u.id
-      WHERE dm.last_message IS NOT NULL
+        lm.last_message,
+        lm.last_message_time as updated_at
+      FROM latest_messages lm
+      JOIN users u ON lm.partner_id = u.id
+      ORDER BY lm.last_message_time DESC
     `;
 
-    // Get team message conversations
+    // Get team conversations where user is a member
     const teamMessagesQuery = `
-      WITH latest_team AS (
+      WITH team_conversations AS (
         SELECT DISTINCT
           m.team_id,
-          (SELECT content FROM messages m2 
-           WHERE m2.team_id = m.team_id 
-           ORDER BY m2.sent_at DESC LIMIT 1) as last_message,
-          (SELECT sent_at FROM messages m2 
-           WHERE m2.team_id = m.team_id 
-           ORDER BY m2.sent_at DESC LIMIT 1) as last_message_time
+          MAX(m.sent_at) as last_message_time
         FROM messages m
-        WHERE m.team_id IS NOT NULL 
-          AND (m.sender_id = $1 OR EXISTS (
-            SELECT 1 FROM team_members tm 
-            WHERE tm.team_id = m.team_id AND tm.user_id = $1
-          ))
+        JOIN team_members tm ON m.team_id = tm.team_id
+        WHERE tm.user_id = $1 AND m.team_id IS NOT NULL
+        GROUP BY m.team_id
+      ),
+      latest_team_messages AS (
+        SELECT 
+          tc.team_id,
+          tc.last_message_time,
+          m.content as last_message
+        FROM team_conversations tc
+        JOIN messages m ON m.team_id = tc.team_id AND m.sent_at = tc.last_message_time
       )
       SELECT 
-        lt.team_id as id,
+        ltm.team_id as id,
         'team' as type,
         t.name,
         NULL as first_name,
         NULL as last_name,
         t.teamavatar_url as avatar_url,
-        lt.last_message,
-        lt.last_message_time as updated_at
-      FROM latest_team lt
-      JOIN teams t ON lt.team_id = t.id
-      WHERE lt.last_message IS NOT NULL
+        ltm.last_message,
+        ltm.last_message_time as updated_at
+      FROM latest_team_messages ltm
+      JOIN teams t ON ltm.team_id = t.id
+      ORDER BY ltm.last_message_time DESC
     `;
 
     const [directResult, teamResult] = await Promise.all([
@@ -133,14 +135,14 @@ const getConversations = async (req, res) => {
       db.query(teamMessagesQuery, [userId]),
     ]);
 
-    // Combine and sort all conversations
+    // Combine and format results
     const allConversations = [
       ...directResult.rows.map((row) => ({
         id: row.id,
         type: row.type,
         partner: {
           id: row.id,
-          username: row.name,
+          username: row.username,
           firstName: row.first_name,
           lastName: row.last_name,
           avatarUrl: row.avatar_url,
@@ -175,12 +177,12 @@ const getConversations = async (req, res) => {
   }
 };
 
-// Get conversation details by ID (could be user ID for DM or team ID for group)
+// Get conversation details by ID
 const getConversationById = async (req, res) => {
   try {
     const conversationId = parseInt(req.params.id);
     const userId = req.user.id;
-    const { type } = req.query; // 'direct' or 'team'
+    const { type } = req.query;
 
     if (type === "team") {
       // Get team information
@@ -256,12 +258,12 @@ const getConversationById = async (req, res) => {
   }
 };
 
-// Get messages for a conversation (direct or team)
+// Get messages for a conversation
 const getMessages = async (req, res) => {
   try {
     const conversationId = parseInt(req.params.id);
     const userId = req.user.id;
-    const { type } = req.query; // 'direct' or 'team'
+    const { type } = req.query;
 
     let messagesQuery;
     let queryParams;
@@ -322,12 +324,12 @@ const getMessages = async (req, res) => {
   }
 };
 
-// Send a message (direct or to team)
+// Send a message
 const sendMessage = async (req, res) => {
   try {
     const conversationId = parseInt(req.params.id);
     const userId = req.user.id;
-    const { content, type } = req.body; // type: 'direct' or 'team'
+    const { content, type } = req.body;
 
     if (!content || content.trim() === "") {
       return res.status(400).json({
@@ -341,21 +343,17 @@ const sendMessage = async (req, res) => {
     if (type === "team") {
       // Send message to team
       messageResult = await db.query(
-        `
-        INSERT INTO messages (sender_id, team_id, content, sent_at)
-        VALUES ($1, $2, $3, NOW())
-        RETURNING id, sender_id, team_id, content, sent_at
-      `,
+        `INSERT INTO messages (sender_id, team_id, content, sent_at)
+         VALUES ($1, $2, $3, NOW())
+         RETURNING id, sender_id, team_id, content, sent_at`,
         [userId, conversationId, content.trim()]
       );
     } else {
       // Send direct message
       messageResult = await db.query(
-        `
-        INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-        VALUES ($1, $2, $3, NOW())
-        RETURNING id, sender_id, receiver_id, content, sent_at
-      `,
+        `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+         VALUES ($1, $2, $3, NOW())
+         RETURNING id, sender_id, receiver_id, content, sent_at`,
         [userId, conversationId, content.trim()]
       );
     }

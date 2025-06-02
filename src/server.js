@@ -72,75 +72,41 @@ io.on("connection", (socket) => {
     try {
       const { conversationId, content } = data;
 
+      console.log(
+        `User ${userId} sending message to conversation ${conversationId}: "${content}"`
+      );
+
       // Validate message
       if (!conversationId || !content || content.trim() === "") {
         socket.emit("error", { message: "Invalid message data" });
         return;
       }
 
-      // Create new message in database using existing controller
       const db = require("./config/database");
 
-      // Check if user is part of this conversation
-      const conversationCheck = await db.query(
-        `
-        SELECT * FROM conversations
-        WHERE id = $1 AND (user1_id = $2 OR user2_id = $2)
-      `,
-        [conversationId, userId]
-      );
-
-      if (conversationCheck.rows.length === 0) {
-        socket.emit("error", {
-          message: "Not authorized to send message to this conversation",
-        });
-        return;
-      }
-
-      // Get other participant
-      const otherUserId =
-        conversationCheck.rows[0].user1_id === userId
-          ? conversationCheck.rows[0].user2_id
-          : conversationCheck.rows[0].user1_id;
-
-      // Insert message into database
+      // For direct messages, conversationId is the recipient's user ID
+      // For direct messages, conversationId is the recipient's user ID
       const messageResult = await db.query(
-        `
-        INSERT INTO messages (conversation_id, sender_id, content)
-        VALUES ($1, $2, $3)
-        RETURNING id, sender_id, content, created_at
-      `,
-        [conversationId, userId, content.trim()]
-      );
-
-      // Update conversation updated_at timestamp
-      await db.query(
-        `
-        UPDATE conversations
-        SET updated_at = NOW()
-        WHERE id = $1
-      `,
-        [conversationId]
+        `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+       VALUES ($1, $2, $3, NOW())
+       RETURNING id, sender_id, receiver_id, content, sent_at`,
+        [userId, conversationId, content.trim()]
       );
 
       const message = {
         id: messageResult.rows[0].id,
-        conversationId,
+        conversationId: String(conversationId), // Ensure it's a string
         senderId: userId,
         senderUsername: socket.username,
         content: messageResult.rows[0].content,
-        createdAt: messageResult.rows[0].created_at,
+        createdAt: messageResult.rows[0].sent_at,
       };
 
-      // Emit message to conversation room
-      io.to(`conversation:${conversationId}`).emit("message:received", message);
+      console.log("Broadcasting message:", message);
 
-      // Also send to the other user's personal room (in case they're not in the conversation room)
-      io.to(`user:${otherUserId}`).emit("conversation:updated", {
-        id: conversationId,
-        lastMessage: content,
-        updatedAt: new Date().toISOString(),
-      });
+      // Emit message to both users
+      io.to(`user:${userId}`).emit("message:received", message);
+      io.to(`user:${conversationId}`).emit("message:received", message);
     } catch (error) {
       console.error("Error handling new message:", error);
       socket.emit("error", { message: "Error sending message" });
