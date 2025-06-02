@@ -85,7 +85,6 @@ io.on("connection", (socket) => {
       const db = require("./config/database");
 
       // For direct messages, conversationId is the recipient's user ID
-      // For direct messages, conversationId is the recipient's user ID
       const messageResult = await db.query(
         `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
        VALUES ($1, $2, $3, NOW())
@@ -95,7 +94,7 @@ io.on("connection", (socket) => {
 
       const message = {
         id: messageResult.rows[0].id,
-        conversationId: String(conversationId), // Ensure it's a string
+        conversationId: String(conversationId),
         senderId: userId,
         senderUsername: socket.username,
         content: messageResult.rows[0].content,
@@ -115,8 +114,15 @@ io.on("connection", (socket) => {
 
   // Handle typing indicator
   socket.on("typing:start", (conversationId) => {
-    socket.to(`conversation:${conversationId}`).emit("typing:update", {
-      conversationId,
+    console.log(
+      `User ${userId} started typing in conversation ${conversationId}`
+    );
+
+    // For direct messages, conversationId is the other user's ID
+    // Send typing indicator to the specific user in the conversation
+    // But send it with the sender's ID as the conversationId (from recipient's perspective)
+    socket.to(`user:${conversationId}`).emit("typing:update", {
+      conversationId: String(userId), // Use sender's ID as conversationId
       userId,
       username: socket.username,
       isTyping: true,
@@ -124,8 +130,15 @@ io.on("connection", (socket) => {
   });
 
   socket.on("typing:stop", (conversationId) => {
-    socket.to(`conversation:${conversationId}`).emit("typing:update", {
-      conversationId,
+    console.log(
+      `User ${userId} stopped typing in conversation ${conversationId}`
+    );
+
+    // For direct messages, conversationId is the other user's ID
+    // Send stop typing indicator to the specific user in the conversation
+    // But send it with the sender's ID as the conversationId (from recipient's perspective)
+    socket.to(`user:${conversationId}`).emit("typing:update", {
+      conversationId: String(userId), // <-- CHANGED: Use sender's ID as conversationId
       userId,
       username: socket.username,
       isTyping: false,
@@ -143,14 +156,14 @@ io.on("connection", (socket) => {
         `
         UPDATE messages
         SET read_at = NOW()
-        WHERE conversation_id = $1 AND sender_id != $2 AND read_at IS NULL
+        WHERE receiver_id = $1 AND sender_id = $2 AND read_at IS NULL
       `,
-        [conversationId, userId]
+        [userId, conversationId]
       );
 
-      // Emit read status update to conversation
-      socket.to(`conversation:${conversationId}`).emit("message:status", {
-        conversationId,
+      // Emit read status update to the sender
+      socket.to(`user:${conversationId}`).emit("message:status", {
+        conversationId: String(conversationId),
         readBy: userId,
         readAt: new Date().toISOString(),
       });
