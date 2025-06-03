@@ -4,13 +4,7 @@ const db = require("../config/database");
 const startConversation = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { recipientId, initialMessage } = req.body;
-
-    console.log("startConversation called:", {
-      userId,
-      recipientId,
-      initialMessage,
-    }); // Debug log
+    const { recipientId, initialMessage } = req.body; // Use camelCase as it comes from frontend
 
     if (!recipientId) {
       return res.status(400).json({
@@ -32,7 +26,7 @@ const startConversation = async (req, res) => {
       });
     }
 
-    // Send initial message if provided
+    // Send initial message if provide
     if (initialMessage && initialMessage.trim() !== "") {
       await db.query(
         `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
@@ -40,8 +34,6 @@ const startConversation = async (req, res) => {
         [userId, recipientId, initialMessage.trim()]
       );
     }
-
-    console.log("Conversation started successfully"); // Debug log
 
     res.status(201).json({
       success: true,
