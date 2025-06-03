@@ -51,6 +51,30 @@ io.on("connection", (socket) => {
   // Join user to their own room for private messages
   socket.join(`user:${userId}`);
 
+    // ✅ JOIN USER TO ALL THEIR TEAM ROOMS
+  const joinUserTeams = async () => {
+    try {
+      const db = require("./config/database");
+      const userTeamsResult = await db.query(
+        `SELECT tm.team_id FROM team_members tm WHERE tm.user_id = $1`,
+        [userId]
+      );
+
+      for (const row of userTeamsResult.rows) {
+        const teamId = row.team_id;
+        socket.join(`team:${teamId}`);
+        console.log(`User ${userId} joined team room: team:${teamId}`);
+      }
+    } catch (error) {
+      console.error("Error joining user teams:", error);
+    }
+  };
+
+    joinUserTeams();
+
+  // Emit online users to all clients
+  io.emit("users:online", Array.from(connectedUsers.keys()));
+
   // Emit online users to all clients
   io.emit("users:online", Array.from(connectedUsers.keys()));
 
@@ -68,27 +92,44 @@ io.on("connection", (socket) => {
   });
 
   // Handle new message
-  socket.on("message:new", async (data) => {
-    try {
-      const { conversationId, content } = data;
+socket.on("message:new", async (data) => {
+  try {
+    const { conversationId, content, type = "direct" } = data;
 
-      console.log(
-        `User ${userId} sending message to conversation ${conversationId}: "${content}"`
+    console.log(
+      `User ${userId} sending ${type} message to ${type === "team" ? "team" : "user"} ${conversationId}: "${content}"`
+    );
+
+    // Validate message
+    if (!conversationId || !content || content.trim() === "") {
+      socket.emit("error", { message: "Invalid message data" });
+      return;
+    }
+
+    const db = require("./config/database");
+    let messageResult;
+
+    if (type === "team") {
+      // ✅ TEAM MESSAGE HANDLING
+      console.log(`Inserting team message for team ${conversationId}`);
+      
+      // First verify user is a member of this team
+      const memberCheck = await db.query(
+        `SELECT tm.user_id FROM team_members tm 
+         WHERE tm.team_id = $1 AND tm.user_id = $2`,
+        [conversationId, userId]
       );
 
-      // Validate message
-      if (!conversationId || !content || content.trim() === "") {
-        socket.emit("error", { message: "Invalid message data" });
+      if (memberCheck.rows.length === 0) {
+        socket.emit("error", { message: "Not authorized to send messages to this team" });
         return;
       }
 
-      const db = require("./config/database");
-
-      // For direct messages, conversationId is the recipient's user ID
-      const messageResult = await db.query(
-        `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-       VALUES ($1, $2, $3, NOW())
-       RETURNING id, sender_id, receiver_id, content, sent_at`,
+      // Insert team message
+      messageResult = await db.query(
+        `INSERT INTO messages (sender_id, team_id, content, sent_at)
+         VALUES ($1, $2, $3, NOW())
+         RETURNING id, sender_id, team_id, content, sent_at`,
         [userId, conversationId, content.trim()]
       );
 
@@ -99,51 +140,100 @@ io.on("connection", (socket) => {
         senderUsername: socket.username,
         content: messageResult.rows[0].content,
         createdAt: messageResult.rows[0].sent_at,
+        type: "team"
       };
 
-      console.log("Broadcasting message:", message);
+      console.log("Broadcasting team message:", message);
 
-      // Emit message to both users
+      // ✅ BROADCAST TO ALL TEAM MEMBERS
+      // Emit to the team room (all members will receive it)
+      io.to(`team:${conversationId}`).emit("message:received", message);
+
+    } else {
+      // ✅ DIRECT MESSAGE HANDLING (existing code)
+      messageResult = await db.query(
+        `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+         VALUES ($1, $2, $3, NOW())
+         RETURNING id, sender_id, receiver_id, content, sent_at`,
+        [userId, conversationId, content.trim()]
+      );
+
+      const message = {
+        id: messageResult.rows[0].id,
+        conversationId: String(conversationId),
+        senderId: userId,
+        senderUsername: socket.username,
+        content: messageResult.rows[0].content,
+        createdAt: messageResult.rows[0].sent_at,
+        type: "direct"
+      };
+
+      console.log("Broadcasting direct message:", message);
+
+      // Emit to both users in direct conversation
       io.to(`user:${userId}`).emit("message:received", message);
       io.to(`user:${conversationId}`).emit("message:received", message);
-    } catch (error) {
-      console.error("Error handling new message:", error);
-      socket.emit("error", { message: "Error sending message" });
     }
-  });
+  } catch (error) {
+    console.error("Error handling new message:", error);
+    socket.emit("error", { message: "Error sending message" });
+  }
+});
 
   // Handle typing indicator
-  socket.on("typing:start", (conversationId) => {
-    console.log(
-      `User ${userId} started typing in conversation ${conversationId}`
-    );
+socket.on("typing:start", (data) => {
+  const { conversationId, type = "direct" } = data;
+  console.log(
+    `User ${userId} started typing in ${type} conversation ${conversationId}`
+  );
 
-    // For direct messages, conversationId is the other user's ID
-    // Send typing indicator to the specific user in the conversation
-    // But send it with the sender's ID as the conversationId (from recipient's perspective)
-    socket.to(`user:${conversationId}`).emit("typing:update", {
-      conversationId: String(userId), // Use sender's ID as conversationId
+  if (type === "team") {
+    // For team messages, broadcast to all team members except sender
+    socket.to(`team:${conversationId}`).emit("typing:update", {
+      conversationId: String(conversationId),
       userId,
       username: socket.username,
       isTyping: true,
+      type: "team"
     });
-  });
-
-  socket.on("typing:stop", (conversationId) => {
-    console.log(
-      `User ${userId} stopped typing in conversation ${conversationId}`
-    );
-
-    // For direct messages, conversationId is the other user's ID
-    // Send stop typing indicator to the specific user in the conversation
-    // But send it with the sender's ID as the conversationId (from recipient's perspective)
+  } else {
+    // For direct messages (existing logic)
     socket.to(`user:${conversationId}`).emit("typing:update", {
-      conversationId: String(userId), // <-- CHANGED: Use sender's ID as conversationId
+      conversationId: String(userId),
+      userId,
+      username: socket.username,
+      isTyping: true,
+      type: "direct"
+    });
+  }
+});
+
+socket.on("typing:stop", (data) => {
+  const { conversationId, type = "direct" } = data;
+  console.log(
+    `User ${userId} stopped typing in ${type} conversation ${conversationId}`
+  );
+
+  if (type === "team") {
+    // For team messages, broadcast to all team members except sender
+    socket.to(`team:${conversationId}`).emit("typing:update", {
+      conversationId: String(conversationId),
       userId,
       username: socket.username,
       isTyping: false,
+      type: "team"
     });
-  });
+  } else {
+    // For direct messages (existing logic)
+    socket.to(`user:${conversationId}`).emit("typing:update", {
+      conversationId: String(userId),
+      userId,
+      username: socket.username,
+      isTyping: false,
+      type: "direct"
+    });
+  }
+});
 
   // Handle message read status
   socket.on("message:read", async (data) => {
