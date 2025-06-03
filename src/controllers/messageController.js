@@ -1,10 +1,37 @@
 const db = require("../config/database");
 
+const getUnreadCount = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const countResult = await db.query(
+      `SELECT COUNT(*) as count 
+       FROM messages 
+       WHERE receiver_id = $1 AND read_at IS NULL`,
+      [userId]
+    );
+
+    res.status(200).json({
+      success: true,
+      data: {
+        count: parseInt(countResult.rows[0].count),
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching unread count:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching unread count",
+      error: error.message,
+    });
+  }
+};
+
 // Start a conversation by sending the first message
 const startConversation = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { recipientId, initialMessage } = req.body; // Use camelCase as it comes from frontend
+    const { recipientId, initialMessage } = req.body;
 
     if (!recipientId) {
       return res.status(400).json({
@@ -13,10 +40,13 @@ const startConversation = async (req, res) => {
       });
     }
 
+    const senderId = parseInt(userId);
+    const receiverId = parseInt(recipientId);
+
     // Check if recipient exists
     const recipientResult = await db.query(
       `SELECT id FROM users WHERE id = $1`,
-      [recipientId]
+      [receiverId]
     );
 
     if (recipientResult.rows.length === 0) {
@@ -26,19 +56,20 @@ const startConversation = async (req, res) => {
       });
     }
 
-    // Send initial message if provide
+    // Only send a message if there's actual content
     if (initialMessage && initialMessage.trim() !== "") {
       await db.query(
         `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
          VALUES ($1, $2, $3, NOW())`,
-        [userId, recipientId, initialMessage.trim()]
+        [senderId, receiverId, initialMessage.trim()]
       );
     }
 
+    // Always return success - the frontend will handle showing the conversation
     res.status(201).json({
       success: true,
       data: {
-        conversationId: recipientId, // Use recipient_id as conversation identifier
+        conversationId: receiverId,
       },
     });
   } catch (error) {
@@ -458,4 +489,5 @@ module.exports = {
   getMessages,
   getMessageById,
   deleteMessage,
+  getUnreadCount,
 };
