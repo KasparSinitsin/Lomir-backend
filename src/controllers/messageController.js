@@ -216,7 +216,7 @@ const getConversationById = async (req, res) => {
     const { type } = req.query;
 
     if (type === "team") {
-      // Get team information
+      // Get team information WITH members
       const teamQuery = `
         SELECT id, name, description, teamavatar_url as avatar_url
         FROM teams 
@@ -232,6 +232,26 @@ const getConversationById = async (req, res) => {
         });
       }
 
+      // Get team members
+      const membersQuery = `
+        SELECT tm.user_id, tm.role, tm.joined_at, 
+               u.username, u.email, u.avatar_url, 
+               u.first_name, u.last_name, u.is_public,
+               u.postal_code
+        FROM team_members tm
+        JOIN users u ON tm.user_id = u.id
+        WHERE tm.team_id = $1
+        ORDER BY 
+          CASE tm.role 
+            WHEN 'creator' THEN 1 
+            WHEN 'admin' THEN 2 
+            ELSE 3 
+          END,
+          tm.joined_at ASC
+      `;
+
+      const membersResult = await db.query(membersQuery, [conversationId]);
+
       const team = result.rows[0];
       res.status(200).json({
         success: true,
@@ -243,11 +263,12 @@ const getConversationById = async (req, res) => {
             name: team.name,
             description: team.description,
             avatarUrl: team.avatar_url,
+            members: membersResult.rows, // Add members here
           },
         },
       });
     } else {
-      // Get user information for direct message
+      // Direct message logic (keep existing code)
       const userQuery = `
         SELECT id, username, first_name, last_name, avatar_url
         FROM users 
