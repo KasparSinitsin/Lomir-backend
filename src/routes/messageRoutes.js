@@ -18,6 +18,12 @@ router.get(
   messageController.getConversations
 );
 
+router.get(
+  "/unread-count",
+  authenticateToken,
+  messageController.getUnreadCount
+);
+
 // Get specific conversation
 router.get(
   "/conversations/:id",
