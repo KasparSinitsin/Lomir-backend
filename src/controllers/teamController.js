@@ -477,7 +477,7 @@ const updateTeam = async (req, res) => {
     const teamId = req.params.id;
     const userId = req.user.id;
 
-    // Check if team exists and user is the creator
+    // Check if team exists and user is the creator OR admin
     const teamCheck = await db.pool.query(
       `
       SELECT t.*, tm.role
@@ -485,7 +485,7 @@ const updateTeam = async (req, res) => {
       JOIN team_members tm ON t.id = tm.team_id
       WHERE t.id = $1 
       AND tm.user_id = $2 
-      AND tm.role = 'creator'
+      AND (tm.role = 'creator' OR tm.role = 'admin')
       AND t.archived_at IS NULL
     `,
       [teamId, userId]
@@ -517,6 +517,153 @@ const updateTeam = async (req, res) => {
         })
       ),
     });
+
+    const updateMemberRole = async (req, res) => {
+      try {
+        const teamId = req.params.teamId;
+        const memberId = req.params.memberId;
+        const userId = req.user.id;
+
+        // ✅ DEBUG: Log what we're receiving
+        console.log("=== ROLE UPDATE DEBUG ===");
+        console.log("Request body:", req.body);
+        console.log("Request body type:", typeof req.body);
+        console.log("Request body keys:", Object.keys(req.body));
+
+        // Accept both camelCase and snake_case
+        const { newRole, new_role } = req.body;
+        const roleToUpdate = newRole || new_role;
+
+        console.log("Extracted values:");
+        console.log("- newRole:", newRole);
+        console.log("- new_role:", new_role);
+        console.log("- roleToUpdate:", roleToUpdate);
+        console.log("- roleToUpdate type:", typeof roleToUpdate);
+        console.log("=========================");
+
+        // Validate role
+        const validRoles = ["member", "admin"];
+        if (!validRoles.includes(roleToUpdate)) {
+          console.log("❌ Role validation failed for:", roleToUpdate);
+          return res.status(400).json({
+            success: false,
+            message: "Invalid role. Must be 'member' or 'admin'",
+            debug: {
+              received: roleToUpdate,
+              expectedOneOf: validRoles,
+              receivedType: typeof roleToUpdate,
+            },
+          });
+        }
+
+        console.log("✅ Role validation passed for:", roleToUpdate);
+
+        // Check if the user making the request is authorized (creator or admin)
+        const authCheck = await db.pool.query(
+          `
+      SELECT tm.role 
+      FROM team_members tm
+      JOIN teams t ON tm.team_id = t.id
+      WHERE tm.team_id = $1 
+      AND tm.user_id = $2
+      AND (tm.role = 'creator' OR tm.role = 'admin')
+      AND t.archived_at IS NULL
+    `,
+          [teamId, userId]
+        );
+
+        if (authCheck.rows.length === 0) {
+          return res.status(403).json({
+            success: false,
+            message: "Not authorized to change member roles in this team",
+          });
+        }
+
+        const userRole = authCheck.rows[0].role;
+
+        // Check if target member exists and get their current role
+        const memberCheck = await db.pool.query(
+          `
+      SELECT role FROM team_members 
+      WHERE team_id = $1 AND user_id = $2
+    `,
+          [teamId, memberId]
+        );
+
+        if (memberCheck.rows.length === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "Member not found in this team",
+          });
+        }
+
+        const memberCurrentRole = memberCheck.rows[0].role;
+
+        // Only creators can change admin roles
+        if (memberCurrentRole === "admin" && userRole !== "creator") {
+          return res.status(403).json({
+            success: false,
+            message: "Only team creators can change admin roles",
+          });
+        }
+
+        // Only creators can promote to admin
+        if (roleToUpdate === "admin" && userRole !== "creator") {
+          return res.status(403).json({
+            success: false,
+            message: "Only team creators can promote members to admin",
+          });
+        }
+
+        // Can't change creator role
+        if (memberCurrentRole === "creator") {
+          return res.status(403).json({
+            success: false,
+            message: "Cannot change creator role",
+          });
+        }
+
+        // Update member role
+        const client = await db.pool.connect();
+
+        try {
+          await client.query("BEGIN");
+
+          await client.query(
+            `
+        UPDATE team_members 
+        SET role = $1 
+        WHERE team_id = $2 AND user_id = $3
+      `,
+            [roleToUpdate, teamId, memberId]
+          );
+
+          await client.query("COMMIT");
+
+          res.status(200).json({
+            success: true,
+            message: `Member role updated to ${roleToUpdate} successfully`,
+          });
+        } catch (dbError) {
+          await client.query("ROLLBACK");
+          console.error("Database error while updating member role:", dbError);
+          res.status(500).json({
+            success: false,
+            message: "Database error while updating member role",
+            errorDetails: dbError.message,
+          });
+        } finally {
+          client.release();
+        }
+      } catch (error) {
+        console.error("Update member role error:", error);
+        res.status(500).json({
+          success: false,
+          message: "Error updating member role",
+          error: error.message,
+        });
+      }
+    };
 
     // Validate request body
     const { error, value } = updateSchema.validate(req.body);
@@ -1334,6 +1481,129 @@ const removeTeamMember = async (req, res) => {
   }
 };
 
+const updateMemberRole = async (req, res) => {
+  try {
+    const teamId = req.params.teamId;
+    const memberId = req.params.memberId;
+    const userId = req.user.id;
+    const { newRole } = req.body;
+
+    // Validate role
+    const validRoles = ["member", "admin"];
+    if (!validRoles.includes(newRole)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid role. Must be 'member' or 'admin'",
+      });
+    }
+
+    // Check if the user making the request is authorized (creator or admin)
+    const authCheck = await db.pool.query(
+      `
+      SELECT tm.role 
+      FROM team_members tm
+      JOIN teams t ON tm.team_id = t.id
+      WHERE tm.team_id = $1 
+      AND tm.user_id = $2
+      AND (tm.role = 'creator' OR tm.role = 'admin')
+      AND t.archived_at IS NULL
+    `,
+      [teamId, userId]
+    );
+
+    if (authCheck.rows.length === 0) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to change member roles in this team",
+      });
+    }
+
+    const userRole = authCheck.rows[0].role;
+
+    // Check if target member exists and get their current role
+    const memberCheck = await db.pool.query(
+      `
+      SELECT role FROM team_members 
+      WHERE team_id = $1 AND user_id = $2
+    `,
+      [teamId, memberId]
+    );
+
+    if (memberCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Member not found in this team",
+      });
+    }
+
+    const memberCurrentRole = memberCheck.rows[0].role;
+
+    // Only creators can change admin roles
+    if (memberCurrentRole === "admin" && userRole !== "creator") {
+      return res.status(403).json({
+        success: false,
+        message: "Only team creators can change admin roles",
+      });
+    }
+
+    // Only creators can promote to admin
+    if (newRole === "admin" && userRole !== "creator") {
+      return res.status(403).json({
+        success: false,
+        message: "Only team creators can promote members to admin",
+      });
+    }
+
+    // Can't change creator role
+    if (memberCurrentRole === "creator") {
+      return res.status(403).json({
+        success: false,
+        message: "Cannot change creator role",
+      });
+    }
+
+    // Update member role
+    const client = await db.pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      await client.query(
+        `
+        UPDATE team_members 
+        SET role = $1 
+        WHERE team_id = $2 AND user_id = $3
+      `,
+        [newRole, teamId, memberId]
+      );
+
+      await client.query("COMMIT");
+
+      res.status(200).json({
+        success: true,
+        message: `Member role updated to ${newRole} successfully`,
+      });
+    } catch (dbError) {
+      await client.query("ROLLBACK");
+      console.error("Database error while updating member role:", dbError);
+      res.status(500).json({
+        success: false,
+        message: "Database error while updating member role",
+        errorDetails: dbError.message,
+      });
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error("Update member role error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error updating member role",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   createTeam,
   getAllTeams,
@@ -1349,4 +1619,5 @@ module.exports = {
   handleTeamApplication,
   getUserPendingApplications,
   cancelApplication,
+  updateMemberRole,
 };
