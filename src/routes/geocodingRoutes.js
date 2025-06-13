@@ -69,29 +69,30 @@ router.get("/postal-code/:code", async (req, res) => {
       `Geocoding request for postal code: ${code}, detected country: ${detectedCountry}`
     );
 
-    // First, try our simple mapping
+    // First, try simple mapping
     if (postalCodeMapping[code]) {
       const location = postalCodeMapping[code];
-      console.log(
-        `Found in mapping: ${code} -> ${location.city}, ${location.country}`
-      );
-
       const locationInfo = {
         city: location.city,
         state: null,
         country: location.country,
+        district: null,
+        suburb: null,
+        borough: null,
+        cityDistrict: null,
         displayName: `${location.city}, ${location.country}`,
         latitude: null,
         longitude: null,
+        rawAddress: null,
       };
 
       return res.json(locationInfo);
     }
 
-    // If not in mapping, try Nominatim with proper country code
+    // Enhanced Nominatim query with more detailed address components
     try {
       console.log(
-        `Trying Nominatim for ${code} with country ${detectedCountry}`
+        `Trying enhanced Nominatim for ${code} with country ${detectedCountry}`
       );
 
       const response = await axios.get(
@@ -103,11 +104,13 @@ router.get("/postal-code/:code", async (req, res) => {
             format: "json",
             limit: 1,
             addressdetails: 1,
+            extratags: 1, // Get additional tags
+            namedetails: 1, // Get name details in multiple languages
           },
           headers: {
             "User-Agent": "Lomir-App/1.0",
           },
-          timeout: 5000, // 5 second timeout
+          timeout: 5000,
         }
       );
 
@@ -115,61 +118,111 @@ router.get("/postal-code/:code", async (req, res) => {
         const result = response.data[0];
         const address = result.address;
 
+        console.log("Full address data:", JSON.stringify(address, null, 2));
+
         const locationInfo = {
+          // Basic location
           city:
-            address.city || address.town || address.village || address.hamlet,
+            address.city ||
+            address.town ||
+            address.village ||
+            address.municipality,
           state: address.state,
           country: address.country,
-          displayName: formatDisplayName(address),
+
+          // Detailed location components
+          district: address.city_district || address.district || address.suburb,
+          suburb: address.suburb || address.neighbourhood,
+          borough: address.borough,
+          cityDistrict: address.city_district,
+
+          // Coordinates
           latitude: parseFloat(result.lat),
           longitude: parseFloat(result.lon),
+
+          // Display names
+          displayName: this.formatEnhancedDisplayName(address),
+
+          // Raw data for debugging
+          rawAddress: address,
+
+          // Additional metadata
+          importance: result.importance,
+          osmType: result.osm_type,
         };
 
-        console.log(`Nominatim success for ${code}:`, locationInfo.displayName);
+        console.log(
+          `Enhanced geocoding success for ${code}:`,
+          locationInfo.displayName
+        );
         return res.json(locationInfo);
       }
     } catch (nominatimError) {
-      console.log(`Nominatim failed for ${code}:`, nominatimError.message);
+      console.log(
+        `Enhanced Nominatim failed for ${code}:`,
+        nominatimError.message
+      );
     }
 
-    // If both methods fail, return a basic response
-    console.log(`No geocoding results found for postal code: ${code}`);
+    // Fallback response
     res.json({
       city: null,
       state: null,
       country: null,
-      displayName: code, // Just show the postal code
+      district: null,
+      suburb: null,
+      borough: null,
+      cityDistrict: null,
+      displayName: code,
       latitude: null,
       longitude: null,
+      rawAddress: null,
     });
   } catch (error) {
-    console.error("Geocoding service error:", error.message);
-
-    // Return postal code as fallback
+    console.error("Enhanced geocoding service error:", error.message);
     res.json({
       city: null,
       state: null,
       country: null,
+      district: null,
+      suburb: null,
+      borough: null,
+      cityDistrict: null,
       displayName: req.params.code,
       latitude: null,
       longitude: null,
+      rawAddress: null,
     });
   }
 });
 
-function formatDisplayName(address) {
-  const city =
-    address.city || address.town || address.village || address.hamlet;
-  const country = address.country;
+function formatEnhancedDisplayName(address) {
+  const components = [];
 
-  if (city && country) {
-    return `${city}, ${country}`;
-  } else if (city) {
-    return city;
-  } else if (country) {
-    return country;
+  // Add the most specific location first
+  if (address.city_district) {
+    components.push(address.city_district);
+  } else if (address.district) {
+    components.push(address.district);
+  } else if (address.suburb) {
+    components.push(address.suburb);
+  } else if (address.neighbourhood) {
+    components.push(address.neighbourhood);
   }
-  return "";
+
+  // Add city
+  const city =
+    address.city || address.town || address.village || address.municipality;
+  if (city) {
+    components.push(city);
+  }
+
+  // Add country
+  if (address.country) {
+    components.push(address.country);
+  }
+
+  return components.length > 0 ? components.join(", ") : "";
 }
 
 module.exports = router;
