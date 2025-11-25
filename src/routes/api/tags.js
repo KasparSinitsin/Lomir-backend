@@ -148,4 +148,94 @@ router.put('/users/:userId/tags', async (req, res) => {
   }
 });
 
+// GET /api/tags/popular - Get most used tags
+router.get('/popular', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 10;
+    const query = `
+      SELECT 
+        t.id, t.name, t.category, t.supercategory,
+        COUNT(ut.user_id) as usage_count
+      FROM tags t
+      LEFT JOIN user_tags ut ON t.id = ut.tag_id
+      GROUP BY t.id, t.name, t.category, t.supercategory
+      ORDER BY usage_count DESC, t.name ASC
+      LIMIT $1
+    `;
+    const result = await db.query(query, [limit]);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching popular tags:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch popular tags' });
+  }
+});
+
+// GET /api/tags/suggestions - Smart search with ranking
+router.get('/suggestions', async (req, res) => {
+  try {
+    const query = req.query.query || '';
+    const limit = parseInt(req.query.limit) || 10;
+    const excludeIds = req.query.exclude ? req.query.exclude.split(',').map(id => parseInt(id)) : [];
+    
+    const searchQuery = `
+      SELECT 
+        t.id, t.name, t.category, t.supercategory,
+        COUNT(ut.user_id) as usage_count,
+        CASE
+          WHEN LOWER(t.name) = LOWER($1) THEN 1
+          WHEN LOWER(t.name) LIKE LOWER($1) || '%' THEN 2
+          ELSE 3
+        END as relevance
+      FROM tags t
+      LEFT JOIN user_tags ut ON t.id = ut.tag_id
+      WHERE LOWER(t.name) LIKE '%' || LOWER($1) || '%'
+      ${excludeIds.length > 0 ? `AND t.id NOT IN (${excludeIds.join(',')})` : ''}
+      GROUP BY t.id, t.name, t.category, t.supercategory
+      ORDER BY relevance ASC, usage_count DESC, t.name ASC
+      LIMIT $2
+    `;
+    const result = await db.query(searchQuery, [query, limit]);
+    res.json({ success: true, data: result.rows });
+  } catch (error) {
+    console.error('Error fetching tag suggestions:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch tag suggestions' });
+  }
+});
+
+// GET /api/tags/related/:tagId - Get related tags
+router.get('/related/:tagId', async (req, res) => {
+  try {
+    const tagId = parseInt(req.params.tagId);
+    const limit = parseInt(req.query.limit) || 5;
+    const excludeIds = req.query.exclude ? req.query.exclude.split(',').map(id => parseInt(id)) : [];
+    
+    const tagInfoQuery = `SELECT category, supercategory FROM tags WHERE id = $1`;
+    const tagInfo = await db.query(tagInfoQuery, [tagId]);
+    
+    if (tagInfo.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Tag not found' });
+    }
+    
+    const { category, supercategory } = tagInfo.rows[0];
+    const relatedQuery = `
+      SELECT 
+        t.id, t.name, t.category, t.supercategory,
+        COUNT(ut.user_id) as usage_count
+      FROM tags t
+      LEFT JOIN user_tags ut ON t.id = ut.tag_id
+      WHERE (t.category = $2 OR t.supercategory = $3)
+        AND t.id != $1
+        ${excludeIds.length > 0 ? `AND t.id NOT IN (${excludeIds.join(',')})` : ''}
+      GROUP BY t.id, t.name, t.category, t.supercategory
+      ORDER BY usage_count DESC, t.name ASC
+      LIMIT $4
+    `;
+    const result = await db.query(relatedQuery, [tagId, category, supercategory, limit]);
+    res.json({ success: true, data: result.rows, context: { category, supercategory } });
+  } catch (error) {
+    console.error('Error fetching related tags:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch related tags' });
+  }
+});
+
 module.exports = router;
