@@ -70,16 +70,16 @@ router.put(
       });
 
       // Validate role
-      const validRoles = ["member", "admin"];
+      const validRoles = ["member", "admin", "owner"];
       if (!validRoles.includes(new_role)) {
         return res.status(400).json({
           success: false,
-          message: "Invalid role. Must be 'member' or 'admin'",
+          message: "Invalid role. Must be 'member', 'admin', or 'owner'",
           received: new_role,
         });
       }
 
-      // Check if the user making the request is authorized (creator or admin)
+      // Check if the user making the request is authorized (owner or admin)
       const authCheck = await db.pool.query(
         `
         SELECT tm.role 
@@ -87,7 +87,7 @@ router.put(
         JOIN teams t ON tm.team_id = t.id
         WHERE tm.team_id = $1 
         AND tm.user_id = $2
-        AND (tm.role = 'creator' OR tm.role = 'admin')
+        AND (tm.role = 'owner' OR tm.role = 'admin')
         AND t.archived_at IS NULL
       `,
         [teamId, userId]
@@ -120,28 +120,84 @@ router.put(
 
       const memberCurrentRole = memberCheck.rows[0].role;
 
-      // Only creators can change admin roles
-      if (memberCurrentRole === "admin" && userRole !== "creator") {
+      // Commented out restrictions for team role changes to enable more flexible role management
+
+      // // Only owners can change admin roles
+      // if (memberCurrentRole === "admin" && userRole !== "owner") {
+      //   return res.status(403).json({
+      //     success: false,
+      //     message: "Only team owners can change admin roles",
+      //   });
+      // }
+
+      // // Only owners can promote to admin
+      // if (new_role === "admin" && userRole !== "owner") {
+      //   return res.status(403).json({
+      //     success: false,
+      //     message: "Only team owners can promote members to admin",
+      //   });
+      // }
+
+      // Only owner can transfer ownership
+      if (new_role === "owner" && userRole !== "owner") {
         return res.status(403).json({
           success: false,
-          message: "Only team creators can change admin roles",
+          message: "Only the team owner can transfer ownership",
         });
       }
 
-      // Only creators can promote to admin
-      if (new_role === "admin" && userRole !== "creator") {
-        return res.status(403).json({
-          success: false,
-          message: "Only team creators can promote members to admin",
-        });
-      }
+      // Handle ownership transfer
+      if (new_role === "owner") {
+        // Start transaction for ownership transfer
+        const client = await db.pool.connect();
 
-      // Can't change creator role
-      if (memberCurrentRole === "creator") {
-        return res.status(403).json({
-          success: false,
-          message: "Cannot change creator role",
-        });
+        try {
+          await client.query("BEGIN");
+
+          // Demote current owner to admin
+          await client.query(
+            `UPDATE team_members 
+       SET role = 'admin' 
+       WHERE team_id = $1 AND role = 'owner'`,
+            [teamId]
+          );
+
+          // Promote target member to owner
+          await client.query(
+            `UPDATE team_members 
+       SET role = 'owner' 
+       WHERE team_id = $1 AND user_id = $2`,
+            [teamId, memberId]
+          );
+
+          // Update the teams table owner_id as well
+          await client.query(
+            `UPDATE teams 
+       SET owner_id = $1 
+       WHERE id = $2`,
+            [memberId, teamId]
+          );
+
+          await client.query("COMMIT");
+
+          console.log(
+            `✅ Ownership transferred to user ${memberId} in team ${teamId}`
+          );
+
+          return res.status(200).json({
+            success: true,
+            message: "Team ownership transferred successfully",
+          });
+        } catch (dbError) {
+          await client.query("ROLLBACK");
+          console.error("Database error during ownership transfer:", dbError);
+          return res.status(500).json({
+            success: false,
+            message: "Database error during ownership transfer",
+          });
+        } finally {
+          client.release();
+        }
       }
 
       // Update member role

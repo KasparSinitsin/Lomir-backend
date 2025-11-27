@@ -30,7 +30,7 @@ const searchController = {
     t.description,
     t.is_public,
     t.max_members,
-    t.creator_id,
+    t.owner_id,
     t.teamavatar_url as "teamavatarUrl",
     COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
     STRING_AGG(
@@ -61,7 +61,7 @@ const searchController = {
         teamQuery += `
           AND (
             t.is_public = TRUE
-            OR t.creator_id = $2
+            OR t.owner_id = $2
             OR EXISTS (
               SELECT 1 FROM team_members
               WHERE team_id = t.id AND user_id = $2
@@ -76,7 +76,7 @@ const searchController = {
       // Add group by and limit - UPDATED to include all non-aggregated columns
       teamQuery += `
         GROUP BY
-          t.id, t.name, t.description, t.is_public, t.max_members, t.creator_id, t.teamavatar_url
+          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url
         LIMIT 20
       `;
 
@@ -215,7 +215,7 @@ const searchController = {
         t.description,
         t.is_public,
         t.max_members,
-        t.creator_id,
+        t.owner_id,
         t.teamavatar_url as "teamavatarUrl",
         COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
         STRING_AGG(
@@ -239,7 +239,7 @@ const searchController = {
         teamQuery += `
         AND (
           t.is_public = TRUE
-          OR t.creator_id = $1
+          OR t.owner_id = $1
           OR EXISTS (
             SELECT 1 FROM team_members
             WHERE team_id = t.id AND user_id = $1
@@ -253,7 +253,7 @@ const searchController = {
 
       teamQuery += `
       GROUP BY
-        t.id, t.name, t.description, t.is_public, t.max_members, t.creator_id, t.teamavatar_url
+        t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url
       LIMIT 20
     `;
 
@@ -376,7 +376,7 @@ const searchController = {
           t.description,
           t.is_public,
           t.max_members,
-          t.creator_id,
+          t.owner_id,
           COUNT(tm.id) as member_count
         FROM teams t
         LEFT JOIN team_members tm ON t.id = tm.team_id
@@ -403,7 +403,7 @@ const searchController = {
         searchQuery += `
           AND (
             t.is_public = TRUE
-            OR t.creator_id = $${paramIndex}
+            OR t.owner_id = $${paramIndex}
             OR EXISTS (
               SELECT 1 FROM team_members
               WHERE team_id = t.id AND user_id = $${paramIndex}
@@ -444,7 +444,7 @@ const searchController = {
 
       // Group by and limit
       searchQuery += `
-        GROUP BY t.id, t.name, t.description, t.is_public, t.max_members, t.creator_id
+        GROUP BY t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id
         LIMIT 20
       `;
 
@@ -503,7 +503,7 @@ const searchController = {
         query += `
           AND (
             t.is_public = TRUE
-            OR t.creator_id = $${paramIndex}
+            OR t.owner_id = $${paramIndex}
             OR EXISTS (
               SELECT 1 FROM team_members
               WHERE team_id = t.id AND user_id = $${paramIndex}
@@ -585,7 +585,7 @@ const searchController = {
         query += `
           AND (
             t.is_public = TRUE
-            OR t.creator_id = $${paramIndex}
+            OR t.owner_id = $${paramIndex}
             OR EXISTS (
               SELECT 1 FROM team_members
               WHERE team_id = t.id AND user_id = $${paramIndex}
