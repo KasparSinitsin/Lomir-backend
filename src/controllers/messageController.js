@@ -243,7 +243,7 @@ const getConversationById = async (req, res) => {
         WHERE tm.team_id = $1
         ORDER BY 
           CASE tm.role 
-            WHEN 'creator' THEN 1 
+            WHEN 'owner' THEN 1 
             WHEN 'admin' THEN 2 
             ELSE 3 
           END,

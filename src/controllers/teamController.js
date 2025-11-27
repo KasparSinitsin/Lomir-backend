@@ -51,9 +51,9 @@ const createTeam = async (req, res) => {
   const client = await db.pool.connect();
   try {
     console.log("--> Entering createTeam function");
-    const creatorId = req.user.id;
+    const ownerId = req.user.id;
     console.log("--> Received team creation request:", req.body);
-    console.log("--> Creator ID:", creatorId);
+    console.log("--> Owner ID:", ownerId);
 
     const { error, value } = teamCreationSchema.validate(req.body);
     if (error) {
@@ -81,7 +81,7 @@ const createTeam = async (req, res) => {
   INSERT INTO teams (
     name, 
     description, 
-    creator_id, 
+    owner_id, 
     is_public, 
     max_members, 
     postal_code,
@@ -92,7 +92,7 @@ const createTeam = async (req, res) => {
       [
         value.name,
         value.description,
-        creatorId,
+        ownerId,
         isPublicBoolean,
         value.max_members,
         value.postal_code || null,
@@ -107,9 +107,9 @@ const createTeam = async (req, res) => {
       INSERT INTO team_members (team_id, user_id, role)
       VALUES ($1, $2, $3)
     `,
-      [team.id, creatorId, "creator"]
+      [team.id, ownerId, "owner"]
     );
-    console.log("--> Creator added as member");
+    console.log("--> Owner added as member");
 
     if (value.tags && value.tags.length > 0) {
       const tagIdsToCheck = value.tags.map((tag) => tag.tag_id);
@@ -259,7 +259,7 @@ const getTeamById = async (req, res) => {
   WHERE tm.team_id = $1
   ORDER BY 
     CASE tm.role 
-      WHEN 'creator' THEN 1 
+      WHEN 'owner' THEN 1 
       WHEN 'admin' THEN 2 
       ELSE 3 
     END,
@@ -477,7 +477,7 @@ const updateTeam = async (req, res) => {
     const teamId = req.params.id;
     const userId = req.user.id;
 
-    // Check if team exists and user is the creator OR admin
+    // Check if team exists and user is the owner OR admin
     const teamCheck = await db.pool.query(
       `
       SELECT t.*, tm.role
@@ -485,7 +485,7 @@ const updateTeam = async (req, res) => {
       JOIN team_members tm ON t.id = tm.team_id
       WHERE t.id = $1 
       AND tm.user_id = $2 
-      AND (tm.role = 'creator' OR tm.role = 'admin')
+      AND (tm.role = 'owner' OR tm.role = 'admin')
       AND t.archived_at IS NULL
     `,
       [teamId, userId]
@@ -558,7 +558,7 @@ const updateTeam = async (req, res) => {
 
         console.log("✅ Role validation passed for:", roleToUpdate);
 
-        // Check if the user making the request is authorized (creator or admin)
+        // Check if the user making the request is authorized (owner or admin)
         const authCheck = await db.pool.query(
           `
       SELECT tm.role 
@@ -566,7 +566,7 @@ const updateTeam = async (req, res) => {
       JOIN teams t ON tm.team_id = t.id
       WHERE tm.team_id = $1 
       AND tm.user_id = $2
-      AND (tm.role = 'creator' OR tm.role = 'admin')
+      AND (tm.role = 'owner' OR tm.role = 'admin')
       AND t.archived_at IS NULL
     `,
           [teamId, userId]
@@ -599,27 +599,27 @@ const updateTeam = async (req, res) => {
 
         const memberCurrentRole = memberCheck.rows[0].role;
 
-        // Only creators can change admin roles
-        if (memberCurrentRole === "admin" && userRole !== "creator") {
+        // Only owners can change admin roles
+        if (memberCurrentRole === "admin" && userrole !== "owner") {
           return res.status(403).json({
             success: false,
-            message: "Only team creators can change admin roles",
+            message: "Only team owners can change admin roles",
           });
         }
 
-        // Only creators can promote to admin
-        if (roleToUpdate === "admin" && userRole !== "creator") {
+        // Only owners can promote to admin
+        if (roleToUpdate === "admin" && userrole !== "owner") {
           return res.status(403).json({
             success: false,
-            message: "Only team creators can promote members to admin",
+            message: "Only team owners can promote members to admin",
           });
         }
 
-        // Can't change creator role
-        if (memberCurrentRole === "creator") {
+        // Can't change owner role
+        if (memberCurrentrole === "owner") {
           return res.status(403).json({
             success: false,
-            message: "Cannot change creator role",
+            message: "Cannot change owner role",
           });
         }
 
@@ -857,12 +857,12 @@ const getTeamApplications = async (req, res) => {
     const teamId = req.params.id;
     const userId = req.user.id;
 
-    // Check if user is the team creator or admin
+    // Check if user is the team owner or admin
     const authCheck = await db.pool.query(
       `SELECT tm.role FROM team_members tm
        JOIN teams t ON tm.team_id = t.id
        WHERE tm.team_id = $1 AND tm.user_id = $2 
-       AND (tm.role = 'creator' OR tm.role = 'admin')
+       AND (tm.role = 'owner' OR tm.role = 'admin')
        AND t.archived_at IS NULL`,
       [teamId, userId]
     );
@@ -925,7 +925,7 @@ const handleTeamApplication = async (req, res) => {
 
     // Get application details
     const applicationResult = await db.pool.query(
-      `SELECT ta.*, t.creator_id, t.max_members, tm.role
+      `SELECT ta.*, t.owner_id, t.max_members, tm.role
        FROM team_applications ta
        JOIN teams t ON ta.team_id = t.id
        LEFT JOIN team_members tm ON t.id = tm.team_id AND tm.user_id = $1
@@ -943,7 +943,7 @@ const handleTeamApplication = async (req, res) => {
     const application = applicationResult.rows[0];
 
     // Check authorization
-    if (application.creator_id !== userId && application.role !== "admin") {
+    if (application.owner_id !== userId && application.role !== "admin") {
       return res.status(403).json({
         success: false,
         message: "Not authorized to handle this application",
@@ -1026,7 +1026,7 @@ const deleteTeam = async (req, res) => {
     const teamId = req.params.id;
     const userId = req.user.id;
 
-    // Check if team exists and user is the creator
+    // Check if team exists and user is the owner
     const teamCheck = await db.pool.query(
       `
       SELECT t.*, tm.role
@@ -1034,7 +1034,7 @@ const deleteTeam = async (req, res) => {
       JOIN team_members tm ON t.id = tm.team_id
       WHERE t.id = $1 
       AND tm.user_id = $2 
-      AND tm.role = 'creator'
+      AND tm.role = 'owner'
       AND t.archived_at IS NULL
     `,
       [teamId, userId]
@@ -1114,7 +1114,7 @@ const applyToJoinTeam = async (req, res) => {
 
     // Check if team exists and is active
     const teamCheck = await db.pool.query(
-      `SELECT id, name, creator_id, max_members FROM teams 
+      `SELECT id, name, owner_id, max_members FROM teams 
        WHERE id = $1 AND archived_at IS NULL`,
       [teamId]
     );
@@ -1234,7 +1234,7 @@ const addTeamMember = async (req, res) => {
     const newMemberId = value.memberId;
     const role = value.role;
 
-    // Check if the user making the request is authorized (creator or admin)
+    // Check if the user making the request is authorized (owner or admin)
     const authCheck = await db.pool.query(
       `
       SELECT tm.role 
@@ -1242,7 +1242,7 @@ const addTeamMember = async (req, res) => {
       JOIN teams t ON tm.team_id = t.id
       WHERE tm.team_id = $1 
       AND tm.user_id = $2
-      AND (tm.role = 'creator' OR tm.role = 'admin')
+      AND (tm.role = 'owner' OR tm.role = 'admin')
       AND t.archived_at IS NULL
     `,
       [teamId, userId]
@@ -1360,7 +1360,7 @@ const removeTeamMember = async (req, res) => {
     const memberId = req.params.memberId;
     const userId = req.user.id;
 
-    // Check if the user making the request is authorized (creator, admin, or self-removal)
+    // Check if the user making the request is authorized (owner, admin, or self-removal)
     const authCheck = await db.pool.query(
       `
       SELECT tm.role 
@@ -1383,8 +1383,8 @@ const removeTeamMember = async (req, res) => {
     const userRole = authCheck.rows[0].role;
     const isSelfRemoval = userId == memberId;
 
-    // Only creators/admins can remove others, anyone can remove themselves
-    if (!isSelfRemoval && userRole !== "creator" && userRole !== "admin") {
+    // Only owners/admins can remove others, anyone can remove themselves
+    if (!isSelfRemoval && userrole !== "owner" && userRole !== "admin") {
       return res.status(403).json({
         success: false,
         message: "Not authorized to remove other members",
@@ -1409,10 +1409,10 @@ const removeTeamMember = async (req, res) => {
 
     const memberRole = memberCheck.rows[0].role;
 
-    // Only creators can remove other creators or admins
+    // Only owners can remove other owners or admins
     if (
-      (memberRole === "creator" || memberRole === "admin") &&
-      userRole !== "creator"
+      (memberrole === "owner" || memberRole === "admin") &&
+      userrole !== "owner"
     ) {
       return res.status(403).json({
         success: false,
@@ -1420,21 +1420,21 @@ const removeTeamMember = async (req, res) => {
       });
     }
 
-    // Prevent removing the last creator
-    if (memberRole === "creator") {
-      const creatorCount = await db.pool.query(
+    // Prevent removing the last owner
+    if (memberrole === "owner") {
+      const ownerCount = await db.pool.query(
         `
         SELECT COUNT(*) FROM team_members
-        WHERE team_id = $1 AND role = 'creator'
+        WHERE team_id = $1 AND role = 'owner'
       `,
         [teamId]
       );
 
-      if (parseInt(creatorCount.rows[0].count) <= 1) {
+      if (parseInt(ownerCount.rows[0].count) <= 1) {
         return res.status(400).json({
           success: false,
           message:
-            "Cannot remove the last team creator. Transfer ownership first.",
+            "Cannot remove the last team owner. Transfer ownership first.",
         });
       }
     }
@@ -1497,7 +1497,7 @@ const updateMemberRole = async (req, res) => {
       });
     }
 
-    // Check if the user making the request is authorized (creator or admin)
+    // Check if the user making the request is authorized (owner or admin)
     const authCheck = await db.pool.query(
       `
       SELECT tm.role 
@@ -1505,7 +1505,7 @@ const updateMemberRole = async (req, res) => {
       JOIN teams t ON tm.team_id = t.id
       WHERE tm.team_id = $1 
       AND tm.user_id = $2
-      AND (tm.role = 'creator' OR tm.role = 'admin')
+      AND (tm.role = 'owner' OR tm.role = 'admin')
       AND t.archived_at IS NULL
     `,
       [teamId, userId]
@@ -1538,27 +1538,27 @@ const updateMemberRole = async (req, res) => {
 
     const memberCurrentRole = memberCheck.rows[0].role;
 
-    // Only creators can change admin roles
-    if (memberCurrentRole === "admin" && userRole !== "creator") {
+    // Only owners can change admin roles
+    if (memberCurrentRole === "admin" && userrole !== "owner") {
       return res.status(403).json({
         success: false,
-        message: "Only team creators can change admin roles",
+        message: "Only team owners can change admin roles",
       });
     }
 
-    // Only creators can promote to admin
-    if (newRole === "admin" && userRole !== "creator") {
+    // Only owners can promote to admin
+    if (newRole === "admin" && userrole !== "owner") {
       return res.status(403).json({
         success: false,
-        message: "Only team creators can promote members to admin",
+        message: "Only team owners can promote members to admin",
       });
     }
 
-    // Can't change creator role
-    if (memberCurrentRole === "creator") {
+    // Can't change owner role
+    if (memberCurrentrole === "owner") {
       return res.status(403).json({
         success: false,
-        message: "Cannot change creator role",
+        message: "Cannot change owner role",
       });
     }
 
