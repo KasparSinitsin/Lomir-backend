@@ -3,6 +3,7 @@ const router = express.Router();
 const teamController = require("../controllers/teamController");
 const auth = require("../middlewares/auth");
 const db = require("../config/database");
+const invitationController = require("../controllers/invitationController");
 
 // Debugging middleware to log incoming requests
 router.use((req, res, next) => {
@@ -33,6 +34,49 @@ router.put(
 router.post("/", auth.authenticateToken, teamController.createTeam);
 router.get("/", teamController.getAllTeams);
 router.get("/my-teams", auth.authenticateToken, teamController.getUserTeams);
+
+// ==================== INVITATION ROUTES ====================
+// Get teams where current user can invite others
+router.get(
+  "/can-invite",
+  auth.authenticateToken,
+  invitationController.getTeamsWhereUserCanInvite
+);
+
+// Get all pending invitations received by current user
+router.get(
+  "/invitations/received",
+  auth.authenticateToken,
+  invitationController.getUserReceivedInvitations
+);
+
+// Respond to an invitation (accept or decline)
+router.put(
+  "/invitations/:invitationId",
+  auth.authenticateToken,
+  invitationController.respondToInvitation
+);
+
+// Cancel an invitation (by team owner/admin)
+router.delete(
+  "/invitations/:invitationId",
+  auth.authenticateToken,
+  invitationController.cancelInvitation
+);
+
+// Get all pending invitations sent by a specific team
+router.get(
+  "/:teamId/invitations",
+  auth.authenticateToken,
+  invitationController.getTeamSentInvitations
+);
+
+// Send an invitation to a user
+router.post(
+  "/:teamId/invitations",
+  auth.authenticateToken,
+  invitationController.sendTeamInvitation
+);
 
 router.get(
   "/applications/user",
