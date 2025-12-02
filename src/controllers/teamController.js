@@ -1356,8 +1356,8 @@ const addTeamMember = async (req, res) => {
 
 const removeTeamMember = async (req, res) => {
   try {
-    const teamId = req.params.teamId;
-    const memberId = req.params.memberId;
+    const teamId = req.params.id;
+    const memberId = req.params.userId;
     const userId = req.user.id;
 
     // Check if the user making the request is authorized (owner, admin, or self-removal)
@@ -1384,7 +1384,7 @@ const removeTeamMember = async (req, res) => {
     const isSelfRemoval = userId == memberId;
 
     // Only owners/admins can remove others, anyone can remove themselves
-    if (!isSelfRemoval && userrole !== "owner" && userRole !== "admin") {
+    if (!isSelfRemoval && userRole !== "owner" && userRole !== "admin") {
       return res.status(403).json({
         success: false,
         message: "Not authorized to remove other members",
@@ -1409,10 +1409,11 @@ const removeTeamMember = async (req, res) => {
 
     const memberRole = memberCheck.rows[0].role;
 
-    // Only owners can remove other owners or admins
+    // Only owners can remove OTHER owners or admins (self-removal is always allowed)
     if (
-      (memberrole === "owner" || memberRole === "admin") &&
-      userrole !== "owner"
+      !isSelfRemoval &&
+      (memberRole === "owner" || memberRole === "admin") &&
+      userRole !== "owner"
     ) {
       return res.status(403).json({
         success: false,
@@ -1421,7 +1422,7 @@ const removeTeamMember = async (req, res) => {
     }
 
     // Prevent removing the last owner
-    if (memberrole === "owner") {
+    if (memberRole === "owner") {
       const ownerCount = await db.pool.query(
         `
         SELECT COUNT(*) FROM team_members
