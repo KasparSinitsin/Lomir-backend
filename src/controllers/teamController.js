@@ -317,7 +317,16 @@ const getUserTeams = async (req, res) => {
 
     const teamsResult = await db.pool.query(
       `
-      SELECT t.*, 
+      SELECT t.id, 
+             t.name, 
+             t.description, 
+             t.teamavatar_url, 
+             t.max_members, 
+             t.is_public, 
+             t.owner_id, 
+             t.created_at, 
+             t.updated_at, 
+             t.postal_code,
              COALESCE(COUNT(DISTINCT tm.user_id), 0) AS current_members_count,
              tmr.role as user_role
       FROM teams t
