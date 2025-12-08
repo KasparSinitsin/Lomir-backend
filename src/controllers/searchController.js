@@ -89,6 +89,7 @@ const searchController = {
           u.last_name,
           u.bio,
           u.postal_code,
+          u.city,
           u.avatar_url,
           u.is_public,
           (SELECT STRING_AGG(t.name, ', ')
@@ -123,7 +124,7 @@ const searchController = {
 
       userQuery += `
         GROUP BY
-          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.avatar_url, u.is_public
+          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.avatar_url, u.is_public
         LIMIT 20
       `;
 
@@ -266,6 +267,7 @@ const searchController = {
         u.last_name,
         u.bio,
         u.postal_code,
+        u.city,
         u.avatar_url,
         u.is_public,
         (SELECT STRING_AGG(t.name, ', ')
@@ -291,10 +293,10 @@ const searchController = {
       }
 
       userQuery += `
-      GROUP BY
-        u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.avatar_url, u.is_public
-      LIMIT 20
-    `;
+        GROUP BY
+          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.avatar_url, u.is_public
+        LIMIT 20
+      `;
 
       console.log("Team query:", teamQuery);
       console.log("Team params:", teamParams);
