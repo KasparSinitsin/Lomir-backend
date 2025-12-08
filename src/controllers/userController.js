@@ -49,7 +49,7 @@ const getUserById = async (req, res) => {
     const result = await pool.query(
       `SELECT 
          u.id, u.username, u.email, u.first_name, u.last_name, 
-         u.bio, u.avatar_url, u.postal_code, u.is_public, u.created_at,
+         u.bio, u.avatar_url, u.postal_code, u.city, u.is_public, u.created_at,
          (SELECT STRING_AGG(t.name, ', ')
           FROM user_tags ut
           JOIN tags t ON ut.tag_id = t.id
@@ -122,6 +122,7 @@ const updateUser = async (req, res) => {
       email,
       bio,
       postal_code,
+      city,
       avatar_url,
       is_public,
     } = req.body;
@@ -169,6 +170,11 @@ const updateUser = async (req, res) => {
     if (postal_code !== undefined) {
       updateFields.push(`postal_code = $${paramPosition}`);
       queryParams.push(postal_code);
+      paramPosition++;
+    }
+    if (city !== undefined) {
+      updateFields.push(`city = $${paramPosition}`);
+      queryParams.push(city);
       paramPosition++;
     }
 
@@ -231,7 +237,7 @@ const updateUser = async (req, res) => {
       UPDATE users 
       SET ${updateFields.join(", ")} 
       WHERE id = $${paramPosition}
-      RETURNING id, username, email, first_name, last_name, bio, avatar_url, postal_code, is_public, created_at, updated_at
+      RETURNING id, username, email, first_name, last_name, bio, avatar_url, postal_code, city, is_public, created_at, updated_at
     `;
 
     console.log("Executing query:", query);
