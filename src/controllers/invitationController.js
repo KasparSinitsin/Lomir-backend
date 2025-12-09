@@ -226,15 +226,19 @@ const getTeamSentInvitations = async (req, res) => {
 
     const invitationsResult = await db.pool.query(
       `SELECT 
-        ti.id, ti.message, ti.status, ti.created_at,
-        u.id as invitee_id, u.username, u.first_name, u.last_name,
-        u.avatar_url, u.bio, u.postal_code,
-        inv.username as inviter_username
-       FROM team_invitations ti
-       JOIN users u ON ti.invitee_id = u.id
-       JOIN users inv ON ti.inviter_id = inv.id
-       WHERE ti.team_id = $1 AND ti.status = 'pending'
-       ORDER BY ti.created_at DESC`,
+    ti.id, ti.message, ti.status, ti.created_at,
+    u.id as invitee_id, u.username, u.first_name, u.last_name,
+    u.avatar_url, u.bio, u.postal_code,
+    inv.id as inviter_id,
+    inv.username as inviter_username,
+    inv.first_name as inviter_first_name,
+    inv.last_name as inviter_last_name,
+    inv.avatar_url as inviter_avatar_url
+   FROM team_invitations ti
+   JOIN users u ON ti.invitee_id = u.id
+   JOIN users inv ON ti.inviter_id = inv.id
+   WHERE ti.team_id = $1 AND ti.status = 'pending'
+   ORDER BY ti.created_at DESC`,
       [teamId]
     );
 
@@ -251,6 +255,13 @@ const getTeamSentInvitations = async (req, res) => {
         avatar_url: row.avatar_url,
         bio: row.bio,
         postal_code: row.postal_code,
+      },
+      inviter: {
+        id: row.inviter_id,
+        username: row.inviter_username,
+        first_name: row.inviter_first_name,
+        last_name: row.inviter_last_name,
+        avatar_url: row.inviter_avatar_url,
       },
       inviter_username: row.inviter_username,
     }));
