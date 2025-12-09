@@ -78,12 +78,15 @@ const sendTeamInvitation = async (req, res) => {
       [teamId]
     );
 
- if (team.max_members !== null && parseInt(memberCount.rows[0].count) >= team.max_members) {
-  return res.status(400).json({
-    success: false,
-    message: "Team is already at maximum capacity",
-  });
-}
+    if (
+      team.max_members !== null &&
+      parseInt(memberCount.rows[0].count) >= team.max_members
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Team is already at maximum capacity",
+      });
+    }
 
     // Check if there's already a pending invitation
     const existingInvitation = await db.pool.query(
@@ -313,13 +316,16 @@ const respondToInvitation = async (req, res) => {
           [invitation.team_id]
         );
 
-if (invitation.max_members !== null && parseInt(memberCount.rows[0].count) >= invitation.max_members) {
-  await client.query("ROLLBACK");
-  return res.status(400).json({
-    success: false,
-    message: "Team is now at maximum capacity",
-  });
-}
+        if (
+          invitation.max_members !== null &&
+          parseInt(memberCount.rows[0].count) >= invitation.max_members
+        ) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({
+            success: false,
+            message: "Team is now at maximum capacity",
+          });
+        }
 
         // Add user to team
         await client.query(
@@ -449,22 +455,23 @@ const getTeamsWhereUserCanInvite = async (req, res) => {
     );
 
     // Filter out teams that are at capacity (skip check if unlimited)
-const availableTeams = teamsResult.rows
-  .filter((team) => 
-    team.max_members === null || 
-    parseInt(team.current_members_count) < team.max_members
-  )
-  .map((team) => ({
-    id: team.id,
-    name: team.name,
-    teamavatar_url: team.teamavatar_url,
-    max_members: team.max_members,
-    current_members_count: parseInt(team.current_members_count),
-    available_spots:
-      team.max_members === null 
-        ? null  // unlimited
-        : team.max_members - parseInt(team.current_members_count),
-  }));
+    const availableTeams = teamsResult.rows
+      .filter(
+        (team) =>
+          team.max_members === null ||
+          parseInt(team.current_members_count) < team.max_members
+      )
+      .map((team) => ({
+        id: team.id,
+        name: team.name,
+        teamavatar_url: team.teamavatar_url,
+        max_members: team.max_members,
+        current_members_count: parseInt(team.current_members_count),
+        available_spots:
+          team.max_members === null
+            ? null // unlimited
+            : team.max_members - parseInt(team.current_members_count),
+      }));
 
     res.status(200).json({
       success: true,
