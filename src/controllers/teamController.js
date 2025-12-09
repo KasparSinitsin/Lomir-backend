@@ -27,12 +27,18 @@ const teamCreationSchema = Joi.object({
 
   is_public: Joi.boolean().default(true),
 
-  max_members: Joi.number().integer().min(2).max(20).required().messages({
-    "number.base": "Maximum members must be a number",
-    "number.min": "Team must have at least 2 members",
-    "number.max": "Team cannot have more than 20 members",
-    "any.required": "Maximum members is required",
-  }),
+  max_members: Joi.alternatives()
+    .try(
+      Joi.number().integer().min(2).messages({
+        "number.base": "Maximum members must be a number",
+        "number.min": "Team must have at least 2 members",
+      }),
+      Joi.valid(null) // null represents "unlimited"
+    )
+    .required()
+    .messages({
+      "any.required": "Maximum members is required",
+    }),
 
   teamavatar_url: Joi.string().uri().allow(null, "").messages({
     "string.uri": "Team avatar URL must be a valid URL",
@@ -516,7 +522,10 @@ const updateTeam = async (req, res) => {
       name: Joi.string().min(3).max(100),
       description: Joi.string().min(10).max(500),
       is_public: Joi.boolean(),
-      max_members: Joi.number().min(2).max(20),
+      max_members: Joi.alternatives().try(
+        Joi.number().integer().min(2),
+        Joi.valid(null) // null = "unlimited"
+      ),
       postal_code: Joi.string(),
       status: Joi.string().valid("active", "inactive"),
       teamavatar_url: Joi.string().uri().allow(null, ""),
@@ -527,6 +536,8 @@ const updateTeam = async (req, res) => {
       ),
     });
 
+    // NOTE: This nested function is unrelated to max_members;
+    // leaving it as-is from your original code.
     const updateMemberRole = async (req, res) => {
       try {
         const teamId = req.params.teamId;
@@ -609,7 +620,7 @@ const updateTeam = async (req, res) => {
         const memberCurrentRole = memberCheck.rows[0].role;
 
         // Only owners can change admin roles
-        if (memberCurrentRole === "admin" && userrole !== "owner") {
+        if (memberCurrentRole === "admin" && userRole !== "owner") {
           return res.status(403).json({
             success: false,
             message: "Only team owners can change admin roles",
@@ -617,7 +628,7 @@ const updateTeam = async (req, res) => {
         }
 
         // Only owners can promote to admin
-        if (roleToUpdate === "admin" && userrole !== "owner") {
+        if (roleToUpdate === "admin" && userRole !== "owner") {
           return res.status(403).json({
             success: false,
             message: "Only team owners can promote members to admin",
@@ -625,7 +636,7 @@ const updateTeam = async (req, res) => {
         }
 
         // Can't change owner role
-        if (memberCurrentrole === "owner") {
+        if (memberCurrentRole === "owner") {
           return res.status(403).json({
             success: false,
             message: "Cannot change owner role",
@@ -749,9 +760,11 @@ const updateTeam = async (req, res) => {
         paramCounter++;
       }
 
-      if (value.max_members) {
+      // 🔧 IMPORTANT FIX: allow null to be saved (unlimited),
+      // but only update when the field was actually sent.
+      if (value.max_members !== undefined) {
         updateFields.push(`max_members = $${paramCounter}`);
-        queryParams.push(value.max_members);
+        queryParams.push(value.max_members); // can be a number OR null
         paramCounter++;
       }
 
@@ -860,6 +873,7 @@ const updateTeam = async (req, res) => {
     });
   }
 };
+
 
 const getTeamApplications = async (req, res) => {
   try {
@@ -1283,7 +1297,11 @@ const addTeamMember = async (req, res) => {
       });
     }
 
-    if (teamCheck.rows[0].current_members >= teamCheck.rows[0].max_members) {
+    const maxMembers = teamCheck.rows[0].max_members;
+    if (
+      maxMembers !== null &&
+      teamCheck.rows[0].current_members >= maxMembers
+    ) {
       return res.status(400).json({
         success: false,
         message: "Team is already at maximum capacity",
