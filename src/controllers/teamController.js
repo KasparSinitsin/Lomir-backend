@@ -73,6 +73,15 @@ const createTeam = async (req, res) => {
     }
     console.log("--> Joi validation successful");
 
+    console.log(
+      "--> After Joi validation, value.max_members:",
+      value.max_members
+    );
+
+    // Decide what to insert into max_members
+    const maxMembersForInsert =
+      value.max_members === undefined ? null : value.max_members;
+
     await client.query("BEGIN");
     console.log("--> Transaction started");
 
@@ -100,9 +109,9 @@ const createTeam = async (req, res) => {
         value.description,
         ownerId,
         isPublicBoolean,
-        value.max_members,
+        maxMembersForInsert,
         value.postal_code || null,
-        value.teamavatar_url || null, // Add this line to include the teamavatar_url
+        value.teamavatar_url || null,
       ]
     );
     const team = teamResult.rows[0];
@@ -764,7 +773,7 @@ const updateTeam = async (req, res) => {
       // but only update when the field was actually sent.
       if (value.max_members !== undefined) {
         updateFields.push(`max_members = $${paramCounter}`);
-        queryParams.push(value.max_members); // can be a number OR null
+        queryParams.push(value.max_members); // can be null or number
         paramCounter++;
       }
 
@@ -873,7 +882,6 @@ const updateTeam = async (req, res) => {
     });
   }
 };
-
 
 const getTeamApplications = async (req, res) => {
   try {
