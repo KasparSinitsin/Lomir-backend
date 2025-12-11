@@ -994,6 +994,7 @@ const handleTeamApplication = async (req, res) => {
         );
 
         if (
+          application.max_members !== null &&
           parseInt(memberCountResult.rows[0].count) >= application.max_members
         ) {
           await client.query("ROLLBACK");
@@ -1178,7 +1179,10 @@ const applyToJoinTeam = async (req, res) => {
       [teamId]
     );
 
-    if (parseInt(memberCount.rows[0].count) >= team.max_members) {
+    if (
+      team.max_members !== null &&
+      parseInt(memberCount.rows[0].count) >= team.max_members
+    ) {
       return res.status(400).json({
         success: false,
         message: "Team is already at maximum capacity",
