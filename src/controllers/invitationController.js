@@ -287,7 +287,7 @@ const respondToInvitation = async (req, res) => {
   try {
     const invitationId = req.params.invitationId;
     const userId = req.user.id;
-    const { action } = req.body;
+    const { action, response_message } = req.body; // Add response_message
 
     if (!["accept", "decline"].includes(action)) {
       return res.status(400).json({
@@ -296,13 +296,15 @@ const respondToInvitation = async (req, res) => {
       });
     }
 
-    // Get invitation details
+    // Get invitation details including inviter info
     const invitationResult = await db.pool.query(
-      `SELECT ti.*, t.max_members, t.name as team_name
-       FROM team_invitations ti
-       JOIN teams t ON ti.team_id = t.id
-       WHERE ti.id = $1 AND ti.invitee_id = $2 AND ti.status = 'pending'
-       AND t.archived_at IS NULL`,
+      `SELECT ti.*, t.max_members, t.name as team_name,
+          u.first_name as invitee_first_name, u.last_name as invitee_last_name, u.username as invitee_username
+   FROM team_invitations ti
+   JOIN teams t ON ti.team_id = t.id
+   JOIN users u ON ti.invitee_id = u.id
+   WHERE ti.id = $1 AND ti.invitee_id = $2 AND ti.status = 'pending'
+   AND t.archived_at IS NULL`,
       [invitationId, userId]
     );
 
@@ -314,7 +316,6 @@ const respondToInvitation = async (req, res) => {
     }
 
     const invitation = invitationResult.rows[0];
-
     const client = await db.pool.connect();
 
     try {
@@ -352,14 +353,48 @@ const respondToInvitation = async (req, res) => {
            WHERE id = $1`,
           [invitationId]
         );
+
+        // If there's a response message, add it to the TEAM CHAT
+        if (response_message && response_message.trim()) {
+          const inviteeName =
+            invitation.invitee_first_name && invitation.invitee_last_name
+              ? `${invitation.invitee_first_name} ${invitation.invitee_last_name}`
+              : invitation.invitee_username;
+
+          const formattedMessage = `👋 ${inviteeName} joined the team!\n\n"${response_message.trim()}"`;
+
+          await client.query(
+            `INSERT INTO messages (sender_id, team_id, content, sent_at)
+     VALUES ($1, $2, $3, NOW())`,
+            [userId, invitation.team_id, formattedMessage]
+          );
+        }
       } else {
         // Decline
         await client.query(
           `UPDATE team_invitations 
-           SET status = 'declined', responded_at = NOW()
-           WHERE id = $1`,
+     SET status = 'declined', responded_at = NOW()
+     WHERE id = $1`,
           [invitationId]
         );
+
+        // If there's a response message, send it as a DIRECT MESSAGE to the inviter
+        if (response_message && response_message.trim()) {
+          const inviteeName =
+            invitation.invitee_first_name && invitation.invitee_last_name
+              ? `${invitation.invitee_first_name} ${invitation.invitee_last_name}`
+              : invitation.invitee_username;
+
+          const formattedMessage = `📋 Response to your invitation for "${
+            invitation.team_name
+          }":\n\n"${response_message.trim()}"`;
+
+          await client.query(
+            `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+       VALUES ($1, $2, $3, NOW())`,
+            [userId, invitation.inviter_id, formattedMessage]
+          );
+        }
       }
 
       await client.query("COMMIT");
