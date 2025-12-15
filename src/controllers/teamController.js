@@ -418,13 +418,20 @@ const getUserPendingApplications = async (req, res) => {
     // Get user's pending applications with team details
     const applicationsResult = await db.pool.query(
       `SELECT 
-        ta.id, ta.team_id, ta.message, ta.status, ta.created_at,
-        t.name, t.description, t.teamavatar_url, t.max_members, t.is_public,
-        (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count
-       FROM team_applications ta
-       JOIN teams t ON ta.team_id = t.id
-       WHERE ta.applicant_id = $1 AND ta.status = 'pending'
-       ORDER BY ta.created_at DESC`,
+    ta.id, ta.team_id, ta.message, ta.status, ta.created_at,
+    t.name, t.description, t.teamavatar_url, t.max_members, t.is_public,
+    (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count,
+    owner.id as owner_id,
+    owner.username as owner_username,
+    owner.first_name as owner_first_name,
+    owner.last_name as owner_last_name,
+    owner.avatar_url as owner_avatar_url
+   FROM team_applications ta
+   JOIN teams t ON ta.team_id = t.id
+   JOIN team_members tm ON t.id = tm.team_id AND tm.role = 'owner'
+   JOIN users owner ON tm.user_id = owner.id
+   WHERE ta.applicant_id = $1 AND ta.status = 'pending'
+   ORDER BY ta.created_at DESC`,
       [userId]
     );
 
@@ -441,6 +448,14 @@ const getUserPendingApplications = async (req, res) => {
         max_members: row.max_members,
         is_public: row.is_public === true,
         current_members_count: parseInt(row.current_members_count),
+      },
+      // Add owner (receiver) info
+      owner: {
+        id: row.owner_id,
+        username: row.owner_username,
+        first_name: row.owner_first_name,
+        last_name: row.owner_last_name,
+        avatar_url: row.owner_avatar_url,
       },
     }));
 
