@@ -449,7 +449,7 @@ const getUserPendingApplications = async (req, res) => {
         is_public: row.is_public === true,
         current_members_count: parseInt(row.current_members_count),
       },
-      // Add owner (receiver) info
+      // Owner (receiver) info
       owner: {
         id: row.owner_id,
         username: row.owner_username,
