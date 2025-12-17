@@ -384,26 +384,28 @@ const getUserRoleInTeam = async (req, res) => {
       SELECT role 
       FROM team_members 
       WHERE team_id = $1 AND user_id = $2
-    `,
+      `,
       [teamId, userId]
     );
 
+    // ✅ User is NOT a member (normal case, not an error)
     if (roleResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "User is not a member of this team",
+      return res.status(200).json({
+        success: true,
+        isMember: false,
+        role: null,
       });
     }
 
-    res.status(200).json({
+    // ✅ User IS a member
+    return res.status(200).json({
       success: true,
-      data: {
-        role: roleResult.rows[0].role,
-      },
+      isMember: true,
+      role: roleResult.rows[0].role,
     });
   } catch (error) {
     console.error("Error fetching user role:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Error fetching user role",
       error: error.message,
