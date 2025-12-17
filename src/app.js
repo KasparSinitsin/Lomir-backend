@@ -59,21 +59,40 @@ app.use((req, res, next) => {
 // --- API Routes ---
 // Define specific API routes first. Order matters.
 
+/*
+|--------------------------------------------------------------------------
+| NEW: Central API router
+|--------------------------------------------------------------------------
+*/
+const apiRoutes = require("./routes");
+app.use("/api", apiRoutes);
+
+/*
+|--------------------------------------------------------------------------
+| OLD: Direct API route mounting (disabled)
+| Reason: We now mount all API routes centrally via routes/index.js
+|--------------------------------------------------------------------------
+*/
+
 // Auth routes
-const authRoutes = require("./routes/authRoutes");
-app.use("/api/auth", authRoutes);
+// const authRoutes = require("./routes/authRoutes");
+// app.use("/api/auth", authRoutes);
 
 // Search routes
-const searchRoutes = require("./routes/searchRoutes");
-app.use("/api/search", searchRoutes);
+// const searchRoutes = require("./routes/searchRoutes");
+// app.use("/api/search", searchRoutes);
 
 // Team routes
-const teamRoutes = require("./routes/teamRoutes");
-app.use("/api/teams", teamRoutes);
+// const teamRoutes = require("./routes/teamRoutes");
+// app.use("/api/teams", teamRoutes);
 
-// User routes (This is where PUT /api/users/:id should be handled)
-const userRoutes = require("./routes/userRoutes");
-app.use("/api/users", userRoutes);
+// User routes
+// const userRoutes = require("./routes/userRoutes");
+// app.use("/api/users", userRoutes);
+
+// Message routes
+// const messageRoutes = require("./routes/messageRoutes");
+// app.use("/api/messages", messageRoutes);
 
 // Tag routes
 // *** CHECK THIS PATH: Ensure './routes/api/tags' is the correct location of your tag routes file. ***

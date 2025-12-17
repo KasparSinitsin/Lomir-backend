@@ -30,7 +30,7 @@ const searchController = {
     t.description,
     t.is_public,
     t.max_members,
-    t.creator_id,
+    t.owner_id,
     t.teamavatar_url as "teamavatarUrl",
     COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
     STRING_AGG(
@@ -61,7 +61,7 @@ const searchController = {
         teamQuery += `
           AND (
             t.is_public = TRUE
-            OR t.creator_id = $2
+            OR t.owner_id = $2
             OR EXISTS (
               SELECT 1 FROM team_members
               WHERE team_id = t.id AND user_id = $2
@@ -76,7 +76,7 @@ const searchController = {
       // Add group by and limit - UPDATED to include all non-aggregated columns
       teamQuery += `
         GROUP BY
-          t.id, t.name, t.description, t.is_public, t.max_members, t.creator_id, t.teamavatar_url
+          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url
         LIMIT 20
       `;
 
@@ -89,6 +89,7 @@ const searchController = {
           u.last_name,
           u.bio,
           u.postal_code,
+          u.city,
           u.avatar_url,
           u.is_public,
           (SELECT STRING_AGG(t.name, ', ')
@@ -123,7 +124,7 @@ const searchController = {
 
       userQuery += `
         GROUP BY
-          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.avatar_url, u.is_public
+          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.avatar_url, u.is_public
         LIMIT 20
       `;
 
@@ -215,7 +216,7 @@ const searchController = {
         t.description,
         t.is_public,
         t.max_members,
-        t.creator_id,
+        t.owner_id,
         t.teamavatar_url as "teamavatarUrl",
         COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
         STRING_AGG(
@@ -239,7 +240,7 @@ const searchController = {
         teamQuery += `
         AND (
           t.is_public = TRUE
-          OR t.creator_id = $1
+          OR t.owner_id = $1
           OR EXISTS (
             SELECT 1 FROM team_members
             WHERE team_id = t.id AND user_id = $1
@@ -253,7 +254,7 @@ const searchController = {
 
       teamQuery += `
       GROUP BY
-        t.id, t.name, t.description, t.is_public, t.max_members, t.creator_id, t.teamavatar_url
+        t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url
       LIMIT 20
     `;
 
@@ -266,6 +267,7 @@ const searchController = {
         u.last_name,
         u.bio,
         u.postal_code,
+        u.city,
         u.avatar_url,
         u.is_public,
         (SELECT STRING_AGG(t.name, ', ')
@@ -291,10 +293,10 @@ const searchController = {
       }
 
       userQuery += `
-      GROUP BY
-        u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.avatar_url, u.is_public
-      LIMIT 20
-    `;
+        GROUP BY
+          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.avatar_url, u.is_public
+        LIMIT 20
+      `;
 
       console.log("Team query:", teamQuery);
       console.log("Team params:", teamParams);
@@ -376,7 +378,7 @@ const searchController = {
           t.description,
           t.is_public,
           t.max_members,
-          t.creator_id,
+          t.owner_id,
           COUNT(tm.id) as member_count
         FROM teams t
         LEFT JOIN team_members tm ON t.id = tm.team_id
@@ -403,7 +405,7 @@ const searchController = {
         searchQuery += `
           AND (
             t.is_public = TRUE
-            OR t.creator_id = $${paramIndex}
+            OR t.owner_id = $${paramIndex}
             OR EXISTS (
               SELECT 1 FROM team_members
               WHERE team_id = t.id AND user_id = $${paramIndex}
@@ -444,7 +446,7 @@ const searchController = {
 
       // Group by and limit
       searchQuery += `
-        GROUP BY t.id, t.name, t.description, t.is_public, t.max_members, t.creator_id
+        GROUP BY t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id
         LIMIT 20
       `;
 
@@ -503,7 +505,7 @@ const searchController = {
         query += `
           AND (
             t.is_public = TRUE
-            OR t.creator_id = $${paramIndex}
+            OR t.owner_id = $${paramIndex}
             OR EXISTS (
               SELECT 1 FROM team_members
               WHERE team_id = t.id AND user_id = $${paramIndex}
@@ -585,7 +587,7 @@ const searchController = {
         query += `
           AND (
             t.is_public = TRUE
-            OR t.creator_id = $${paramIndex}
+            OR t.owner_id = $${paramIndex}
             OR EXISTS (
               SELECT 1 FROM team_members
               WHERE team_id = t.id AND user_id = $${paramIndex}

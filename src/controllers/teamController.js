@@ -27,12 +27,18 @@ const teamCreationSchema = Joi.object({
 
   is_public: Joi.boolean().default(true),
 
-  max_members: Joi.number().integer().min(2).max(20).required().messages({
-    "number.base": "Maximum members must be a number",
-    "number.min": "Team must have at least 2 members",
-    "number.max": "Team cannot have more than 20 members",
-    "any.required": "Maximum members is required",
-  }),
+  max_members: Joi.alternatives()
+    .try(
+      Joi.number().integer().min(2).messages({
+        "number.base": "Maximum members must be a number",
+        "number.min": "Team must have at least 2 members",
+      }),
+      Joi.valid(null) // null represents "unlimited"
+    )
+    .required()
+    .messages({
+      "any.required": "Maximum members is required",
+    }),
 
   teamavatar_url: Joi.string().uri().allow(null, "").messages({
     "string.uri": "Team avatar URL must be a valid URL",
@@ -51,9 +57,9 @@ const createTeam = async (req, res) => {
   const client = await db.pool.connect();
   try {
     console.log("--> Entering createTeam function");
-    const creatorId = req.user.id;
+    const ownerId = req.user.id;
     console.log("--> Received team creation request:", req.body);
-    console.log("--> Creator ID:", creatorId);
+    console.log("--> Owner ID:", ownerId);
 
     const { error, value } = teamCreationSchema.validate(req.body);
     if (error) {
@@ -66,6 +72,15 @@ const createTeam = async (req, res) => {
       });
     }
     console.log("--> Joi validation successful");
+
+    console.log(
+      "--> After Joi validation, value.max_members:",
+      value.max_members
+    );
+
+    // Decide what to insert into max_members
+    const maxMembersForInsert =
+      value.max_members === undefined ? null : value.max_members;
 
     await client.query("BEGIN");
     console.log("--> Transaction started");
@@ -81,7 +96,7 @@ const createTeam = async (req, res) => {
   INSERT INTO teams (
     name, 
     description, 
-    creator_id, 
+    owner_id, 
     is_public, 
     max_members, 
     postal_code,
@@ -92,11 +107,11 @@ const createTeam = async (req, res) => {
       [
         value.name,
         value.description,
-        creatorId,
+        ownerId,
         isPublicBoolean,
-        value.max_members,
+        maxMembersForInsert,
         value.postal_code || null,
-        value.teamavatar_url || null, // Add this line to include the teamavatar_url
+        value.teamavatar_url || null,
       ]
     );
     const team = teamResult.rows[0];
@@ -107,9 +122,9 @@ const createTeam = async (req, res) => {
       INSERT INTO team_members (team_id, user_id, role)
       VALUES ($1, $2, $3)
     `,
-      [team.id, creatorId, "creator"]
+      [team.id, ownerId, "owner"]
     );
-    console.log("--> Creator added as member");
+    console.log("--> Owner added as member");
 
     if (value.tags && value.tags.length > 0) {
       const tagIdsToCheck = value.tags.map((tag) => tag.tag_id);
@@ -259,7 +274,7 @@ const getTeamById = async (req, res) => {
   WHERE tm.team_id = $1
   ORDER BY 
     CASE tm.role 
-      WHEN 'creator' THEN 1 
+      WHEN 'owner' THEN 1 
       WHEN 'admin' THEN 2 
       ELSE 3 
     END,
@@ -317,7 +332,16 @@ const getUserTeams = async (req, res) => {
 
     const teamsResult = await db.pool.query(
       `
-      SELECT t.*, 
+      SELECT t.id, 
+             t.name, 
+             t.description, 
+             t.teamavatar_url, 
+             t.max_members, 
+             t.is_public, 
+             t.owner_id, 
+             t.created_at, 
+             t.updated_at, 
+             t.postal_code,
              COALESCE(COUNT(DISTINCT tm.user_id), 0) AS current_members_count,
              tmr.role as user_role
       FROM teams t
@@ -360,26 +384,28 @@ const getUserRoleInTeam = async (req, res) => {
       SELECT role 
       FROM team_members 
       WHERE team_id = $1 AND user_id = $2
-    `,
+      `,
       [teamId, userId]
     );
 
+    // ✅ User is NOT a member (normal case, not an error)
     if (roleResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "User is not a member of this team",
+      return res.status(200).json({
+        success: true,
+        isMember: false,
+        role: null,
       });
     }
 
-    res.status(200).json({
+    // ✅ User IS a member
+    return res.status(200).json({
       success: true,
-      data: {
-        role: roleResult.rows[0].role,
-      },
+      isMember: true,
+      role: roleResult.rows[0].role,
     });
   } catch (error) {
     console.error("Error fetching user role:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Error fetching user role",
       error: error.message,
@@ -394,13 +420,20 @@ const getUserPendingApplications = async (req, res) => {
     // Get user's pending applications with team details
     const applicationsResult = await db.pool.query(
       `SELECT 
-        ta.id, ta.team_id, ta.message, ta.status, ta.created_at,
-        t.name, t.description, t.teamavatar_url, t.max_members, t.is_public,
-        (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count
-       FROM team_applications ta
-       JOIN teams t ON ta.team_id = t.id
-       WHERE ta.applicant_id = $1 AND ta.status = 'pending'
-       ORDER BY ta.created_at DESC`,
+    ta.id, ta.team_id, ta.message, ta.status, ta.created_at,
+    t.name, t.description, t.teamavatar_url, t.max_members, t.is_public,
+    (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count,
+    owner.id as owner_id,
+    owner.username as owner_username,
+    owner.first_name as owner_first_name,
+    owner.last_name as owner_last_name,
+    owner.avatar_url as owner_avatar_url
+   FROM team_applications ta
+   JOIN teams t ON ta.team_id = t.id
+   JOIN team_members tm ON t.id = tm.team_id AND tm.role = 'owner'
+   JOIN users owner ON tm.user_id = owner.id
+   WHERE ta.applicant_id = $1 AND ta.status = 'pending'
+   ORDER BY ta.created_at DESC`,
       [userId]
     );
 
@@ -417,6 +450,14 @@ const getUserPendingApplications = async (req, res) => {
         max_members: row.max_members,
         is_public: row.is_public === true,
         current_members_count: parseInt(row.current_members_count),
+      },
+      // Owner (receiver) info
+      owner: {
+        id: row.owner_id,
+        username: row.owner_username,
+        first_name: row.owner_first_name,
+        last_name: row.owner_last_name,
+        avatar_url: row.owner_avatar_url,
       },
     }));
 
@@ -477,7 +518,7 @@ const updateTeam = async (req, res) => {
     const teamId = req.params.id;
     const userId = req.user.id;
 
-    // Check if team exists and user is the creator
+    // Check if team exists and user is the owner OR admin
     const teamCheck = await db.pool.query(
       `
       SELECT t.*, tm.role
@@ -485,7 +526,7 @@ const updateTeam = async (req, res) => {
       JOIN team_members tm ON t.id = tm.team_id
       WHERE t.id = $1 
       AND tm.user_id = $2 
-      AND tm.role = 'creator'
+      AND (tm.role = 'owner' OR tm.role = 'admin')
       AND t.archived_at IS NULL
     `,
       [teamId, userId]
@@ -507,7 +548,10 @@ const updateTeam = async (req, res) => {
       name: Joi.string().min(3).max(100),
       description: Joi.string().min(10).max(500),
       is_public: Joi.boolean(),
-      max_members: Joi.number().min(2).max(20),
+      max_members: Joi.alternatives().try(
+        Joi.number().integer().min(2),
+        Joi.valid(null) // null = "unlimited"
+      ),
       postal_code: Joi.string(),
       status: Joi.string().valid("active", "inactive"),
       teamavatar_url: Joi.string().uri().allow(null, ""),
@@ -517,6 +561,155 @@ const updateTeam = async (req, res) => {
         })
       ),
     });
+
+    // NOTE: This nested function is unrelated to max_members;
+    // leaving it as-is from your original code.
+    const updateMemberRole = async (req, res) => {
+      try {
+        const teamId = req.params.teamId;
+        const memberId = req.params.memberId;
+        const userId = req.user.id;
+
+        // ✅ DEBUG: Log what we're receiving
+        console.log("=== ROLE UPDATE DEBUG ===");
+        console.log("Request body:", req.body);
+        console.log("Request body type:", typeof req.body);
+        console.log("Request body keys:", Object.keys(req.body));
+
+        // Accept both camelCase and snake_case
+        const { newRole, new_role } = req.body;
+        const roleToUpdate = newRole || new_role;
+
+        console.log("Extracted values:");
+        console.log("- newRole:", newRole);
+        console.log("- new_role:", new_role);
+        console.log("- roleToUpdate:", roleToUpdate);
+        console.log("- roleToUpdate type:", typeof roleToUpdate);
+        console.log("=========================");
+
+        // Validate role
+        const validRoles = ["member", "admin"];
+        if (!validRoles.includes(roleToUpdate)) {
+          console.log("❌ Role validation failed for:", roleToUpdate);
+          return res.status(400).json({
+            success: false,
+            message: "Invalid role. Must be 'member' or 'admin'",
+            debug: {
+              received: roleToUpdate,
+              expectedOneOf: validRoles,
+              receivedType: typeof roleToUpdate,
+            },
+          });
+        }
+
+        console.log("✅ Role validation passed for:", roleToUpdate);
+
+        // Check if the user making the request is authorized (owner or admin)
+        const authCheck = await db.pool.query(
+          `
+      SELECT tm.role 
+      FROM team_members tm
+      JOIN teams t ON tm.team_id = t.id
+      WHERE tm.team_id = $1 
+      AND tm.user_id = $2
+      AND (tm.role = 'owner' OR tm.role = 'admin')
+      AND t.archived_at IS NULL
+    `,
+          [teamId, userId]
+        );
+
+        if (authCheck.rows.length === 0) {
+          return res.status(403).json({
+            success: false,
+            message: "Not authorized to change member roles in this team",
+          });
+        }
+
+        const userRole = authCheck.rows[0].role;
+
+        // Check if target member exists and get their current role
+        const memberCheck = await db.pool.query(
+          `
+      SELECT role FROM team_members 
+      WHERE team_id = $1 AND user_id = $2
+    `,
+          [teamId, memberId]
+        );
+
+        if (memberCheck.rows.length === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "Member not found in this team",
+          });
+        }
+
+        const memberCurrentRole = memberCheck.rows[0].role;
+
+        // Only owners can change admin roles
+        if (memberCurrentRole === "admin" && userRole !== "owner") {
+          return res.status(403).json({
+            success: false,
+            message: "Only team owners can change admin roles",
+          });
+        }
+
+        // Only owners can promote to admin
+        if (roleToUpdate === "admin" && userRole !== "owner") {
+          return res.status(403).json({
+            success: false,
+            message: "Only team owners can promote members to admin",
+          });
+        }
+
+        // Can't change owner role
+        if (memberCurrentRole === "owner") {
+          return res.status(403).json({
+            success: false,
+            message: "Cannot change owner role",
+          });
+        }
+
+        // Update member role
+        const client = await db.pool.connect();
+
+        try {
+          await client.query("BEGIN");
+
+          await client.query(
+            `
+        UPDATE team_members 
+        SET role = $1 
+        WHERE team_id = $2 AND user_id = $3
+      `,
+            [roleToUpdate, teamId, memberId]
+          );
+
+          await client.query("COMMIT");
+
+          res.status(200).json({
+            success: true,
+            message: `Member role updated to ${roleToUpdate} successfully`,
+          });
+        } catch (dbError) {
+          await client.query("ROLLBACK");
+          console.error("Database error while updating member role:", dbError);
+          res.status(500).json({
+            success: false,
+            message: "Database error while updating member role",
+            errorDetails: dbError.message,
+          });
+        } finally {
+          client.release();
+        }
+      } catch (error) {
+        console.error("Update member role error:", error);
+        res.status(500).json({
+          success: false,
+          message: "Error updating member role",
+          error: error.message,
+        });
+      }
+    };
 
     // Validate request body
     const { error, value } = updateSchema.validate(req.body);
@@ -593,9 +786,11 @@ const updateTeam = async (req, res) => {
         paramCounter++;
       }
 
-      if (value.max_members) {
+      // 🔧 IMPORTANT FIX: allow null to be saved (unlimited),
+      // but only update when the field was actually sent.
+      if (value.max_members !== undefined) {
         updateFields.push(`max_members = $${paramCounter}`);
-        queryParams.push(value.max_members);
+        queryParams.push(value.max_members); // can be null or number
         paramCounter++;
       }
 
@@ -710,12 +905,12 @@ const getTeamApplications = async (req, res) => {
     const teamId = req.params.id;
     const userId = req.user.id;
 
-    // Check if user is the team creator or admin
+    // Check if user is the team owner or admin
     const authCheck = await db.pool.query(
       `SELECT tm.role FROM team_members tm
        JOIN teams t ON tm.team_id = t.id
        WHERE tm.team_id = $1 AND tm.user_id = $2 
-       AND (tm.role = 'creator' OR tm.role = 'admin')
+       AND (tm.role = 'owner' OR tm.role = 'admin')
        AND t.archived_at IS NULL`,
       [teamId, userId]
     );
@@ -778,7 +973,7 @@ const handleTeamApplication = async (req, res) => {
 
     // Get application details
     const applicationResult = await db.pool.query(
-      `SELECT ta.*, t.creator_id, t.max_members, tm.role
+      `SELECT ta.*, t.owner_id, t.max_members, tm.role
        FROM team_applications ta
        JOIN teams t ON ta.team_id = t.id
        LEFT JOIN team_members tm ON t.id = tm.team_id AND tm.user_id = $1
@@ -796,7 +991,7 @@ const handleTeamApplication = async (req, res) => {
     const application = applicationResult.rows[0];
 
     // Check authorization
-    if (application.creator_id !== userId && application.role !== "admin") {
+    if (application.owner_id !== userId && application.role !== "admin") {
       return res.status(403).json({
         success: false,
         message: "Not authorized to handle this application",
@@ -816,6 +1011,7 @@ const handleTeamApplication = async (req, res) => {
         );
 
         if (
+          application.max_members !== null &&
           parseInt(memberCountResult.rows[0].count) >= application.max_members
         ) {
           await client.query("ROLLBACK");
@@ -879,7 +1075,7 @@ const deleteTeam = async (req, res) => {
     const teamId = req.params.id;
     const userId = req.user.id;
 
-    // Check if team exists and user is the creator
+    // Check if team exists and user is the owner
     const teamCheck = await db.pool.query(
       `
       SELECT t.*, tm.role
@@ -887,7 +1083,7 @@ const deleteTeam = async (req, res) => {
       JOIN team_members tm ON t.id = tm.team_id
       WHERE t.id = $1 
       AND tm.user_id = $2 
-      AND tm.role = 'creator'
+      AND tm.role = 'owner'
       AND t.archived_at IS NULL
     `,
       [teamId, userId]
@@ -967,7 +1163,7 @@ const applyToJoinTeam = async (req, res) => {
 
     // Check if team exists and is active
     const teamCheck = await db.pool.query(
-      `SELECT id, name, creator_id, max_members FROM teams 
+      `SELECT id, name, owner_id, max_members FROM teams 
        WHERE id = $1 AND archived_at IS NULL`,
       [teamId]
     );
@@ -1000,7 +1196,10 @@ const applyToJoinTeam = async (req, res) => {
       [teamId]
     );
 
-    if (parseInt(memberCount.rows[0].count) >= team.max_members) {
+    if (
+      team.max_members !== null &&
+      parseInt(memberCount.rows[0].count) >= team.max_members
+    ) {
       return res.status(400).json({
         success: false,
         message: "Team is already at maximum capacity",
@@ -1087,7 +1286,7 @@ const addTeamMember = async (req, res) => {
     const newMemberId = value.memberId;
     const role = value.role;
 
-    // Check if the user making the request is authorized (creator or admin)
+    // Check if the user making the request is authorized (owner or admin)
     const authCheck = await db.pool.query(
       `
       SELECT tm.role 
@@ -1095,7 +1294,7 @@ const addTeamMember = async (req, res) => {
       JOIN teams t ON tm.team_id = t.id
       WHERE tm.team_id = $1 
       AND tm.user_id = $2
-      AND (tm.role = 'creator' OR tm.role = 'admin')
+      AND (tm.role = 'owner' OR tm.role = 'admin')
       AND t.archived_at IS NULL
     `,
       [teamId, userId]
@@ -1127,7 +1326,11 @@ const addTeamMember = async (req, res) => {
       });
     }
 
-    if (teamCheck.rows[0].current_members >= teamCheck.rows[0].max_members) {
+    const maxMembers = teamCheck.rows[0].max_members;
+    if (
+      maxMembers !== null &&
+      teamCheck.rows[0].current_members >= maxMembers
+    ) {
       return res.status(400).json({
         success: false,
         message: "Team is already at maximum capacity",
@@ -1209,11 +1412,11 @@ const addTeamMember = async (req, res) => {
 
 const removeTeamMember = async (req, res) => {
   try {
-    const teamId = req.params.teamId;
-    const memberId = req.params.memberId;
+    const teamId = req.params.id;
+    const memberId = req.params.userId;
     const userId = req.user.id;
 
-    // Check if the user making the request is authorized (creator, admin, or self-removal)
+    // Check if the user making the request is authorized (owner, admin, or self-removal)
     const authCheck = await db.pool.query(
       `
       SELECT tm.role 
@@ -1236,8 +1439,8 @@ const removeTeamMember = async (req, res) => {
     const userRole = authCheck.rows[0].role;
     const isSelfRemoval = userId == memberId;
 
-    // Only creators/admins can remove others, anyone can remove themselves
-    if (!isSelfRemoval && userRole !== "creator" && userRole !== "admin") {
+    // Only owners/admins can remove others, anyone can remove themselves
+    if (!isSelfRemoval && userRole !== "owner" && userRole !== "admin") {
       return res.status(403).json({
         success: false,
         message: "Not authorized to remove other members",
@@ -1262,10 +1465,11 @@ const removeTeamMember = async (req, res) => {
 
     const memberRole = memberCheck.rows[0].role;
 
-    // Only creators can remove other creators or admins
+    // Only owners can remove OTHER owners or admins (self-removal is always allowed)
     if (
-      (memberRole === "creator" || memberRole === "admin") &&
-      userRole !== "creator"
+      !isSelfRemoval &&
+      (memberRole === "owner" || memberRole === "admin") &&
+      userRole !== "owner"
     ) {
       return res.status(403).json({
         success: false,
@@ -1273,21 +1477,21 @@ const removeTeamMember = async (req, res) => {
       });
     }
 
-    // Prevent removing the last creator
-    if (memberRole === "creator") {
-      const creatorCount = await db.pool.query(
+    // Prevent removing the last owner
+    if (memberRole === "owner") {
+      const ownerCount = await db.pool.query(
         `
         SELECT COUNT(*) FROM team_members
-        WHERE team_id = $1 AND role = 'creator'
+        WHERE team_id = $1 AND role = 'owner'
       `,
         [teamId]
       );
 
-      if (parseInt(creatorCount.rows[0].count) <= 1) {
+      if (parseInt(ownerCount.rows[0].count) <= 1) {
         return res.status(400).json({
           success: false,
           message:
-            "Cannot remove the last team creator. Transfer ownership first.",
+            "Cannot remove the last team owner. Transfer ownership first.",
         });
       }
     }
@@ -1334,6 +1538,129 @@ const removeTeamMember = async (req, res) => {
   }
 };
 
+const updateMemberRole = async (req, res) => {
+  try {
+    const teamId = req.params.teamId;
+    const memberId = req.params.memberId;
+    const userId = req.user.id;
+    const { newRole } = req.body;
+
+    // Validate role
+    const validRoles = ["member", "admin"];
+    if (!validRoles.includes(newRole)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid role. Must be 'member' or 'admin'",
+      });
+    }
+
+    // Check if the user making the request is authorized (owner or admin)
+    const authCheck = await db.pool.query(
+      `
+      SELECT tm.role 
+      FROM team_members tm
+      JOIN teams t ON tm.team_id = t.id
+      WHERE tm.team_id = $1 
+      AND tm.user_id = $2
+      AND (tm.role = 'owner' OR tm.role = 'admin')
+      AND t.archived_at IS NULL
+    `,
+      [teamId, userId]
+    );
+
+    if (authCheck.rows.length === 0) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to change member roles in this team",
+      });
+    }
+
+    const userRole = authCheck.rows[0].role;
+
+    // Check if target member exists and get their current role
+    const memberCheck = await db.pool.query(
+      `
+      SELECT role FROM team_members 
+      WHERE team_id = $1 AND user_id = $2
+    `,
+      [teamId, memberId]
+    );
+
+    if (memberCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Member not found in this team",
+      });
+    }
+
+    const memberCurrentRole = memberCheck.rows[0].role;
+
+    // Only owners can change admin roles
+    if (memberCurrentRole === "admin" && userrole !== "owner") {
+      return res.status(403).json({
+        success: false,
+        message: "Only team owners can change admin roles",
+      });
+    }
+
+    // Only owners can promote to admin
+    if (newRole === "admin" && userrole !== "owner") {
+      return res.status(403).json({
+        success: false,
+        message: "Only team owners can promote members to admin",
+      });
+    }
+
+    // Can't change owner role
+    if (memberCurrentrole === "owner") {
+      return res.status(403).json({
+        success: false,
+        message: "Cannot change owner role",
+      });
+    }
+
+    // Update member role
+    const client = await db.pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      await client.query(
+        `
+        UPDATE team_members 
+        SET role = $1 
+        WHERE team_id = $2 AND user_id = $3
+      `,
+        [newRole, teamId, memberId]
+      );
+
+      await client.query("COMMIT");
+
+      res.status(200).json({
+        success: true,
+        message: `Member role updated to ${newRole} successfully`,
+      });
+    } catch (dbError) {
+      await client.query("ROLLBACK");
+      console.error("Database error while updating member role:", dbError);
+      res.status(500).json({
+        success: false,
+        message: "Database error while updating member role",
+        errorDetails: dbError.message,
+      });
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error("Update member role error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error updating member role",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   createTeam,
   getAllTeams,
@@ -1349,4 +1676,5 @@ module.exports = {
   handleTeamApplication,
   getUserPendingApplications,
   cancelApplication,
+  updateMemberRole,
 };
