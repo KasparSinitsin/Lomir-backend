@@ -6,6 +6,9 @@ const searchRoutes = require('./searchRoutes');
 const badgeRoutes = require('./badgeRoutes');
 const messageRoutes = require('./messageRoutes');
 
+const tagRoutes = require("./api/tags");
+const geocodingRoutes = require("./geocodingRoutes");
+
 const router = express.Router();
 
 router.use('/auth', authRoutes);
