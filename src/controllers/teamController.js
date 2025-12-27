@@ -1074,15 +1074,20 @@ const handleTeamApplication = async (req, res) => {
           [userId, applicationId]
         );
 
-        // Send decline response as DM to applicant (if response message provided)
+        // On decline - send DM to applicant
         if (response && response.trim()) {
-          const declineMessage = `📋 Response to your application for "${
+          const applicantName =
+            application.applicant_first_name && application.applicant_last_name
+              ? `${application.applicant_first_name} ${application.applicant_last_name}`
+              : application.applicant_username;
+
+          const declineMessage = `📋 Application declined: ${applicantName} for "${
             application.team_name
           }":\n\n"${response.trim()}"`;
 
           await client.query(
             `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-             VALUES ($1, $2, $3, NOW())`,
+     VALUES ($1, $2, $3, NOW())`,
             [userId, application.applicant_id, declineMessage]
           );
         }
