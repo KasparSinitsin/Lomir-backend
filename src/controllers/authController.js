@@ -55,7 +55,7 @@ const authController = {
       const userData = {
         ...req.body,
         tags: tags || [], // Ensure tags is always an array
-        avatar_url: req.file ? req.file.path : null,
+        avatar_url: req.file ? req.file.path : req.body.avatar_url || null,
       };
 
       // Validate the entire payload
