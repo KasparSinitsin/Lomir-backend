@@ -1039,11 +1039,19 @@ const handleTeamApplication = async (req, res) => {
           [application.team_id, application.applicant_id]
         );
 
+        // Clean up any pending invitations for this user to this team
+        await client.query(
+          `UPDATE team_invitations 
+   SET status = 'accepted', responded_at = NOW()
+   WHERE team_id = $1 AND invitee_id = $2 AND status = 'pending'`,
+          [application.team_id, application.applicant_id]
+        );
+
         // Update application status
         await client.query(
           `UPDATE team_applications 
-           SET status = 'approved', reviewed_at = NOW(), reviewed_by = $1
-           WHERE id = $2`,
+   SET status = 'approved', reviewed_at = NOW(), reviewed_by = $1
+   WHERE id = $2`,
           [userId, applicationId]
         );
 

@@ -150,8 +150,8 @@ const getUserReceivedInvitations = async (req, res) => {
 
     const invitationsResult = await db.pool.query(
       `SELECT 
-        ti.id, ti.team_id, ti.message, ti.status, ti.created_at,
-        t.name as team_name, t.description as team_description, 
+        ti.id, ti.message, ti.status, ti.created_at,
+        t.id as team_id, t.name as team_name, t.description as team_description,
         t.teamavatar_url, t.max_members, t.is_public,
         (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count,
         u.id as inviter_id, u.username as inviter_username, 
@@ -160,7 +160,13 @@ const getUserReceivedInvitations = async (req, res) => {
        FROM team_invitations ti
        JOIN teams t ON ti.team_id = t.id
        JOIN users u ON ti.inviter_id = u.id
-       WHERE ti.invitee_id = $1 AND ti.status = 'pending' AND t.archived_at IS NULL
+       WHERE ti.invitee_id = $1 
+       AND ti.status = 'pending'
+       AND t.archived_at IS NULL
+       AND NOT EXISTS (
+         SELECT 1 FROM team_members tm 
+         WHERE tm.team_id = t.id AND tm.user_id = $1
+       )
        ORDER BY ti.created_at DESC`,
       [userId]
     );
@@ -484,21 +490,37 @@ const cancelInvitation = async (req, res) => {
 
 /**
  * Get teams where user can invite others (is owner or admin)
+ * Optionally filters out teams where inviteeId is already a member
  */
 const getTeamsWhereUserCanInvite = async (req, res) => {
   try {
     const userId = req.user.id;
+    const { inviteeId } = req.query; // Optional: filter out teams where this user is already a member
 
-    const teamsResult = await db.pool.query(
-      `SELECT t.id, t.name, t.teamavatar_url, t.max_members,
-              (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count
-       FROM teams t
-       JOIN team_members tm ON t.id = tm.team_id
-       WHERE tm.user_id = $1 AND tm.role IN ('owner', 'admin')
-       AND t.archived_at IS NULL
-       ORDER BY t.name ASC`,
-      [userId]
-    );
+    let query = `
+      SELECT t.id, t.name, t.teamavatar_url, t.max_members,
+             (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count
+      FROM teams t
+      JOIN team_members tm ON t.id = tm.team_id
+      WHERE tm.user_id = $1 AND tm.role IN ('owner', 'admin')
+      AND t.archived_at IS NULL
+    `;
+
+    const params = [userId];
+
+    // If inviteeId is provided, exclude teams where they're already a member
+    if (inviteeId) {
+      query += `
+        AND t.id NOT IN (
+          SELECT team_id FROM team_members WHERE user_id = $2
+        )
+      `;
+      params.push(inviteeId);
+    }
+
+    query += ` ORDER BY t.name ASC`;
+
+    const teamsResult = await db.pool.query(query, params);
 
     // Filter out teams that are at capacity (skip check if unlimited)
     const availableTeams = teamsResult.rows
@@ -532,7 +554,6 @@ const getTeamsWhereUserCanInvite = async (req, res) => {
     });
   }
 };
-
 module.exports = {
   sendTeamInvitation,
   getUserReceivedInvitations,
