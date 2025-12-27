@@ -60,8 +60,8 @@ const userModel = {
             [
               userId,
               tag.tag_id,
-              tag.experience_level || "beginner",
-              tag.interest_level || "medium",
+              tag.experience_level || 2,
+              tag.interest_level || 3,
             ]
           )
         );
