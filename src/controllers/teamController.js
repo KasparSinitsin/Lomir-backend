@@ -973,11 +973,15 @@ const handleTeamApplication = async (req, res) => {
 
     // Get application details
     const applicationResult = await db.pool.query(
-      `SELECT ta.*, t.owner_id, t.max_members, tm.role
-       FROM team_applications ta
-       JOIN teams t ON ta.team_id = t.id
-       LEFT JOIN team_members tm ON t.id = tm.team_id AND tm.user_id = $1
-       WHERE ta.id = $2`,
+      `SELECT ta.*, t.owner_id, t.max_members, t.name as team_name, tm.role,
+          applicant.first_name as applicant_first_name, 
+          applicant.last_name as applicant_last_name,
+          applicant.username as applicant_username
+   FROM team_applications ta
+   JOIN teams t ON ta.team_id = t.id
+   JOIN users applicant ON ta.applicant_id = applicant.id
+   LEFT JOIN team_members tm ON t.id = tm.team_id AND tm.user_id = $1
+   WHERE ta.id = $2`,
       [userId, applicationId]
     );
 
@@ -997,6 +1001,13 @@ const handleTeamApplication = async (req, res) => {
         message: "Not authorized to handle this application",
       });
     }
+
+    // Get approver's name
+    const approverResult = await db.pool.query(
+      `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+      [userId]
+    );
+    const approver = approverResult.rows[0];
 
     const client = await db.pool.connect();
 
@@ -1023,8 +1034,8 @@ const handleTeamApplication = async (req, res) => {
 
         // Add user to team
         await client.query(
-          `INSERT INTO team_members (team_id, user_id, role)
-           VALUES ($1, $2, 'member')`,
+          `INSERT INTO team_members (team_id, user_id, role, joined_at)
+   VALUES ($1, $2, 'member', NOW())`,
           [application.team_id, application.applicant_id]
         );
 
@@ -1035,6 +1046,25 @@ const handleTeamApplication = async (req, res) => {
            WHERE id = $2`,
           [userId, applicationId]
         );
+
+        // Add system message to team chat for approved application
+        const applicantName =
+          application.applicant_first_name && application.applicant_last_name
+            ? `${application.applicant_first_name} ${application.applicant_last_name}`
+            : application.applicant_username;
+
+        const approverName =
+          approver.first_name && approver.last_name
+            ? `${approver.first_name} ${approver.last_name}`
+            : approver.username;
+
+        const systemMessage = `🎉 ${applicantName} has applied successfully to your team and has been added as a team member by ${approverName}. Say hello to them!`;
+
+        await client.query(
+          `INSERT INTO messages (sender_id, team_id, content, sent_at)
+           VALUES ($1, $2, $3, NOW())`,
+          [application.applicant_id, application.team_id, systemMessage]
+        );
       } else if (action === "decline") {
         // Update application status
         await client.query(
@@ -1043,6 +1073,19 @@ const handleTeamApplication = async (req, res) => {
            WHERE id = $2`,
           [userId, applicationId]
         );
+
+        // Send decline response as DM to applicant (if response message provided)
+        if (response && response.trim()) {
+          const declineMessage = `📋 Response to your application for "${
+            application.team_name
+          }":\n\n"${response.trim()}"`;
+
+          await client.query(
+            `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+             VALUES ($1, $2, $3, NOW())`,
+            [userId, application.applicant_id, declineMessage]
+          );
+        }
       }
 
       // TODO: Send notification/message to applicant with response
