@@ -321,22 +321,28 @@ const getMessages = async (req, res) => {
     let queryParams;
 
     if (type === "team") {
-      // Get team messages
+      // Get team messages with sender info and membership status
       messagesQuery = `
-        SELECT 
-          m.id,
-          m.sender_id as "senderId",
-          m.content,
-          m.sent_at as "createdAt",
-          m.read_at as "readAt",
-          u.username as "senderUsername",
-          u.first_name as "senderFirstName",
-          u.avatar_url as "senderAvatarUrl"
-        FROM messages m
-        JOIN users u ON m.sender_id = u.id
-        WHERE m.team_id = $1
-        ORDER BY m.sent_at ASC
-      `;
+    SELECT 
+      m.id,
+      m.sender_id as "senderId",
+      m.content,
+      m.sent_at as "createdAt",
+      m.read_at as "readAt",
+      u.username as "senderUsername",
+      u.first_name as "senderFirstName",
+      u.last_name as "senderLastName",
+      u.avatar_url as "senderAvatarUrl",
+      CASE 
+        WHEN tm.user_id IS NOT NULL THEN true 
+        ELSE false 
+      END as "isCurrentMember"
+    FROM messages m
+    JOIN users u ON m.sender_id = u.id
+    LEFT JOIN team_members tm ON tm.user_id = m.sender_id AND tm.team_id = m.team_id
+    WHERE m.team_id = $1
+    ORDER BY m.sent_at ASC
+  `;
       queryParams = [conversationId];
     } else {
       // Get direct messages between two users
