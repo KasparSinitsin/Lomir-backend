@@ -1558,12 +1558,35 @@ const removeTeamMember = async (req, res) => {
     try {
       await client.query("BEGIN");
 
+      // Get the member's name before removing them
+      const memberInfo = await client.query(
+        `SELECT u.first_name, u.last_name, u.username 
+         FROM users u 
+         WHERE u.id = $1`,
+        [memberId]
+      );
+
+      const member = memberInfo.rows[0];
+      const memberName =
+        member.first_name && member.last_name
+          ? `${member.first_name} ${member.last_name}`
+          : member.username || "A member";
+
       await client.query(
         `
         DELETE FROM team_members
         WHERE team_id = $1 AND user_id = $2
       `,
         [teamId, memberId]
+      );
+
+      // Insert leave/remove message to team chat
+      const leaveMessage = `🚪 ${memberName} has left the team.`;
+
+      await client.query(
+        `INSERT INTO messages (sender_id, team_id, content, sent_at)
+   VALUES ($1, $2, $3, NOW())`,
+        [memberId, teamId, leaveMessage]
       );
 
       await client.query("COMMIT");
@@ -1574,10 +1597,10 @@ const removeTeamMember = async (req, res) => {
       });
     } catch (dbError) {
       await client.query("ROLLBACK");
-      console.error("Database error while removing member:", dbError); // More specific message
+      console.error("Database error while removing member:", dbError);
       res.status(500).json({
         success: false,
-        message: "Database error while removing team member", // More specific message
+        message: "Database error while removing team member",
         errorDetails: dbError.message,
         fullError: dbError,
       });
