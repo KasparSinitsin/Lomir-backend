@@ -4,17 +4,74 @@ const getUnreadCount = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const countResult = await db.query(
+    // Get total unread count for direct messages
+    const directUnreadResult = await db.query(
       `SELECT COUNT(*) as count 
        FROM messages 
-       WHERE receiver_id = $1 AND read_at IS NULL`,
+       WHERE receiver_id = $1 AND read_at IS NULL AND team_id IS NULL`,
       [userId]
     );
+
+    // Get total unread count for team messages (messages in teams user is a member of, not sent by user)
+    const teamUnreadResult = await db.query(
+      `SELECT COUNT(*) as count 
+       FROM messages m
+       JOIN team_members tm ON m.team_id = tm.team_id
+       WHERE tm.user_id = $1 
+         AND m.sender_id != $1 
+         AND m.read_at IS NULL 
+         AND m.team_id IS NOT NULL`,
+      [userId]
+    );
+
+    const directUnreadCount = parseInt(directUnreadResult.rows[0].count) || 0;
+    const teamUnreadCount = parseInt(teamUnreadResult.rows[0].count) || 0;
+    const totalUnreadCount = directUnreadCount + teamUnreadCount;
+
+    // Find the most recent unread message across both direct and team conversations
+    const mostRecentUnreadQuery = await db.query(
+      `(
+        SELECT 
+          sender_id as conversation_id,
+          'direct' as type,
+          MAX(sent_at) as latest_unread
+        FROM messages 
+        WHERE receiver_id = $1 AND read_at IS NULL AND team_id IS NULL
+        GROUP BY sender_id
+      )
+      UNION ALL
+      (
+        SELECT 
+          m.team_id as conversation_id,
+          'team' as type,
+          MAX(m.sent_at) as latest_unread
+        FROM messages m
+        JOIN team_members tm ON m.team_id = tm.team_id
+        WHERE tm.user_id = $1 
+          AND m.sender_id != $1 
+          AND m.read_at IS NULL 
+          AND m.team_id IS NOT NULL
+        GROUP BY m.team_id
+      )
+      ORDER BY latest_unread DESC
+      LIMIT 1`,
+      [userId]
+    );
+
+    let firstUnread = null;
+
+    if (mostRecentUnreadQuery.rows.length > 0) {
+      firstUnread = {
+        conversationId: mostRecentUnreadQuery.rows[0].conversation_id,
+        type: mostRecentUnreadQuery.rows[0].type,
+      };
+    }
 
     res.status(200).json({
       success: true,
       data: {
-        count: parseInt(countResult.rows[0].count),
+        count: totalUnreadCount,
+        firstUnread: firstUnread,
       },
     });
   } catch (error) {
@@ -88,6 +145,7 @@ const getConversations = async (req, res) => {
     const userId = req.user.id;
 
     // Get all unique conversation partners for direct messages
+    // Now includes unread_count per conversation
     const directMessagesQuery = `
       WITH conversation_partners AS (
         SELECT DISTINCT
@@ -113,6 +171,16 @@ const getConversations = async (req, res) => {
           AND m.sent_at = cp.last_message_time
           AND m.team_id IS NULL
         )
+      ),
+      unread_counts AS (
+        SELECT 
+          sender_id as partner_id,
+          COUNT(*) as unread_count
+        FROM messages
+        WHERE receiver_id = $1 
+          AND read_at IS NULL
+          AND team_id IS NULL
+        GROUP BY sender_id
       )
       SELECT 
         lm.partner_id as id,
@@ -122,13 +190,16 @@ const getConversations = async (req, res) => {
         u.last_name,
         u.avatar_url,
         lm.last_message,
-        lm.last_message_time as updated_at
+        lm.last_message_time as updated_at,
+        COALESCE(uc.unread_count, 0) as unread_count
       FROM latest_messages lm
       JOIN users u ON lm.partner_id = u.id
+      LEFT JOIN unread_counts uc ON lm.partner_id = uc.partner_id
       ORDER BY lm.last_message_time DESC
     `;
 
     // Get team conversations where user is a member
+    // Now includes unread_count per team conversation
     const teamMessagesQuery = `
       WITH team_conversations AS (
         SELECT DISTINCT
@@ -146,6 +217,18 @@ const getConversations = async (req, res) => {
           m.content as last_message
         FROM team_conversations tc
         JOIN messages m ON m.team_id = tc.team_id AND m.sent_at = tc.last_message_time
+      ),
+      team_unread_counts AS (
+        SELECT 
+          m.team_id,
+          COUNT(*) as unread_count
+        FROM messages m
+        JOIN team_members tm ON m.team_id = tm.team_id
+        WHERE tm.user_id = $1 
+          AND m.sender_id != $1
+          AND m.read_at IS NULL
+          AND m.team_id IS NOT NULL
+        GROUP BY m.team_id
       )
       SELECT 
         ltm.team_id as id,
@@ -155,9 +238,11 @@ const getConversations = async (req, res) => {
         NULL as last_name,
         t.teamavatar_url as avatar_url,
         ltm.last_message,
-        ltm.last_message_time as updated_at
+        ltm.last_message_time as updated_at,
+        COALESCE(tuc.unread_count, 0) as unread_count
       FROM latest_team_messages ltm
       JOIN teams t ON ltm.team_id = t.id
+      LEFT JOIN team_unread_counts tuc ON ltm.team_id = tuc.team_id
       ORDER BY ltm.last_message_time DESC
     `;
 
@@ -167,31 +252,38 @@ const getConversations = async (req, res) => {
     ]);
 
     // Combine and format results
+    const directConversations = directResult.rows.map((row) => ({
+      id: row.id,
+      type: "direct",
+      partner: {
+        id: row.id,
+        username: row.username,
+        firstName: row.first_name,
+        lastName: row.last_name,
+        avatarUrl: row.avatar_url,
+      },
+      lastMessage: row.last_message,
+      updatedAt: row.updated_at,
+      unreadCount: parseInt(row.unread_count) || 0,
+    }));
+
+    const teamConversations = teamResult.rows.map((row) => ({
+      id: row.id,
+      type: "team",
+      team: {
+        id: row.id,
+        name: row.name,
+        avatarUrl: row.avatar_url,
+      },
+      lastMessage: row.last_message,
+      updatedAt: row.updated_at,
+      unreadCount: parseInt(row.unread_count) || 0,
+    }));
+
+    // Combine and sort by most recent
     const allConversations = [
-      ...directResult.rows.map((row) => ({
-        id: row.id,
-        type: row.type,
-        partner: {
-          id: row.id,
-          username: row.username,
-          firstName: row.first_name,
-          lastName: row.last_name,
-          avatarUrl: row.avatar_url,
-        },
-        lastMessage: row.last_message,
-        updatedAt: row.updated_at,
-      })),
-      ...teamResult.rows.map((row) => ({
-        id: row.id,
-        type: row.type,
-        team: {
-          id: row.id,
-          name: row.name,
-          avatarUrl: row.avatar_url,
-        },
-        lastMessage: row.last_message,
-        updatedAt: row.updated_at,
-      })),
+      ...directConversations,
+      ...teamConversations,
     ].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
 
     res.status(200).json({
@@ -208,87 +300,76 @@ const getConversations = async (req, res) => {
   }
 };
 
-// Get conversation details by ID
+// Get conversation by ID
 const getConversationById = async (req, res) => {
   try {
-    const conversationId = parseInt(req.params.id);
     const userId = req.user.id;
-    const { type } = req.query;
+    const conversationId = req.params.id;
+    const type = req.query.type || "direct";
 
     if (type === "team") {
-      // Get team information WITH members
+      // Get team conversation details
       const teamQuery = `
-        SELECT id, name, description, teamavatar_url as avatar_url
-        FROM teams 
-        WHERE id = $1
+        SELECT 
+          t.id,
+          t.name,
+          t.teamavatar_url as avatar_url
+        FROM teams t
+        JOIN team_members tm ON t.id = tm.team_id
+        WHERE t.id = $1 AND tm.user_id = $2
       `;
 
-      const result = await db.query(teamQuery, [conversationId]);
+      const teamResult = await db.query(teamQuery, [conversationId, userId]);
 
-      if (result.rows.length === 0) {
+      if (teamResult.rows.length === 0) {
         return res.status(404).json({
           success: false,
-          message: "Team not found",
+          message: "Team conversation not found or access denied",
         });
       }
 
-      // Get team members
-      const membersQuery = `
-        SELECT tm.user_id, tm.role, tm.joined_at, 
-               u.username, u.email, u.avatar_url, 
-               u.first_name, u.last_name, u.is_public,
-               u.postal_code
-        FROM team_members tm
-        JOIN users u ON tm.user_id = u.id
-        WHERE tm.team_id = $1
-        ORDER BY 
-          CASE tm.role 
-            WHEN 'owner' THEN 1 
-            WHEN 'admin' THEN 2 
-            ELSE 3 
-          END,
-          tm.joined_at ASC
-      `;
+      const team = teamResult.rows[0];
 
-      const membersResult = await db.query(membersQuery, [conversationId]);
-
-      const team = result.rows[0];
       res.status(200).json({
         success: true,
         data: {
-          id: conversationId,
+          id: team.id,
           type: "team",
           team: {
             id: team.id,
             name: team.name,
-            description: team.description,
             avatarUrl: team.avatar_url,
-            members: membersResult.rows, // Add members here
           },
         },
       });
     } else {
-      // Direct message logic (keep existing code)
+      // Get direct conversation partner details
       const userQuery = `
-        SELECT id, username, first_name, last_name, avatar_url
-        FROM users 
+        SELECT 
+          id,
+          username,
+          first_name,
+          last_name,
+          avatar_url
+        FROM users
         WHERE id = $1
       `;
 
-      const result = await db.query(userQuery, [conversationId]);
+      const userResult = await db.query(userQuery, [conversationId]);
 
-      if (result.rows.length === 0) {
+      if (userResult.rows.length === 0) {
         return res.status(404).json({
           success: false,
           message: "User not found",
         });
       }
 
-      const partner = result.rows[0];
+      const partner = userResult.rows[0];
+
       res.status(200).json({
         success: true,
         data: {
-          id: conversationId,
+          id: partner.id,
           type: "direct",
           partner: {
             id: partner.id,
@@ -313,54 +394,63 @@ const getConversationById = async (req, res) => {
 // Get messages for a conversation
 const getMessages = async (req, res) => {
   try {
-    const conversationId = parseInt(req.params.id);
     const userId = req.user.id;
-    const { type } = req.query;
+    const conversationId = req.params.id;
+    const type = req.query.type || "direct";
 
     let messagesQuery;
     let queryParams;
 
     if (type === "team") {
-      // Get team messages with sender info and membership status
-      messagesQuery = `
-    SELECT 
-      m.id,
-      m.sender_id as "senderId",
-      m.content,
-      m.sent_at as "createdAt",
-      m.read_at as "readAt",
-      u.username as "senderUsername",
-      u.first_name as "senderFirstName",
-      u.last_name as "senderLastName",
-      u.avatar_url as "senderAvatarUrl",
-      CASE 
-        WHEN tm.user_id IS NOT NULL THEN true 
-        ELSE false 
-      END as "isCurrentMember"
-    FROM messages m
-    JOIN users u ON m.sender_id = u.id
-    LEFT JOIN team_members tm ON tm.user_id = m.sender_id AND tm.team_id = m.team_id
-    WHERE m.team_id = $1
-    ORDER BY m.sent_at ASC
-  `;
-      queryParams = [conversationId];
-    } else {
-      // Get direct messages between two users
+      // Verify user is a team member
+      const memberCheck = await db.query(
+        `SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2`,
+        [conversationId, userId]
+      );
+
+      if (memberCheck.rows.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied to this team conversation",
+        });
+      }
+
       messagesQuery = `
         SELECT 
           m.id,
-          m.sender_id as "senderId",
+          m.sender_id,
+          m.team_id,
           m.content,
-          m.sent_at as "createdAt",
-          m.read_at as "readAt",
-          u.username as "senderUsername"
+          m.sent_at as created_at,
+          m.read_at,
+          u.username as sender_username,
+          u.first_name as sender_first_name,
+          u.last_name as sender_last_name,
+          u.avatar_url as sender_avatar_url
         FROM messages m
         JOIN users u ON m.sender_id = u.id
-        WHERE (
-          (m.sender_id = $1 AND m.receiver_id = $2) OR
-          (m.sender_id = $2 AND m.receiver_id = $1)
-        )
-        AND m.team_id IS NULL
+        WHERE m.team_id = $1
+        ORDER BY m.sent_at ASC
+      `;
+      queryParams = [conversationId];
+    } else {
+      messagesQuery = `
+        SELECT 
+          m.id,
+          m.sender_id,
+          m.receiver_id,
+          m.content,
+          m.sent_at as created_at,
+          m.read_at,
+          u.username as sender_username,
+          u.first_name as sender_first_name,
+          u.last_name as sender_last_name,
+          u.avatar_url as sender_avatar_url
+        FROM messages m
+        JOIN users u ON m.sender_id = u.id
+        WHERE ((m.sender_id = $1 AND m.receiver_id = $2) 
+           OR (m.sender_id = $2 AND m.receiver_id = $1))
+          AND m.team_id IS NULL
         ORDER BY m.sent_at ASC
       `;
       queryParams = [userId, conversationId];
@@ -368,9 +458,23 @@ const getMessages = async (req, res) => {
 
     const result = await db.query(messagesQuery, queryParams);
 
+    const messages = result.rows.map((row) => ({
+      id: row.id,
+      senderId: row.sender_id,
+      receiverId: row.receiver_id,
+      teamId: row.team_id,
+      content: row.content,
+      createdAt: row.created_at,
+      readAt: row.read_at,
+      senderUsername: row.sender_username,
+      senderFirstName: row.sender_first_name,
+      senderLastName: row.sender_last_name,
+      senderAvatarUrl: row.sender_avatar_url,
+    }));
+
     res.status(200).json({
       success: true,
-      data: result.rows,
+      data: messages,
     });
   } catch (error) {
     console.error("Error fetching messages:", error);
@@ -385,8 +489,8 @@ const getMessages = async (req, res) => {
 // Send a message
 const sendMessage = async (req, res) => {
   try {
-    const conversationId = parseInt(req.params.id);
     const userId = req.user.id;
+    const conversationId = req.params.id;
     const { content, type } = req.body;
 
     if (!content || content.trim() === "") {
@@ -399,19 +503,30 @@ const sendMessage = async (req, res) => {
     let messageResult;
 
     if (type === "team") {
-      // Send message to team
+      // Verify user is a team member
+      const memberCheck = await db.query(
+        `SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2`,
+        [conversationId, userId]
+      );
+
+      if (memberCheck.rows.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied to this team conversation",
+        });
+      }
+
       messageResult = await db.query(
         `INSERT INTO messages (sender_id, team_id, content, sent_at)
          VALUES ($1, $2, $3, NOW())
-         RETURNING id, sender_id, team_id, content, sent_at`,
+         RETURNING id, sender_id, team_id, content, sent_at as created_at`,
         [userId, conversationId, content.trim()]
       );
     } else {
-      // Send direct message
       messageResult = await db.query(
         `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
          VALUES ($1, $2, $3, NOW())
-         RETURNING id, sender_id, receiver_id, content, sent_at`,
+         RETURNING id, sender_id, receiver_id, content, sent_at as created_at`,
         [userId, conversationId, content.trim()]
       );
     }
