@@ -1,6 +1,11 @@
 const db = require("../config/database");
 const Joi = require("joi");
 const cloudinary = require("../config/cloudinary");
+const {
+  createNotification,
+  notifyTeamMembers,
+  notifyTeamAdmins,
+} = require("./notificationController");
 
 const extractCloudinaryPublicId = (url) => {
   if (!url || typeof url !== "string") return null;
@@ -1073,7 +1078,80 @@ const handleTeamApplication = async (req, res) => {
            VALUES ($1, $2, $3, NOW())`,
           [application.applicant_id, application.team_id, systemMessage]
         );
+
+        // Include whether there's a personal message
+        const hasPersonalMessage =
+          response && response.trim() ? "true" : "false";
+
+        // System message format includes all info for both perspectives
+        const approvalSystemMessage = `✅ APPLICATION_APPROVED: ${application.team_name} | ${approverName} | ${applicantName} | ${hasPersonalMessage}`;
+
+        await client.query(
+          `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+           VALUES ($1, $2, $3, NOW())`,
+          [userId, application.applicant_id, approvalSystemMessage]
+        );
+
+        // If there's a personal message, send it as a separate regular message
+        if (response && response.trim()) {
+          await client.query(
+            `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+             VALUES ($1, $2, $3, NOW())`,
+            [userId, application.applicant_id, response.trim()]
+          );
+        }
+
+        // === CREATE NOTIFICATIONS ===
+        try {
+          // Notify the applicant that they were approved
+          await createNotification({
+            userId: application.applicant_id,
+            type: "application_approved",
+            title: `Your application to ${application.team_name} was approved!`,
+            message: response || "Welcome to the team!",
+            referenceType: "team_application",
+            referenceId: parseInt(applicationId),
+            teamId: application.team_id,
+            actorId: userId,
+          });
+
+          // Notify other team members about the new member
+          await notifyTeamMembers({
+            teamId: application.team_id,
+            excludeUserId: application.applicant_id,
+            type: "member_joined",
+            title: `${applicantName} joined ${application.team_name}`,
+            referenceType: "team_member",
+            referenceId: application.applicant_id,
+            actorId: application.applicant_id,
+          });
+
+          // Emit socket events
+          const io = req.app.get("io");
+          if (io) {
+            io.to(`user:${application.applicant_id}`).emit("notification:new", {
+              type: "application_approved",
+              teamId: application.team_id,
+            });
+            io.to(`team:${application.team_id}`).emit("notification:new", {
+              type: "member_joined",
+              teamId: application.team_id,
+            });
+          }
+        } catch (notificationError) {
+          console.error(
+            "Error creating approval notification:",
+            notificationError
+          );
+        }
+        // === END NOTIFICATION ===
       } else if (action === "decline") {
+        // Get approver's name for the decline message
+        const approverName =
+          approver.first_name && approver.last_name
+            ? `${approver.first_name} ${approver.last_name}`
+            : approver.username;
+
         // Update application status
         await client.query(
           `UPDATE team_applications 
@@ -1082,23 +1160,61 @@ const handleTeamApplication = async (req, res) => {
           [userId, applicationId]
         );
 
-        // On decline - send DM to applicant
+        // Get applicant's name for the message
+        const applicantName =
+          application.applicant_first_name && application.applicant_last_name
+            ? `${application.applicant_first_name} ${application.applicant_last_name}`
+            : application.applicant_username;
+
+        // Include whether there's a personal message
+        const hasPersonalMessage =
+          response && response.trim() ? "true" : "false";
+
+        // System message format includes all info for both perspectives
+        const declineSystemMessage = `🚫 APPLICATION_DECLINED: ${application.team_name} | ${approverName} | ${applicantName} | ${hasPersonalMessage}`;
+
+        await client.query(
+          `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+           VALUES ($1, $2, $3, NOW())`,
+          [userId, application.applicant_id, declineSystemMessage]
+        );
+
+        // If there's a personal message, send it as a separate regular message
         if (response && response.trim()) {
-          const applicantName =
-            application.applicant_first_name && application.applicant_last_name
-              ? `${application.applicant_first_name} ${application.applicant_last_name}`
-              : application.applicant_username;
-
-          const declineMessage = `📋 Application declined: ${applicantName} for "${
-            application.team_name
-          }":\n\n"${response.trim()}"`;
-
           await client.query(
             `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-     VALUES ($1, $2, $3, NOW())`,
-            [userId, application.applicant_id, declineMessage]
+             VALUES ($1, $2, $3, NOW())`,
+            [userId, application.applicant_id, response.trim()]
           );
         }
+        // === CREATE NOTIFICATION FOR REJECTED APPLICANT ===
+        try {
+          await createNotification({
+            userId: application.applicant_id,
+            type: "application_rejected",
+            title: `Your application to ${application.team_name} was declined`,
+            message: response || null,
+            referenceType: "team_application",
+            referenceId: parseInt(applicationId),
+            teamId: application.team_id,
+            actorId: userId,
+          });
+
+          // Emit socket event
+          const io = req.app.get("io");
+          if (io) {
+            io.to(`user:${application.applicant_id}`).emit("notification:new", {
+              type: "application_rejected",
+              teamId: application.team_id,
+            });
+          }
+        } catch (notificationError) {
+          console.error(
+            "Error creating rejection notification:",
+            notificationError
+          );
+        }
+        // === END NOTIFICATION ===
       }
 
       // TODO: Send notification/message to applicant with response
@@ -1291,6 +1407,47 @@ const applyToJoinTeam = async (req, res) => {
       );
 
       await client.query("COMMIT");
+
+      // === CREATE NOTIFICATION FOR TEAM ADMINS (only for submitted applications, not drafts) ===
+      if (!isDraft) {
+        try {
+          // Get applicant's name
+          const applicantResult = await db.pool.query(
+            `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+            [applicantId]
+          );
+          const applicant = applicantResult.rows[0];
+          const applicantName =
+            applicant.first_name && applicant.last_name
+              ? `${applicant.first_name} ${applicant.last_name}`
+              : applicant.username;
+
+          await notifyTeamAdmins({
+            teamId: parseInt(teamId),
+            type: "application_received",
+            title: `${applicantName} applied to join ${team.name}`,
+            message: message || null,
+            referenceType: "team_application",
+            referenceId: applicationResult.rows[0].id,
+            actorId: applicantId,
+          });
+
+          // Emit socket events to team admins
+          const io = req.app.get("io");
+          if (io) {
+            io.to(`team:${teamId}`).emit("notification:new", {
+              type: "application_received",
+              teamId: parseInt(teamId),
+            });
+          }
+        } catch (notificationError) {
+          console.error(
+            "Error creating application notification:",
+            notificationError
+          );
+        }
+      }
+      // === END NOTIFICATION ===
 
       res.status(201).json({
         success: true,
