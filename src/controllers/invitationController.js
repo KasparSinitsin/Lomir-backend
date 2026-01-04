@@ -1,4 +1,8 @@
 const db = require("../config/database");
+const {
+  createNotification,
+  notifyTeamMembers,
+} = require("./notificationController");
 
 /**
  * Send a team invitation to a user
@@ -123,6 +127,47 @@ const sendTeamInvitation = async (req, res) => {
        RETURNING id`,
       [teamId, inviterId, finalInviteeId, message.trim()]
     );
+
+    // === CREATE NOTIFICATION FOR INVITEE ===
+    try {
+      // Get inviter's name
+      const inviterResult = await db.pool.query(
+        `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+        [inviterId]
+      );
+      const inviter = inviterResult.rows[0];
+      const inviterName =
+        inviter.first_name && inviter.last_name
+          ? `${inviter.first_name} ${inviter.last_name}`
+          : inviter.username;
+
+      await createNotification({
+        userId: finalInviteeId,
+        type: "invitation_received",
+        title: `${inviterName} invited you to join ${team.name}`,
+        message: message || null,
+        referenceType: "team_invitation",
+        referenceId: invitationResult.rows[0].id,
+        teamId: parseInt(teamId),
+        actorId: inviterId,
+      });
+
+      // Emit socket event for real-time notification
+      const io = req.app.get("io");
+      if (io) {
+        io.to(`user:${finalInviteeId}`).emit("notification:new", {
+          type: "invitation_received",
+          teamId: parseInt(teamId),
+        });
+      }
+    } catch (notificationError) {
+      console.error(
+        "Error creating invitation notification:",
+        notificationError
+      );
+      // Don't fail the invitation if notification fails
+    }
+    // === END NOTIFICATION ===
 
     res.status(201).json({
       success: true,
@@ -362,19 +407,53 @@ const respondToInvitation = async (req, res) => {
 
         // If there's a response message, add it to the TEAM CHAT
         if (response_message && response_message.trim()) {
+          // Always add join message to TEAM CHAT
           const inviteeName =
             invitation.invitee_first_name && invitation.invitee_last_name
               ? `${invitation.invitee_first_name} ${invitation.invitee_last_name}`
               : invitation.invitee_username;
 
-          const formattedMessage = `👋 ${inviteeName} joined the team!\n\n"${response_message.trim()}"`;
+          const formattedMessage =
+            response_message && response_message.trim()
+              ? `👋 ${inviteeName} joined the team!\n\n"${response_message.trim()}"`
+              : `👋 ${inviteeName} joined the team!`;
 
           await client.query(
             `INSERT INTO messages (sender_id, team_id, content, sent_at)
-     VALUES ($1, $2, $3, NOW())`,
+           VALUES ($1, $2, $3, NOW())`,
             [userId, invitation.team_id, formattedMessage]
           );
         }
+
+        // === CREATE NOTIFICATIONS FOR TEAM MEMBERS ===
+        try {
+          const inviteeName =
+            invitation.invitee_first_name && invitation.invitee_last_name
+              ? `${invitation.invitee_first_name} ${invitation.invitee_last_name}`
+              : invitation.invitee_username;
+
+          await notifyTeamMembers({
+            teamId: invitation.team_id,
+            excludeUserId: userId,
+            type: "member_joined",
+            title: `${inviteeName} joined ${invitation.team_name}`,
+            referenceType: "team_member",
+            referenceId: userId,
+            actorId: userId,
+          });
+
+          // Emit socket event to team members
+          const io = req.app.get("io");
+          if (io) {
+            io.to(`team:${invitation.team_id}`).emit("notification:new", {
+              type: "member_joined",
+              teamId: invitation.team_id,
+            });
+          }
+        } catch (notificationError) {
+          console.error("Error creating join notification:", notificationError);
+        }
+        // === END NOTIFICATION ===
       } else {
         // Decline
         await client.query(
@@ -386,18 +465,22 @@ const respondToInvitation = async (req, res) => {
 
         // If there's a response message, send it as a DIRECT MESSAGE to the inviter
         if (response_message && response_message.trim()) {
+          // Always send DM to inviter about the decline
           const inviteeName =
             invitation.invitee_first_name && invitation.invitee_last_name
               ? `${invitation.invitee_first_name} ${invitation.invitee_last_name}`
               : invitation.invitee_username;
 
-          const formattedMessage = `📋 Response to your invitation for "${
-            invitation.team_name
-          }":\n\n"${response_message.trim()}"`;
+          const formattedMessage =
+            response_message && response_message.trim()
+              ? `📋 Response to your invitation for "${
+                  invitation.team_name
+                }":\n\n"${response_message.trim()}"`
+              : `📋 ${inviteeName} declined your invitation to join "${invitation.team_name}".`;
 
           await client.query(
             `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-       VALUES ($1, $2, $3, NOW())`,
+           VALUES ($1, $2, $3, NOW())`,
             [userId, invitation.inviter_id, formattedMessage]
           );
         }

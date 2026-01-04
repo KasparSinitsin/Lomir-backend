@@ -18,6 +18,9 @@ const io = socketIo(server, {
   },
 });
 
+// Make io accessible to controllers via req.app.get("io")
+app.set("io", io);
+
 // Socket.IO middleware for authentication
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
