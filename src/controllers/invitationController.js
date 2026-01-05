@@ -458,32 +458,80 @@ const respondToInvitation = async (req, res) => {
         // Decline
         await client.query(
           `UPDATE team_invitations 
-     SET status = 'declined', responded_at = NOW()
-     WHERE id = $1`,
+           SET status = 'declined', responded_at = NOW()
+           WHERE id = $1`,
           [invitationId]
         );
 
-        // If there's a response message, send it as a DIRECT MESSAGE to the inviter
+        // Get invitee's name and inviter's name
+        const inviteeName =
+          invitation.invitee_first_name && invitation.invitee_last_name
+            ? `${invitation.invitee_first_name} ${invitation.invitee_last_name}`
+            : invitation.invitee_username;
+
+        // Get inviter's name
+        const inviterResult = await client.query(
+          `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+          [invitation.inviter_id]
+        );
+        const inviter = inviterResult.rows[0];
+        const inviterName =
+          inviter.first_name && inviter.last_name
+            ? `${inviter.first_name} ${inviter.last_name}`
+            : inviter.username;
+
+        // Include whether there's a personal message
+        const hasPersonalMessage =
+          response_message && response_message.trim() ? "true" : "false";
+
+        // System message format includes all info for both perspectives
+        const declineSystemMessage = `🚫 INVITATION_DECLINED: ${invitation.team_name} | ${inviterName} | ${inviteeName} | ${hasPersonalMessage}`;
+
+        await client.query(
+          `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+           VALUES ($1, $2, $3, NOW())`,
+          [userId, invitation.inviter_id, declineSystemMessage]
+        );
+
+        // If there's a personal message, send it as a separate regular message
         if (response_message && response_message.trim()) {
-          // Always send DM to inviter about the decline
-          const inviteeName =
-            invitation.invitee_first_name && invitation.invitee_last_name
-              ? `${invitation.invitee_first_name} ${invitation.invitee_last_name}`
-              : invitation.invitee_username;
-
-          const formattedMessage =
-            response_message && response_message.trim()
-              ? `📋 Response to your invitation for "${
-                  invitation.team_name
-                }":\n\n"${response_message.trim()}"`
-              : `📋 ${inviteeName} declined your invitation to join "${invitation.team_name}".`;
-
           await client.query(
             `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-           VALUES ($1, $2, $3, NOW())`,
-            [userId, invitation.inviter_id, formattedMessage]
+             VALUES ($1, $2, $3, NOW())`,
+            [userId, invitation.inviter_id, response_message.trim()]
           );
         }
+
+        // === CREATE NOTIFICATION FOR INVITER ===
+        try {
+          const { createNotification } = require("./notificationController");
+
+          await createNotification({
+            userId: invitation.inviter_id,
+            type: "invitation_declined",
+            title: `${inviteeName} declined your invitation to ${invitation.team_name}`,
+            message: response_message || null,
+            referenceType: "team_invitation",
+            referenceId: parseInt(invitationId),
+            teamId: invitation.team_id,
+            actorId: userId,
+          });
+
+          // Emit socket event
+          const io = req.app.get("io");
+          if (io) {
+            io.to(`user:${invitation.inviter_id}`).emit("notification:new", {
+              type: "invitation_declined",
+              teamId: invitation.team_id,
+            });
+          }
+        } catch (notificationError) {
+          console.error(
+            "Error creating invitation decline notification:",
+            notificationError
+          );
+        }
+        // === END NOTIFICATION ===
       }
 
       await client.query("COMMIT");
@@ -519,9 +567,15 @@ const cancelInvitation = async (req, res) => {
     const invitationId = req.params.invitationId;
     const userId = req.user.id;
 
-    // Get invitation
+    // Get invitation with full details
     const invitationResult = await db.pool.query(
-      `SELECT ti.team_id FROM team_invitations ti
+      `SELECT ti.*, t.name as team_name,
+              u.first_name as invitee_first_name, 
+              u.last_name as invitee_last_name, 
+              u.username as invitee_username
+       FROM team_invitations ti
+       JOIN teams t ON ti.team_id = t.id
+       JOIN users u ON ti.invitee_id = u.id
        WHERE ti.id = $1 AND ti.status = 'pending'`,
       [invitationId]
     );
@@ -533,7 +587,8 @@ const cancelInvitation = async (req, res) => {
       });
     }
 
-    const teamId = invitationResult.rows[0].team_id;
+    const invitation = invitationResult.rows[0];
+    const teamId = invitation.team_id;
 
     // Check if user is owner or admin
     const authCheck = await db.pool.query(
@@ -549,6 +604,23 @@ const cancelInvitation = async (req, res) => {
       });
     }
 
+    // Get canceller's name
+    const cancellerResult = await db.pool.query(
+      `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+      [userId]
+    );
+    const canceller = cancellerResult.rows[0];
+    const cancellerName =
+      canceller.first_name && canceller.last_name
+        ? `${canceller.first_name} ${canceller.last_name}`
+        : canceller.username;
+
+    // Get invitee's name
+    const inviteeName =
+      invitation.invitee_first_name && invitation.invitee_last_name
+        ? `${invitation.invitee_first_name} ${invitation.invitee_last_name}`
+        : invitation.invitee_username;
+
     // Cancel the invitation
     await db.pool.query(
       `UPDATE team_invitations 
@@ -556,6 +628,46 @@ const cancelInvitation = async (req, res) => {
        WHERE id = $1`,
       [invitationId]
     );
+
+    // System message format includes all info for both perspectives
+    const cancelSystemMessage = `🚫 INVITATION_CANCELLED: ${invitation.team_name} | ${cancellerName} | ${inviteeName}`;
+
+    await db.pool.query(
+      `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+       VALUES ($1, $2, $3, NOW())`,
+      [userId, invitation.invitee_id, cancelSystemMessage]
+    );
+
+    // === CREATE NOTIFICATION FOR INVITEE ===
+    try {
+      const { createNotification } = require("./notificationController");
+
+      await createNotification({
+        userId: invitation.invitee_id,
+        type: "invitation_cancelled",
+        title: `${cancellerName} cancelled your invitation to ${invitation.team_name}`,
+        message: null,
+        referenceType: "team_invitation",
+        referenceId: parseInt(invitationId),
+        teamId: teamId,
+        actorId: userId,
+      });
+
+      // Emit socket event
+      const io = req.app.get("io");
+      if (io) {
+        io.to(`user:${invitation.invitee_id}`).emit("notification:new", {
+          type: "invitation_cancelled",
+          teamId: teamId,
+        });
+      }
+    } catch (notificationError) {
+      console.error(
+        "Error creating invitation cancel notification:",
+        notificationError
+      );
+    }
+    // === END NOTIFICATION ===
 
     res.status(200).json({
       success: true,

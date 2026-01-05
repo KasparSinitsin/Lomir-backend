@@ -7,23 +7,39 @@ const getNavigationUrl = (notification) => {
   const { type, team_id, reference_id, actor_id } = notification;
 
   switch (type) {
+    // === NAVIGATES TO MY TEAMS PAGE ===
     case "invitation_received":
+      // Invitee sees their invitation card highlighted
       return `/teams/my-teams?tab=invitations&highlight=${reference_id}`;
 
     case "application_received":
+      // Team admin sees applications modal with applicant highlighted
       return `/teams/my-teams?team=${team_id}&openApplications=true&highlight=${actor_id}`;
 
-    case "application_rejected":
-      // Navigate to DM with the person who rejected, highlight their message
+    // === NAVIGATES TO DM CHAT ===
+    case "application_approved":
+      // Applicant sees DM with approver + green approval message
       return `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
 
-    case "application_approved":
-      return `/chat/${team_id}?type=team&highlightUser=${actor_id}`;
+    case "application_rejected":
+      // Applicant sees DM with rejector + violet rejection message
+      return `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
 
+    case "invitation_declined":
+      // Inviter sees DM with decliner + violet decline message
+      return `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
+
+    case "invitation_cancelled":
+      // Navigate to DM with the person who cancelled
+      return `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
+
+    // === NAVIGATES TO TEAM CHAT ===
     case "member_joined":
+      // Team members see team chat with join message highlighted
       return `/chat/${team_id}?type=team&highlightUser=${actor_id}`;
 
     case "member_left":
+      // Team members see team chat with leave message highlighted
       return `/chat/${team_id}?type=team&highlightUser=${actor_id}`;
 
     default:
