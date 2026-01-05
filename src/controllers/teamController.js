@@ -1748,6 +1748,38 @@ const removeTeamMember = async (req, res) => {
 
       await client.query("COMMIT");
 
+      // === CREATE NOTIFICATIONS FOR REMAINING TEAM MEMBERS ===
+      try {
+        // Get team name
+        const teamResult = await db.pool.query(
+          `SELECT name FROM teams WHERE id = $1`,
+          [teamId]
+        );
+        const teamName = teamResult.rows[0]?.name || "the team";
+
+        await notifyTeamMembers({
+          teamId: parseInt(teamId),
+          excludeUserId: parseInt(memberId),
+          type: "member_left",
+          title: `${memberName} left ${teamName}`,
+          referenceType: "team_member",
+          referenceId: parseInt(memberId),
+          actorId: parseInt(memberId),
+        });
+
+        // Emit socket event to team members
+        const io = req.app.get("io");
+        if (io) {
+          io.to(`team:${teamId}`).emit("notification:new", {
+            type: "member_left",
+            teamId: parseInt(teamId),
+          });
+        }
+      } catch (notificationError) {
+        console.error("Error creating leave notification:", notificationError);
+      }
+      // === END NOTIFICATION ===
+
       res.status(200).json({
         success: true,
         message: "Member removed successfully",
