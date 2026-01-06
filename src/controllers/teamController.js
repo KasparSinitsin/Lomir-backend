@@ -1452,17 +1452,17 @@ const deleteTeam = async (req, res) => {
           [teamId, userId]
         );
 
-        // Send DM and notification to each member
+        // Send ONE system message to the team chat (not DM)
+        const deleteMessage = `🗑️ TEAM_DELETED: ${teamName} | ${ownerName}`;
+
+        await db.pool.query(
+          `INSERT INTO messages (sender_id, team_id, content, sent_at)
+   VALUES ($1, $2, $3, NOW())`,
+          [userId, teamId, deleteMessage]
+        );
+
+        // Send notification to each member (no DM needed)
         for (const member of membersResult.rows) {
-          // Send system message via DM
-          const deleteMessage = `🗑️ TEAM_DELETED: ${teamName} | ${ownerName}`;
-
-          await db.pool.query(
-            `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-             VALUES ($1, $2, $3, NOW())`,
-            [userId, member.user_id, deleteMessage]
-          );
-
           // Create notification
           await createNotification({
             userId: member.user_id,
