@@ -281,10 +281,9 @@ const getConversations = async (req, res) => {
     }));
 
     // Combine and sort by most recent
-    const allConversations = [
-      ...directConversations,
-      ...teamConversations,
-    ].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+    const allConversations = [...directConversations, ...teamConversations].sort(
+      (a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)
+    );
 
     res.status(200).json({
       success: true,
@@ -500,13 +499,24 @@ const sendMessage = async (req, res) => {
       });
     }
 
-    // If it's a team message, check if team is archived
-    if (teamId) {
-      const teamCheck = await db.pool.query(
+    /**
+     * ✅ Fix 2: Backend - Block messages to archived teams
+     * Use the "targetTeamId" derived from:
+     * - conversationId when type === "team"
+     * - req.body.team_id (if some clients send it)
+     *
+     * (We use db.query here for consistency with the rest of this controller.
+     * If your database module exposes db.pool.query as well, you can swap it in.)
+     */
+    const targetTeamId =
+      type === "team" ? conversationId : req.body.team_id || req.body.teamId;
+
+    if (targetTeamId) {
+      const teamCheck = await db.query(
         `SELECT archived_at FROM teams WHERE id = $1`,
-        [teamId]
+        [targetTeamId]
       );
-      
+
       if (teamCheck.rows.length > 0 && teamCheck.rows[0].archived_at) {
         return res.status(403).json({
           success: false,
@@ -514,7 +524,6 @@ const sendMessage = async (req, res) => {
         });
       }
     }
-
 
     let messageResult;
 
