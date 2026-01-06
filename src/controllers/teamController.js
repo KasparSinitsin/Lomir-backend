@@ -252,7 +252,7 @@ const getTeamById = async (req, res) => {
              COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count
       FROM teams t
       LEFT JOIN team_members tm ON t.id = tm.team_id
-      WHERE t.id = $1 AND t.archived_at IS NULL
+      WHERE t.id = $1
       GROUP BY t.id
       `,
       [teamId]
