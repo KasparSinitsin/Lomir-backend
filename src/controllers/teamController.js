@@ -485,24 +485,92 @@ const cancelApplication = async (req, res) => {
     const applicationId = req.params.applicationId;
     const userId = req.user.id;
 
-    // Check if application exists and belongs to this user
-    const applicationCheck = await db.pool.query(
-      `SELECT id FROM team_applications 
-       WHERE id = $1 AND applicant_id = $2 AND status = 'pending'`,
+    // Get application with full details
+    const applicationResult = await db.pool.query(
+      `SELECT ta.*, t.name as team_name,
+              u.first_name as applicant_first_name,
+              u.last_name as applicant_last_name,
+              u.username as applicant_username
+       FROM team_applications ta
+       JOIN teams t ON ta.team_id = t.id
+       JOIN users u ON ta.applicant_id = u.id
+       WHERE ta.id = $1 AND ta.applicant_id = $2 AND ta.status = 'pending'`,
       [applicationId, userId]
     );
 
-    if (applicationCheck.rows.length === 0) {
+    if (applicationResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
         message: "Application not found or cannot be canceled",
       });
     }
 
+    const application = applicationResult.rows[0];
+
+    // Get applicant's name
+    const applicantName =
+      application.applicant_first_name && application.applicant_last_name
+        ? `${application.applicant_first_name} ${application.applicant_last_name}`
+        : application.applicant_username;
+
     // Delete the application
     await db.pool.query(`DELETE FROM team_applications WHERE id = $1`, [
       applicationId,
     ]);
+
+    // Get team admins and owners to notify
+    const adminsResult = await db.pool.query(
+      `SELECT tm.user_id, u.first_name, u.last_name, u.username
+       FROM team_members tm
+       JOIN users u ON tm.user_id = u.id
+       WHERE tm.team_id = $1 AND tm.role IN ('owner', 'admin')`,
+      [application.team_id]
+    );
+
+    // Send system message and notification to each admin
+    for (const admin of adminsResult.rows) {
+      const adminName =
+        admin.first_name && admin.last_name
+          ? `${admin.first_name} ${admin.last_name}`
+          : admin.username;
+
+      // System message format
+      const cancelSystemMessage = `🚫 APPLICATION_CANCELLED: ${application.team_name} | ${applicantName} | ${adminName}`;
+
+      await db.pool.query(
+        `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+         VALUES ($1, $2, $3, NOW())`,
+        [userId, admin.user_id, cancelSystemMessage]
+      );
+
+      // Create notification for admin
+      try {
+        await createNotification({
+          userId: admin.user_id,
+          type: "application_cancelled",
+          title: `${applicantName} withdrew their application for ${application.team_name}`,
+          message: null,
+          referenceType: "team_application",
+          referenceId: parseInt(applicationId),
+          teamId: application.team_id,
+          actorId: userId,
+        });
+
+        // Emit socket event
+        const io = req.app.get("io");
+        if (io) {
+          io.to(`user:${admin.user_id}`).emit("notification:new", {
+            type: "application_cancelled",
+            teamId: application.team_id,
+          });
+        }
+      } catch (notificationError) {
+        console.error(
+          "Error creating application cancel notification:",
+          notificationError
+        );
+      }
+    }
 
     res.status(200).json({
       success: true,
@@ -680,16 +748,93 @@ const updateTeam = async (req, res) => {
         try {
           await client.query("BEGIN");
 
+          // Delete all team chat messages first (before soft deleting team)
+          await client.query(`DELETE FROM messages WHERE team_id = $1`, [
+            teamId,
+          ]);
+
+          // Soft delete by setting archived_at
           await client.query(
             `
-        UPDATE team_members 
-        SET role = $1 
-        WHERE team_id = $2 AND user_id = $3
+        UPDATE teams
+        SET archived_at = NOW(), status = 'inactive'
+        WHERE id = $1
       `,
-            [roleToUpdate, teamId, memberId]
+            [teamId]
           );
 
           await client.query("COMMIT");
+
+          // === CREATE NOTIFICATION FOR AFFECTED MEMBER ===
+          try {
+            // Get team name
+            const teamResult = await db.pool.query(
+              `SELECT name FROM teams WHERE id = $1`,
+              [teamId]
+            );
+            const teamName = teamResult.rows[0]?.name || "the team";
+
+            // Get changer's name (the admin/owner who made the change)
+            const changerResult = await db.pool.query(
+              `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+              [userId]
+            );
+            const changer = changerResult.rows[0];
+            const changerName =
+              changer.first_name && changer.last_name
+                ? `${changer.first_name} ${changer.last_name}`
+                : changer.username;
+
+            // Get affected member's name
+            const memberResult = await db.pool.query(
+              `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+              [memberId]
+            );
+            const member = memberResult.rows[0];
+            const memberName =
+              member.first_name && member.last_name
+                ? `${member.first_name} ${member.last_name}`
+                : member.username;
+
+            // Determine if promoted or demoted
+            const action = roleToUpdate === "admin" ? "promoted" : "demoted";
+
+            // Send system message to affected member via DM
+            const roleChangeMessage = `🔄 ROLE_CHANGED: ${teamName} | ${changerName} | ${memberName} | ${memberCurrentRole} | ${roleToUpdate}`;
+
+            await db.pool.query(
+              `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+               VALUES ($1, $2, $3, NOW())`,
+              [userId, memberId, roleChangeMessage]
+            );
+
+            // Create notification for affected member
+            await createNotification({
+              userId: parseInt(memberId),
+              type: "role_changed",
+              title: `You were ${action} to ${roleToUpdate} in ${teamName}`,
+              message: null,
+              referenceType: "team_member",
+              referenceId: parseInt(teamId),
+              teamId: parseInt(teamId),
+              actorId: parseInt(userId),
+            });
+
+            // Emit socket event to affected member
+            const io = req.app.get("io");
+            if (io) {
+              io.to(`user:${memberId}`).emit("notification:new", {
+                type: "role_changed",
+                teamId: parseInt(teamId),
+              });
+            }
+          } catch (notificationError) {
+            console.error(
+              "Error creating role change notification:",
+              notificationError
+            );
+          }
+          // === END NOTIFICATION ===
 
           res.status(200).json({
             success: true,
@@ -1286,6 +1431,67 @@ const deleteTeam = async (req, res) => {
 
       await client.query("COMMIT");
 
+      // === CREATE NOTIFICATIONS FOR ALL TEAM MEMBERS ===
+      try {
+        const teamName = teamCheck.rows[0].name;
+
+        // Get owner's name
+        const ownerResult = await db.pool.query(
+          `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+          [userId]
+        );
+        const owner = ownerResult.rows[0];
+        const ownerName =
+          owner.first_name && owner.last_name
+            ? `${owner.first_name} ${owner.last_name}`
+            : owner.username;
+
+        // Get all team members (except owner)
+        const membersResult = await db.pool.query(
+          `SELECT user_id FROM team_members WHERE team_id = $1 AND user_id != $2`,
+          [teamId, userId]
+        );
+
+        // Send DM and notification to each member
+        for (const member of membersResult.rows) {
+          // Send system message via DM
+          const deleteMessage = `🗑️ TEAM_DELETED: ${teamName} | ${ownerName}`;
+
+          await db.pool.query(
+            `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+             VALUES ($1, $2, $3, NOW())`,
+            [userId, member.user_id, deleteMessage]
+          );
+
+          // Create notification
+          await createNotification({
+            userId: member.user_id,
+            type: "team_deleted",
+            title: `${teamName} has been deleted`,
+            message: `${ownerName} has deleted the team.`,
+            referenceType: "team",
+            referenceId: parseInt(teamId),
+            teamId: parseInt(teamId),
+            actorId: parseInt(userId),
+          });
+
+          // Emit socket event
+          const io = req.app.get("io");
+          if (io) {
+            io.to(`user:${member.user_id}`).emit("notification:new", {
+              type: "team_deleted",
+              teamId: parseInt(teamId),
+            });
+          }
+        }
+      } catch (notificationError) {
+        console.error(
+          "Error creating team deletion notifications:",
+          notificationError
+        );
+      }
+      // === END NOTIFICATION ===
+
       res.status(200).json({
         success: true,
         message: "Team archived successfully",
@@ -1748,37 +1954,106 @@ const removeTeamMember = async (req, res) => {
 
       await client.query("COMMIT");
 
-      // === CREATE NOTIFICATIONS FOR REMAINING TEAM MEMBERS ===
-      try {
-        // Get team name
-        const teamResult = await db.pool.query(
-          `SELECT name FROM teams WHERE id = $1`,
-          [teamId]
-        );
-        const teamName = teamResult.rows[0]?.name || "the team";
+      // Get team name
+      const teamResult = await db.pool.query(
+        `SELECT name FROM teams WHERE id = $1`,
+        [teamId]
+      );
+      const teamName = teamResult.rows[0]?.name || "the team";
 
-        await notifyTeamMembers({
-          teamId: parseInt(teamId),
-          excludeUserId: parseInt(memberId),
-          type: "member_left",
-          title: `${memberName} left ${teamName}`,
-          referenceType: "team_member",
-          referenceId: parseInt(memberId),
-          actorId: parseInt(memberId),
-        });
+      if (isSelfRemoval) {
+        // === SELF-REMOVAL: Notify remaining team members ===
+        try {
+          await notifyTeamMembers({
+            teamId: parseInt(teamId),
+            excludeUserId: parseInt(memberId),
+            type: "member_left",
+            title: `${memberName} left ${teamName}`,
+            referenceType: "team_member",
+            referenceId: parseInt(memberId),
+            actorId: parseInt(memberId),
+          });
 
-        // Emit socket event to team members
-        const io = req.app.get("io");
-        if (io) {
-          io.to(`team:${teamId}`).emit("notification:new", {
+          // Emit socket event to team members
+          const io = req.app.get("io");
+          if (io) {
+            io.to(`team:${teamId}`).emit("notification:new", {
+              type: "member_left",
+              teamId: parseInt(teamId),
+            });
+          }
+        } catch (notificationError) {
+          console.error(
+            "Error creating leave notification:",
+            notificationError
+          );
+        }
+      } else {
+        // === REMOVED BY ADMIN/OWNER: Notify the removed member ===
+        try {
+          // Get the remover's name
+          const removerInfo = await db.pool.query(
+            `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+            [userId]
+          );
+          const remover = removerInfo.rows[0];
+          const removerName =
+            remover.first_name && remover.last_name
+              ? `${remover.first_name} ${remover.last_name}`
+              : remover.username;
+
+          // Send system message to removed member via DM
+          const removeSystemMessage = `🚫 MEMBER_REMOVED: ${teamName} | ${removerName} | ${memberName}`;
+
+          await db.pool.query(
+            `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+             VALUES ($1, $2, $3, NOW())`,
+            [userId, memberId, removeSystemMessage]
+          );
+
+          // Create notification for removed member
+          await createNotification({
+            userId: parseInt(memberId),
+            type: "member_removed",
+            title: `You were removed from ${teamName}`,
+            message: null,
+            referenceType: "team_member",
+            referenceId: parseInt(teamId),
+            teamId: parseInt(teamId),
+            actorId: parseInt(userId),
+          });
+
+          // Emit socket event to removed member
+          const io = req.app.get("io");
+          if (io) {
+            io.to(`user:${memberId}`).emit("notification:new", {
+              type: "member_removed",
+              teamId: parseInt(teamId),
+            });
+          }
+
+          // Also notify remaining team members about the removal
+          await notifyTeamMembers({
+            teamId: parseInt(teamId),
+            excludeUserId: parseInt(memberId),
+            type: "member_left",
+            title: `${memberName} was removed from ${teamName}`,
+            referenceType: "team_member",
+            referenceId: parseInt(memberId),
+            actorId: parseInt(memberId),
+          });
+
+          io?.to(`team:${teamId}`).emit("notification:new", {
             type: "member_left",
             teamId: parseInt(teamId),
           });
+        } catch (notificationError) {
+          console.error(
+            "Error creating removal notification:",
+            notificationError
+          );
         }
-      } catch (notificationError) {
-        console.error("Error creating leave notification:", notificationError);
       }
-      // === END NOTIFICATION ===
 
       res.status(200).json({
         success: true,

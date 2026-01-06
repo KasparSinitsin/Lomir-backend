@@ -42,6 +42,26 @@ const getNavigationUrl = (notification) => {
       // Team members see team chat with leave message highlighted
       return `/chat/${team_id}?type=team&highlightUser=${actor_id}`;
 
+    case "application_cancelled":
+      // Navigate to DM with the applicant who cancelled
+      return `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
+
+    case "member_removed":
+      // Navigate to DM with the admin who removed you
+      return `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
+
+    case "role_changed":
+      // Navigate to DM with the admin who changed the role
+      return `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
+
+    case "ownership_transferred":
+      // Navigate to DM with the previous owner who transferred
+      return `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
+
+    case "team_deleted":
+      // Navigate to the archived team chat
+      return `/chat/${team_id}?type=team&highlightUser=${actor_id}`;
+
     default:
       return "/teams/my-teams";
   }

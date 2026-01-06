@@ -500,6 +500,22 @@ const sendMessage = async (req, res) => {
       });
     }
 
+    // If it's a team message, check if team is archived
+    if (teamId) {
+      const teamCheck = await db.pool.query(
+        `SELECT archived_at FROM teams WHERE id = $1`,
+        [teamId]
+      );
+      
+      if (teamCheck.rows.length > 0 && teamCheck.rows[0].archived_at) {
+        return res.status(403).json({
+          success: false,
+          message: "Cannot send messages to a deleted team",
+        });
+      }
+    }
+
+
     let messageResult;
 
     if (type === "team") {

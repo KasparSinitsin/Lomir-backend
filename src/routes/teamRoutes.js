@@ -201,24 +201,24 @@ router.put(
           // Demote current owner to admin
           await client.query(
             `UPDATE team_members 
-       SET role = 'admin' 
-       WHERE team_id = $1 AND role = 'owner'`,
+             SET role = 'admin' 
+             WHERE team_id = $1 AND role = 'owner'`,
             [teamId]
           );
 
           // Promote target member to owner
           await client.query(
             `UPDATE team_members 
-       SET role = 'owner' 
-       WHERE team_id = $1 AND user_id = $2`,
+             SET role = 'owner' 
+             WHERE team_id = $1 AND user_id = $2`,
             [teamId, memberId]
           );
 
           // Update the teams table owner_id as well
           await client.query(
             `UPDATE teams 
-       SET owner_id = $1 
-       WHERE id = $2`,
+             SET owner_id = $1 
+             WHERE id = $2`,
             [memberId, teamId]
           );
 
@@ -227,6 +227,201 @@ router.put(
           console.log(
             `✅ Ownership transferred to user ${memberId} in team ${teamId}`
           );
+
+          // === CREATE NOTIFICATION FOR NEW OWNER ===
+          try {
+            const {
+              createNotification,
+            } = require("../controllers/notificationController");
+
+            // Get team name
+            const teamResult = await db.pool.query(
+              `SELECT name FROM teams WHERE id = $1`,
+              [teamId]
+            );
+            const teamName = teamResult.rows[0]?.name || "the team";
+
+            // Get previous owner's name (the one transferring)
+            const prevOwnerResult = await db.pool.query(
+              `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+              [userId]
+            );
+            const prevOwner = prevOwnerResult.rows[0];
+            const prevOwnerName =
+              prevOwner.first_name && prevOwner.last_name
+                ? `${prevOwner.first_name} ${prevOwner.last_name}`
+                : prevOwner.username;
+
+            // Get new owner's name
+            const newOwnerResult = await db.pool.query(
+              `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+              [memberId]
+            );
+            const newOwner = newOwnerResult.rows[0];
+            const newOwnerName =
+              newOwner.first_name && newOwner.last_name
+                ? `${newOwner.first_name} ${newOwner.last_name}`
+                : newOwner.username;
+
+            // Send system message to new owner via DM
+            const ownershipMessage = `👑 OWNERSHIP_TRANSFERRED: ${teamName} | ${prevOwnerName} | ${newOwnerName}`;
+
+            await db.pool.query(
+              `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+               VALUES ($1, $2, $3, NOW())`,
+              [userId, memberId, ownershipMessage]
+            );
+
+            // Create notification for new owner
+            await createNotification({
+              userId: parseInt(memberId),
+              type: "ownership_transferred",
+              title: `You are now the owner of ${teamName}`,
+              message: null,
+              referenceType: "team_member",
+              referenceId: parseInt(teamId),
+              teamId: parseInt(teamId),
+              actorId: parseInt(userId),
+            });
+
+            // Emit socket event to new owner
+            const io = req.app.get("io");
+            if (io) {
+              io.to(`user:${memberId}`).emit("notification:new", {
+                type: "ownership_transferred",
+                teamId: parseInt(teamId),
+              });
+            }
+
+            // Also post to team chat so all members know (using parseable format)
+            const teamChatMessage = `👑 OWNERSHIP_TEAM: ${prevOwnerName} | ${newOwnerName}`;
+
+            await db.pool.query(
+              `INSERT INTO messages (sender_id, team_id, content, sent_at)
+               VALUES ($1, $2, $3, NOW())`,
+              [userId, teamId, teamChatMessage]
+            );
+            await client.query("BEGIN");
+
+            // Demote current owner to admin
+            await client.query(
+              `UPDATE team_members 
+             SET role = 'admin' 
+             WHERE team_id = $1 AND role = 'owner'`,
+              [teamId]
+            );
+
+            // Promote target member to owner
+            await client.query(
+              `UPDATE team_members 
+             SET role = 'owner' 
+             WHERE team_id = $1 AND user_id = $2`,
+              [teamId, memberId]
+            );
+
+            // Update the teams table owner_id as well
+            await client.query(
+              `UPDATE teams 
+             SET owner_id = $1 
+             WHERE id = $2`,
+              [memberId, teamId]
+            );
+
+            await client.query("COMMIT");
+
+            console.log(
+              `✅ Ownership transferred to user ${memberId} in team ${teamId}`
+            );
+
+            // === CREATE NOTIFICATION FOR NEW OWNER ===
+            try {
+              const {
+                createNotification,
+              } = require("../controllers/notificationController");
+
+              // Get team name
+              const teamResult = await db.pool.query(
+                `SELECT name FROM teams WHERE id = $1`,
+                [teamId]
+              );
+              const teamName = teamResult.rows[0]?.name || "the team";
+
+              // Get previous owner's name (the one transferring)
+              const prevOwnerResult = await db.pool.query(
+                `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+                [userId]
+              );
+              const prevOwner = prevOwnerResult.rows[0];
+              const prevOwnerName =
+                prevOwner.first_name && prevOwner.last_name
+                  ? `${prevOwner.first_name} ${prevOwner.last_name}`
+                  : prevOwner.username;
+
+              // Get new owner's name
+              const newOwnerResult = await db.pool.query(
+                `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+                [memberId]
+              );
+              const newOwner = newOwnerResult.rows[0];
+              const newOwnerName =
+                newOwner.first_name && newOwner.last_name
+                  ? `${newOwner.first_name} ${newOwner.last_name}`
+                  : newOwner.username;
+
+              // Send system message to new owner via DM
+              const ownershipMessage = `👑 OWNERSHIP_TRANSFERRED: ${teamName} | ${prevOwnerName} | ${newOwnerName}`;
+
+              await db.pool.query(
+                `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+               VALUES ($1, $2, $3, NOW())`,
+                [userId, memberId, ownershipMessage]
+              );
+
+              // Create notification for new owner
+              await createNotification({
+                userId: parseInt(memberId),
+                type: "ownership_transferred",
+                title: `You are now the owner of ${teamName}`,
+                message: null,
+                referenceType: "team_member",
+                referenceId: parseInt(teamId),
+                teamId: parseInt(teamId),
+                actorId: parseInt(userId),
+              });
+
+              // Emit socket event to new owner
+              const io = req.app.get("io");
+              if (io) {
+                io.to(`user:${memberId}`).emit("notification:new", {
+                  type: "ownership_transferred",
+                  teamId: parseInt(teamId),
+                });
+              }
+
+              await db.pool.query(
+                `INSERT INTO messages (sender_id, team_id, content, sent_at)
+               VALUES ($1, $2, $3, NOW())`,
+                [userId, teamId, teamChatMessage]
+              );
+            } catch (notificationError) {
+              console.error(
+                "Error creating ownership transfer notification:",
+                notificationError
+              );
+            }
+            // === END NOTIFICATION ===
+
+            return res.status(200).json({
+              success: true,
+              message: "Team ownership transferred successfully",
+            });
+          } catch (notificationError) {
+            console.error(
+              "Error creating ownership transfer notification:",
+              notificationError
+            );
+          }
+          // === END NOTIFICATION ===
 
           return res.status(200).json({
             success: true,
@@ -264,6 +459,81 @@ router.put(
         console.log(
           `✅ Successfully updated user ${memberId} to role ${new_role} in team ${teamId}`
         );
+
+        // === CREATE NOTIFICATION FOR AFFECTED MEMBER ===
+        try {
+          const {
+            createNotification,
+          } = require("../controllers/notificationController");
+
+          // Get team name
+          const teamResult = await db.pool.query(
+            `SELECT name FROM teams WHERE id = $1`,
+            [teamId]
+          );
+          const teamName = teamResult.rows[0]?.name || "the team";
+
+          // Get changer's name (the admin/owner who made the change)
+          const changerResult = await db.pool.query(
+            `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+            [userId]
+          );
+          const changer = changerResult.rows[0];
+          const changerName =
+            changer.first_name && changer.last_name
+              ? `${changer.first_name} ${changer.last_name}`
+              : changer.username;
+
+          // Get affected member's name
+          const memberResult = await db.pool.query(
+            `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+            [memberId]
+          );
+          const member = memberResult.rows[0];
+          const memberName =
+            member.first_name && member.last_name
+              ? `${member.first_name} ${member.last_name}`
+              : member.username;
+
+          // Determine if promoted or demoted
+          const action = new_role === "admin" ? "promoted" : "demoted";
+
+          // Send system message to affected member via DM
+          const roleChangeMessage = `🔄 ROLE_CHANGED: ${teamName} | ${changerName} | ${memberName} | ${memberCurrentRole} | ${new_role}`;
+
+          await db.pool.query(
+            `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+             VALUES ($1, $2, $3, NOW())`,
+            [userId, memberId, roleChangeMessage]
+          );
+
+          // Create notification for affected member
+          await createNotification({
+            userId: parseInt(memberId),
+            type: "role_changed",
+            title: `You were ${action} to ${new_role} in ${teamName}`,
+            message: null,
+            referenceType: "team_member",
+            referenceId: parseInt(teamId),
+            teamId: parseInt(teamId),
+            actorId: parseInt(userId),
+          });
+
+          // Emit socket event to affected member
+          const io = req.app.get("io");
+          if (io) {
+            io.to(`user:${memberId}`).emit("notification:new", {
+              type: "role_changed",
+              teamId: parseInt(teamId),
+            });
+          }
+        } catch (notificationError) {
+          console.error(
+            "Error creating role change notification:",
+            notificationError
+          );
+        }
+        // === END NOTIFICATION ===
 
         res.status(200).json({
           success: true,
