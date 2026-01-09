@@ -1705,17 +1705,60 @@ const addTeamMember = async (req, res) => {
     const newMemberId = value.memberId;
     const role = value.role;
 
-    // Check if the user making the request is authorized (owner or admin)
+    // First check if the user is trying to remove themselves from an archived team
+    const teamStatusCheck = await db.pool.query(
+      `SELECT archived_at FROM teams WHERE id = $1`,
+      [teamId]
+    );
+
+    const isArchivedTeam = teamStatusCheck.rows[0]?.archived_at !== null;
+    const isSelfRemoval = userId == memberId;
+
+    // For archived teams, only allow self-removal
+    if (isArchivedTeam) {
+      if (!isSelfRemoval) {
+        return res.status(403).json({
+          success: false,
+          message: "Cannot remove other members from an archived team",
+        });
+      }
+
+      // Verify user is actually a member
+      const memberCheck = await db.pool.query(
+        `SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2`,
+        [teamId, memberId]
+      );
+
+      if (memberCheck.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Member not found in this team",
+        });
+      }
+
+      // Skip the rest of the authorization logic for archived team self-removal
+      // Just delete the membership
+      await db.pool.query(
+        `DELETE FROM team_members WHERE team_id = $1 AND user_id = $2`,
+        [teamId, memberId]
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Successfully left the archived team",
+      });
+    }
+
+    // Original authorization check for non-archived teams
     const authCheck = await db.pool.query(
       `
-      SELECT tm.role 
-      FROM team_members tm
-      JOIN teams t ON tm.team_id = t.id
-      WHERE tm.team_id = $1 
-      AND tm.user_id = $2
-      AND (tm.role = 'owner' OR tm.role = 'admin')
-      AND t.archived_at IS NULL
-    `,
+  SELECT tm.role 
+  FROM team_members tm
+  JOIN teams t ON tm.team_id = t.id
+  WHERE tm.team_id = $1 
+  AND tm.user_id = $2
+  AND t.archived_at IS NULL
+`,
       [teamId, userId]
     );
 
@@ -1835,6 +1878,70 @@ const removeTeamMember = async (req, res) => {
     const memberId = req.params.userId;
     const userId = req.user.id;
 
+    // === NEW CODE: Handle archived team self-removal ===
+    const teamStatusCheck = await db.pool.query(
+      `SELECT archived_at FROM teams WHERE id = $1`,
+      [teamId]
+    );
+
+    const isArchivedTeam = teamStatusCheck.rows[0]?.archived_at !== null;
+    const isSelfRemoval = userId == memberId;
+
+    // For archived teams, only allow self-removal
+    if (isArchivedTeam) {
+      if (!isSelfRemoval) {
+        return res.status(403).json({
+          success: false,
+          message: "Cannot remove other members from an archived team",
+        });
+      }
+
+      // Verify user is actually a member
+      const memberCheck = await db.pool.query(
+        `SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2`,
+        [teamId, memberId]
+      );
+
+      if (memberCheck.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Member not found in this team",
+        });
+      }
+
+      // Get the member's name before removing them
+      const memberInfo = await db.pool.query(
+        `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+        [memberId]
+      );
+
+      const member = memberInfo.rows[0];
+      const memberName =
+        member.first_name && member.last_name
+          ? `${member.first_name} ${member.last_name}`
+          : member.username || "A member";
+
+      // Delete the membership
+      await db.pool.query(
+        `DELETE FROM team_members WHERE team_id = $1 AND user_id = $2`,
+        [teamId, memberId]
+      );
+
+      // Insert leave message to team chat
+      const leaveMessage = `🚪 ${memberName} has left the team.`;
+
+      await db.pool.query(
+        `INSERT INTO messages (sender_id, team_id, content, sent_at)
+     VALUES ($1, $2, $3, NOW())`,
+        [memberId, teamId, leaveMessage]
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Successfully left the archived team",
+      });
+    }
+
     // Check if the user making the request is authorized (owner, admin, or self-removal)
     const authCheck = await db.pool.query(
       `
@@ -1856,7 +1963,6 @@ const removeTeamMember = async (req, res) => {
     }
 
     const userRole = authCheck.rows[0].role;
-    const isSelfRemoval = userId == memberId;
 
     // Only owners/admins can remove others, anyone can remove themselves
     if (!isSelfRemoval && userRole !== "owner" && userRole !== "admin") {

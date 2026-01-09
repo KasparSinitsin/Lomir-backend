@@ -1,0 +1,18 @@
+{
+  "exportDate": "2026-01-06T18:26:39.756Z",
+  "tables": {
+    "users": 170,
+    "tags": 413,
+    "teams": 116,
+    "team_members": 704,
+    "team_applications": 536,
+    "user_tags": 827,
+    "team_tags": 278,
+    "badges": 30,
+    "user_badges": 9,
+    "messages": 1063,
+    "notifications": 1247
+  },
+  "totalRows": 5393,
+  "exportDir": "/Users/juliabaur/Library/CloudStorage/OneDrive-Persönlich/Dokumente/00 Beruf & Bewerbung/01 Lernen/Programmieren/WBS Coding School/04 Projects/01-final-project/00-Repos/Lomir-backend/backup"
+}
