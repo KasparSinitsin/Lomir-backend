@@ -14,6 +14,56 @@ const extractCloudinaryPublicId = (url) => {
   return match ? match[1] : null;
 };
 
+const permanentlyDeleteTeam = async (teamId) => {
+  const client = await db.pool.connect();
+
+  try {
+    await client.query("BEGIN");
+    // Delete all related data in order...
+    await client.query("DELETE FROM messages WHERE team_id = $1", [teamId]);
+    await client.query("DELETE FROM team_invitations WHERE team_id = $1", [
+      teamId,
+    ]);
+    await client.query("DELETE FROM team_applications WHERE team_id = $1", [
+      teamId,
+    ]);
+    await client.query("DELETE FROM team_tags WHERE team_id = $1", [teamId]);
+    await client.query("DELETE FROM user_badges WHERE team_id = $1", [teamId]);
+    await client.query("DELETE FROM notifications WHERE team_id = $1", [
+      teamId,
+    ]);
+    await client.query("DELETE FROM team_members WHERE team_id = $1", [teamId]);
+    await client.query("DELETE FROM teams WHERE id = $1", [teamId]);
+    await client.query("COMMIT");
+    return true;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+const checkAndCleanupArchivedTeam = async (teamId) => {
+  const result = await db.pool.query(
+    `
+     SELECT t.archived_at,
+            (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as member_count
+     FROM teams t WHERE t.id = $1
+   `,
+    [teamId]
+  );
+
+  if (result.rows.length > 0) {
+    const team = result.rows[0];
+    if (team.archived_at && parseInt(team.member_count) === 0) {
+      await permanentlyDeleteTeam(teamId);
+      return true;
+    }
+  }
+  return false;
+};
+
 // Validation schema for team creation
 const teamCreationSchema = Joi.object({
   name: Joi.string().trim().min(3).max(100).required().messages({
@@ -1359,6 +1409,7 @@ const handleTeamApplication = async (req, res) => {
             notificationError
           );
         }
+
         // === END NOTIFICATION ===
       }
 
@@ -1878,7 +1929,7 @@ const removeTeamMember = async (req, res) => {
     const memberId = req.params.userId;
     const userId = req.user.id;
 
-    // === NEW CODE: Handle archived team self-removal ===
+    // === Handle archived team self-removal ===
     const teamStatusCheck = await db.pool.query(
       `SELECT archived_at FROM teams WHERE id = $1`,
       [teamId]
@@ -1935,6 +1986,17 @@ const removeTeamMember = async (req, res) => {
      VALUES ($1, $2, $3, NOW())`,
         [memberId, teamId, leaveMessage]
       );
+
+      // === CHECK FOR ARCHIVED TEAM CLEANUP ===
+      try {
+        const wasDeleted = await checkAndCleanupArchivedTeam(parseInt(teamId));
+        if (wasDeleted) {
+          console.log(`Team ${teamId} was permanently deleted`);
+        }
+      } catch (cleanupError) {
+        console.error(`Cleanup check failed:`, cleanupError);
+      }
+      // === END TEAM CLEANUP ===
 
       return res.status(200).json({
         success: true,
@@ -2326,4 +2388,6 @@ module.exports = {
   getUserPendingApplications,
   cancelApplication,
   updateMemberRole,
+  permanentlyDeleteTeam,
+  checkAndCleanupArchivedTeam,
 };
