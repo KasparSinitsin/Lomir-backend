@@ -18,18 +18,55 @@ const extractCloudinaryPublicId = (url) => {
  */
 const getAllUsers = async (req, res) => {
   try {
-    // Placeholder response - Implement actual logic to fetch all users later
-    console.log("getAllUsers placeholder called.");
-    res.status(200).json({
+    const search = (req.query.search || "").trim();
+
+    // If no search term is provided, you can either:
+    // A) return a limited list of users (useful for admin/debug)
+    // B) return empty list to avoid exposing all users
+    // Here: we return latest 20 users for convenience.
+    if (!search) {
+      const result = await db.query(
+        `SELECT id, username, first_name as "firstName", last_name as "lastName", avatar_url as "avatarUrl"
+         FROM users
+         ORDER BY created_at DESC
+         LIMIT 20`
+      );
+
+      return res.status(200).json({
+        success: true,
+        data: result.rows,
+      });
+    }
+
+    // Search by username OR full name
+    // ILIKE = case-insensitive matching in Postgres
+    const result = await db.query(
+      `SELECT id, username, first_name as "firstName", last_name as "lastName", avatar_url as "avatarUrl"
+       FROM users
+       WHERE username ILIKE $1
+          OR first_name ILIKE $1
+          OR last_name ILIKE $1
+          OR (first_name || ' ' || last_name) ILIKE $1
+       ORDER BY
+         CASE
+           WHEN (first_name || ' ' || last_name) ILIKE $1 THEN 0
+           WHEN username ILIKE $1 THEN 1
+           ELSE 2
+         END,
+         username ASC
+       LIMIT 10`,
+      [`%${search}%`]
+    );
+
+    return res.status(200).json({
       success: true,
-      message: "Get all users placeholder",
-      data: [], // Replace with result.rows when implemented
+      data: result.rows,
     });
   } catch (error) {
-    console.error("Error fetching all users:", error);
-    res.status(500).json({
+    console.error("Error searching users:", error);
+    return res.status(500).json({
       success: false,
-      message: "Error fetching users",
+      message: "Error searching users",
       error: error.message,
     });
   }
