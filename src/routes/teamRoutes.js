@@ -264,7 +264,10 @@ router.put(
                 : newOwner.username;
 
             // Send system message to new owner via DM
-            const ownershipMessage = `👑 OWNERSHIP_TRANSFERRED: ${teamName} | ${prevOwnerName} | ${newOwnerName}`;
+            const ownershipMessage =
+              `👑 OWNERSHIP_TRANSFERRED: ${teamName} | ` +
+              `${userId}:${prevOwnerName} | ` +
+              `${memberId}:${newOwnerName}`;
 
             await db.pool.query(
               `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
@@ -499,7 +502,11 @@ router.put(
           const action = new_role === "admin" ? "promoted" : "demoted";
 
           // Send system message to affected member via DM
-          const roleChangeMessage = `🔄 ROLE_CHANGED: ${teamName} | ${changerName} | ${memberName} | ${memberCurrentRole} | ${new_role}`;
+          const roleChangeMessage =
+            `🔄 ROLE_CHANGED: ${teamName} | ` +
+            `${userId}:${changerName} | ` +
+            `${memberId}:${memberName} | ` +
+            `${memberCurrentRole} | ${new_role}`;
 
           await db.pool.query(
             `INSERT INTO messages (sender_id, receiver_id, content, sent_at)

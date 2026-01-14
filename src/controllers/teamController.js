@@ -585,7 +585,7 @@ const cancelApplication = async (req, res) => {
           : admin.username;
 
       // System message format
-      const cancelSystemMessage = `🚫 APPLICATION_CANCELLED: ${application.team_name} | ${applicantName} | ${adminName}`;
+      const cancelSystemMessage = `🚫 APPLICATION_CANCELLED: ${application.team_name} | ${userId}:${applicantName} | ${admin.user_id}:${adminName}`;
 
       await db.pool.query(
         `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
@@ -850,7 +850,7 @@ const updateTeam = async (req, res) => {
             const action = roleToUpdate === "admin" ? "promoted" : "demoted";
 
             // Send system message to affected member via DM
-            const roleChangeMessage = `🔄 ROLE_CHANGED: ${teamName} | ${changerName} | ${memberName} | ${memberCurrentRole} | ${roleToUpdate}`;
+            const roleChangeMessage = `🔄 ROLE_CHANGED: ${teamName} | ${userId}:${changerName} | ${memberId}:${memberName} | ${memberCurrentRole} | ${roleToUpdate}`;
 
             await db.pool.query(
               `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
@@ -1279,7 +1279,7 @@ const handleTeamApplication = async (req, res) => {
           response && response.trim() ? "true" : "false";
 
         // System message format includes all info for both perspectives
-        const approvalSystemMessage = `✅ APPLICATION_APPROVED: ${application.team_name} | ${approverName} | ${applicantName} | ${hasPersonalMessage}`;
+        const approvalSystemMessage = `✅ APPLICATION_APPROVED: ${application.team_name} | ${userId}:${approverName} | ${application.applicant_id}:${applicantName} | ${hasPersonalMessage}`;
 
         await client.query(
           `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
@@ -1366,7 +1366,7 @@ const handleTeamApplication = async (req, res) => {
           response && response.trim() ? "true" : "false";
 
         // System message format includes all info for both perspectives
-        const declineSystemMessage = `🚫 APPLICATION_DECLINED: ${application.team_name} | ${approverName} | ${applicantName} | ${hasPersonalMessage}`;
+        const declineSystemMessage = `🚫 APPLICATION_DECLINED: ${application.team_name} | ${userId}:${approverName} | ${application.applicant_id}:${applicantName} | ${hasPersonalMessage}`;
 
         await client.query(
           `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
@@ -1979,7 +1979,7 @@ const removeTeamMember = async (req, res) => {
       );
 
       // Insert leave message to team chat
-      const leaveMessage = `🚪 ${memberName} has left the team.`;
+      const leaveMessage = `🚪 MEMBER_LEFT:${memberId}:${memberName}`;
 
       await db.pool.query(
         `INSERT INTO messages (sender_id, team_id, content, sent_at)
@@ -2112,7 +2112,7 @@ const removeTeamMember = async (req, res) => {
       );
 
       // Insert leave/remove message to team chat
-      const leaveMessage = `🚪 ${memberName} has left the team.`;
+      const leaveMessage = `🚪 MEMBER_LEFT:${memberId}:${memberName}`;
 
       await client.query(
         `INSERT INTO messages (sender_id, team_id, content, sent_at)
@@ -2171,7 +2171,7 @@ const removeTeamMember = async (req, res) => {
               : remover.username;
 
           // Send system message to removed member via DM
-          const removeSystemMessage = `🚫 MEMBER_REMOVED: ${teamName} | ${removerName} | ${memberName}`;
+          const removeSystemMessage = `🚫 MEMBER_REMOVED: ${teamName} | ${userId}:${removerName} | ${memberId}:${memberName}`;
 
           await db.pool.query(
             `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
