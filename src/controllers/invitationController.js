@@ -485,7 +485,11 @@ const respondToInvitation = async (req, res) => {
           response_message && response_message.trim() ? "true" : "false";
 
         // System message format includes all info for both perspectives
-        const declineSystemMessage = `🚫 INVITATION_DECLINED: ${invitation.team_name} | ${inviterName} | ${inviteeName} | ${hasPersonalMessage}`;
+        const teamToken = `${invitation.team_id}:${invitation.team_name}`;
+        const inviterToken = `${invitation.inviter_id}:${inviterName}`;
+        const inviteeToken = `${userId}:${inviteeName}`; // userId is the invitee who is declining
+
+        const declineSystemMessage = `🚫 INVITATION_DECLINED: ${teamToken} | ${inviterToken} | ${inviteeToken} | ${hasPersonalMessage}`;
 
         await client.query(
           `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
@@ -629,12 +633,16 @@ const cancelInvitation = async (req, res) => {
       [invitationId]
     );
 
-    // System message format includes all info for both perspectives
-    const cancelSystemMessage = `🚫 INVITATION_CANCELLED: ${invitation.team_name} | ${cancellerName} | ${inviteeName}`;
+    // System message format (parseable + clickable team/user)
+    const teamToken = `${teamId}:${invitation.team_name}`;
+    const cancellerToken = `${userId}:${cancellerName}`;
+    const inviteeToken = `${invitation.invitee_id}:${inviteeName}`;
+
+    const cancelSystemMessage = `🚫 INVITATION_CANCELLED: ${teamToken} | ${cancellerToken} | ${inviteeToken}`;
 
     await db.pool.query(
       `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-       VALUES ($1, $2, $3, NOW())`,
+   VALUES ($1, $2, $3, NOW())`,
       [userId, invitation.invitee_id, cancelSystemMessage]
     );
 
