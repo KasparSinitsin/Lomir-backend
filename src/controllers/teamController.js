@@ -585,11 +585,16 @@ const cancelApplication = async (req, res) => {
           : admin.username;
 
       // System message format
-      const cancelSystemMessage = `🚫 APPLICATION_CANCELLED: ${application.team_name} | ${userId}:${applicantName} | ${admin.user_id}:${adminName}`;
+      // Parseable + clickable tokens
+      const teamToken = `${application.team_id}:${application.team_name}`;
+      const applicantToken = `${userId}:${applicantName}`;
+      const adminToken = `${admin.user_id}:${adminName}`;
+
+      const cancelSystemMessage = `🚫 APPLICATION_CANCELLED: ${teamToken} | ${applicantToken} | ${adminToken}`;
 
       await db.pool.query(
         `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-         VALUES ($1, $2, $3, NOW())`,
+   VALUES ($1, $2, $3, NOW())`,
         [userId, admin.user_id, cancelSystemMessage]
       );
 
@@ -850,7 +855,9 @@ const updateTeam = async (req, res) => {
             const action = roleToUpdate === "admin" ? "promoted" : "demoted";
 
             // Send system message to affected member via DM
-            const roleChangeMessage = `🔄 ROLE_CHANGED: ${teamName} | ${userId}:${changerName} | ${memberId}:${memberName} | ${memberCurrentRole} | ${roleToUpdate}`;
+            const teamToken = `${teamId}:${teamName}`;
+
+            const roleChangeMessage = `🔄 ROLE_CHANGED: ${teamToken} | ${userId}:${changerName} | ${memberId}:${memberName} | ${memberCurrentRole} | ${roleToUpdate}`;
 
             await db.pool.query(
               `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
@@ -1279,7 +1286,11 @@ const handleTeamApplication = async (req, res) => {
           response && response.trim() ? "true" : "false";
 
         // System message format includes all info for both perspectives
-        const approvalSystemMessage = `✅ APPLICATION_APPROVED: ${application.team_name} | ${userId}:${approverName} | ${application.applicant_id}:${applicantName} | ${hasPersonalMessage}`;
+        const teamToken = `${application.team_id}:${application.team_name}`;
+        const approverToken = `${userId}:${approverName}`;
+        const applicantToken = `${application.applicant_id}:${applicantName}`;
+
+        const approvalSystemMessage = `✅ APPLICATION_APPROVED: ${teamToken} | ${approverToken} | ${applicantToken} | ${hasPersonalMessage}`;
 
         await client.query(
           `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
@@ -1366,7 +1377,11 @@ const handleTeamApplication = async (req, res) => {
           response && response.trim() ? "true" : "false";
 
         // System message format includes all info for both perspectives
-        const declineSystemMessage = `🚫 APPLICATION_DECLINED: ${application.team_name} | ${userId}:${approverName} | ${application.applicant_id}:${applicantName} | ${hasPersonalMessage}`;
+        const teamToken = `${application.team_id}:${application.team_name}`;
+        const approverToken = `${userId}:${approverName}`;
+        const applicantToken = `${application.applicant_id}:${applicantName}`;
+
+        const declineSystemMessage = `🚫 APPLICATION_DECLINED: ${teamToken} | ${approverToken} | ${applicantToken} | ${hasPersonalMessage}`;
 
         await client.query(
           `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
@@ -1936,9 +1951,8 @@ const removeTeamMember = async (req, res) => {
     );
 
     const isArchivedTeam = teamStatusCheck.rows[0]?.archived_at !== null;
-    const isSelfRemoval = userId == memberId;
+    const isSelfRemoval = String(userId) === String(memberId);
 
-    // For archived teams, only allow self-removal
     if (isArchivedTeam) {
       if (!isSelfRemoval) {
         return res.status(403).json({
@@ -1947,7 +1961,7 @@ const removeTeamMember = async (req, res) => {
         });
       }
 
-      // Verify user is actually a member
+      // Verify membership
       const memberCheck = await db.pool.query(
         `SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2`,
         [teamId, memberId]
@@ -1960,43 +1974,38 @@ const removeTeamMember = async (req, res) => {
         });
       }
 
-      // Get the member's name before removing them
+      // Get member name
       const memberInfo = await db.pool.query(
         `SELECT first_name, last_name, username FROM users WHERE id = $1`,
         [memberId]
       );
 
-      const member = memberInfo.rows[0];
+      const m = memberInfo.rows[0];
       const memberName =
-        member.first_name && member.last_name
-          ? `${member.first_name} ${member.last_name}`
-          : member.username || "A member";
+        m?.first_name && m?.last_name
+          ? `${m.first_name} ${m.last_name}`
+          : m?.username || "A member";
 
-      // Delete the membership
+      // Remove membership
       await db.pool.query(
         `DELETE FROM team_members WHERE team_id = $1 AND user_id = $2`,
         [teamId, memberId]
       );
 
-      // Insert leave message to team chat
+      // Insert leave message to team chat (use db.pool here, no client in this branch)
       const leaveMessage = `🚪 MEMBER_LEFT:${memberId}:${memberName}`;
-
       await db.pool.query(
         `INSERT INTO messages (sender_id, team_id, content, sent_at)
-     VALUES ($1, $2, $3, NOW())`,
+         VALUES ($1, $2, $3, NOW())`,
         [memberId, teamId, leaveMessage]
       );
 
-      // === CHECK FOR ARCHIVED TEAM CLEANUP ===
+      // Cleanup archived team if empty
       try {
-        const wasDeleted = await checkAndCleanupArchivedTeam(parseInt(teamId));
-        if (wasDeleted) {
-          console.log(`Team ${teamId} was permanently deleted`);
-        }
+        await checkAndCleanupArchivedTeam(parseInt(teamId));
       } catch (cleanupError) {
-        console.error(`Cleanup check failed:`, cleanupError);
+        console.error("Cleanup check failed:", cleanupError);
       }
-      // === END TEAM CLEANUP ===
 
       return res.status(200).json({
         success: true,
@@ -2004,7 +2013,7 @@ const removeTeamMember = async (req, res) => {
       });
     }
 
-    // Check if the user making the request is authorized (owner, admin, or self-removal)
+    // === Non-archived team ===
     const authCheck = await db.pool.query(
       `
       SELECT tm.role 
@@ -2013,7 +2022,7 @@ const removeTeamMember = async (req, res) => {
       WHERE tm.team_id = $1 
       AND tm.user_id = $2
       AND t.archived_at IS NULL
-    `,
+      `,
       [teamId, userId]
     );
 
@@ -2026,7 +2035,6 @@ const removeTeamMember = async (req, res) => {
 
     const userRole = authCheck.rows[0].role;
 
-    // Only owners/admins can remove others, anyone can remove themselves
     if (!isSelfRemoval && userRole !== "owner" && userRole !== "admin") {
       return res.status(403).json({
         success: false,
@@ -2034,25 +2042,20 @@ const removeTeamMember = async (req, res) => {
       });
     }
 
-    // Check if target member exists and get their role
-    const memberCheck = await db.pool.query(
-      `
-      SELECT role FROM team_members 
-      WHERE team_id = $1 AND user_id = $2
-    `,
+    const targetMemberCheck = await db.pool.query(
+      `SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2`,
       [teamId, memberId]
     );
 
-    if (memberCheck.rows.length === 0) {
+    if (targetMemberCheck.rows.length === 0) {
       return res.status(404).json({
         success: false,
         message: "Member not found in this team",
       });
     }
 
-    const memberRole = memberCheck.rows[0].role;
+    const memberRole = targetMemberCheck.rows[0].role;
 
-    // Only owners can remove OTHER owners or admins (self-removal is always allowed)
     if (
       !isSelfRemoval &&
       (memberRole === "owner" || memberRole === "admin") &&
@@ -2064,17 +2067,13 @@ const removeTeamMember = async (req, res) => {
       });
     }
 
-    // Prevent removing the last owner
     if (memberRole === "owner") {
       const ownerCount = await db.pool.query(
-        `
-        SELECT COUNT(*) FROM team_members
-        WHERE team_id = $1 AND role = 'owner'
-      `,
+        `SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND role = 'owner'`,
         [teamId]
       );
 
-      if (parseInt(ownerCount.rows[0].count) <= 1) {
+      if (parseInt(ownerCount.rows[0].count, 10) <= 1) {
         return res.status(400).json({
           success: false,
           message:
@@ -2083,165 +2082,155 @@ const removeTeamMember = async (req, res) => {
       }
     }
 
-    // Remove member
     const client = await db.pool.connect();
+
+    let teamName = "the team";
+    let memberName = "A member";
+    let removerName = "Someone";
 
     try {
       await client.query("BEGIN");
 
-      // Get the member's name before removing them
-      const memberInfo = await client.query(
-        `SELECT u.first_name, u.last_name, u.username 
-         FROM users u 
-         WHERE u.id = $1`,
-        [memberId]
-      );
-
-      const member = memberInfo.rows[0];
-      const memberName =
-        member.first_name && member.last_name
-          ? `${member.first_name} ${member.last_name}`
-          : member.username || "A member";
-
-      await client.query(
-        `
-        DELETE FROM team_members
-        WHERE team_id = $1 AND user_id = $2
-      `,
-        [teamId, memberId]
-      );
-
-      // Insert leave/remove message to team chat
-      const leaveMessage = `🚪 MEMBER_LEFT:${memberId}:${memberName}`;
-
-      await client.query(
-        `INSERT INTO messages (sender_id, team_id, content, sent_at)
-   VALUES ($1, $2, $3, NOW())`,
-        [memberId, teamId, leaveMessage]
-      );
-
-      await client.query("COMMIT");
-
-      // Get team name
-      const teamResult = await db.pool.query(
+      // Fetch names inside the transaction so we can write the correct system message ONCE
+      const teamResult = await client.query(
         `SELECT name FROM teams WHERE id = $1`,
         [teamId]
       );
-      const teamName = teamResult.rows[0]?.name || "the team";
+      teamName = teamResult.rows[0]?.name || "the team";
+
+      const memberInfo = await client.query(
+        `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+        [memberId]
+      );
+      const m = memberInfo.rows[0];
+      memberName =
+        m?.first_name && m?.last_name
+          ? `${m.first_name} ${m.last_name}`
+          : m?.username || "A member";
+
+      const removerInfo = await client.query(
+        `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+        [userId]
+      );
+      const r = removerInfo.rows[0];
+      removerName =
+        r?.first_name && r?.last_name
+          ? `${r.first_name} ${r.last_name}`
+          : r?.username || "Someone";
+
+      // Delete membership
+      await client.query(
+        `DELETE FROM team_members WHERE team_id = $1 AND user_id = $2`,
+        [teamId, memberId]
+      );
+
+      // Insert ONE team-chat system message
+      let teamChatMessage;
+      let senderForTeamChat;
 
       if (isSelfRemoval) {
-        // === SELF-REMOVAL: Notify remaining team members ===
-        try {
-          await notifyTeamMembers({
-            teamId: parseInt(teamId),
-            excludeUserId: parseInt(memberId),
-            type: "member_left",
-            title: `${memberName} left ${teamName}`,
-            referenceType: "team_member",
-            referenceId: parseInt(memberId),
-            actorId: parseInt(memberId),
-          });
-
-          // Emit socket event to team members
-          const io = req.app.get("io");
-          if (io) {
-            io.to(`team:${teamId}`).emit("notification:new", {
-              type: "member_left",
-              teamId: parseInt(teamId),
-            });
-          }
-        } catch (notificationError) {
-          console.error(
-            "Error creating leave notification:",
-            notificationError
-          );
-        }
+        teamChatMessage = `🚪 MEMBER_LEFT:${memberId}:${memberName}`;
+        senderForTeamChat = memberId;
       } else {
-        // === REMOVED BY ADMIN/OWNER: Notify the removed member ===
-        try {
-          // Get the remover's name
-          const removerInfo = await db.pool.query(
-            `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-            [userId]
-          );
-          const remover = removerInfo.rows[0];
-          const removerName =
-            remover.first_name && remover.last_name
-              ? `${remover.first_name} ${remover.last_name}`
-              : remover.username;
-
-          // Send system message to removed member via DM
-          const removeSystemMessage = `🚫 MEMBER_REMOVED: ${teamName} | ${userId}:${removerName} | ${memberId}:${memberName}`;
-
-          await db.pool.query(
-            `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-             VALUES ($1, $2, $3, NOW())`,
-            [userId, memberId, removeSystemMessage]
-          );
-
-          // Create notification for removed member
-          await createNotification({
-            userId: parseInt(memberId),
-            type: "member_removed",
-            title: `You were removed from ${teamName}`,
-            message: null,
-            referenceType: "team_member",
-            referenceId: parseInt(teamId),
-            teamId: parseInt(teamId),
-            actorId: parseInt(userId),
-          });
-
-          // Emit socket event to removed member
-          const io = req.app.get("io");
-          if (io) {
-            io.to(`user:${memberId}`).emit("notification:new", {
-              type: "member_removed",
-              teamId: parseInt(teamId),
-            });
-          }
-
-          // Also notify remaining team members about the removal
-          await notifyTeamMembers({
-            teamId: parseInt(teamId),
-            excludeUserId: parseInt(memberId),
-            type: "member_left",
-            title: `${memberName} was removed from ${teamName}`,
-            referenceType: "team_member",
-            referenceId: parseInt(memberId),
-            actorId: parseInt(memberId),
-          });
-
-          io?.to(`team:${teamId}`).emit("notification:new", {
-            type: "member_left",
-            teamId: parseInt(teamId),
-          });
-        } catch (notificationError) {
-          console.error(
-            "Error creating removal notification:",
-            notificationError
-          );
-        }
+        const teamToken = `${teamId}:${teamName}`;
+        const memberToken = `${memberId}:${memberName}`;
+        teamChatMessage = `🚫 MEMBER_REMOVED_PUBLIC: ${teamToken} | ${memberToken}`;
+        senderForTeamChat = userId;
       }
 
-      res.status(200).json({
-        success: true,
-        message: "Member removed successfully",
-      });
+      await client.query(
+        `INSERT INTO messages (sender_id, team_id, content, sent_at)
+         VALUES ($1, $2, $3, NOW())`,
+        [senderForTeamChat, teamId, teamChatMessage]
+      );
+
+      await client.query("COMMIT");
     } catch (dbError) {
       await client.query("ROLLBACK");
-      console.error("Database error while removing member:", dbError);
-      res.status(500).json({
-        success: false,
-        message: "Database error while removing team member",
-        errorDetails: dbError.message,
-        fullError: dbError,
-      });
+      throw dbError;
     } finally {
       client.release();
     }
+
+    // === After commit: notifications + DM ===
+    const io = req.app.get("io");
+
+    if (isSelfRemoval) {
+      try {
+        await notifyTeamMembers({
+          teamId: parseInt(teamId),
+          excludeUserId: parseInt(memberId),
+          type: "member_left",
+          title: `${memberName} left ${teamName}`,
+          referenceType: "team_member",
+          referenceId: parseInt(memberId),
+          actorId: parseInt(memberId),
+        });
+
+        io?.to(`team:${teamId}`).emit("notification:new", {
+          type: "member_left",
+          teamId: parseInt(teamId),
+        });
+      } catch (e) {
+        console.error("Error creating leave notification:", e);
+      }
+    } else {
+      try {
+        // DM to removed member
+        const teamToken = `${teamId}:${teamName}`;
+        const removerToken = `${userId}:${removerName}`;
+        const memberToken = `${memberId}:${memberName}`;
+        const removeSystemMessage = `🚫 MEMBER_REMOVED: ${teamToken} | ${removerToken} | ${memberToken}`;
+
+        await db.pool.query(
+          `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+           VALUES ($1, $2, $3, NOW())`,
+          [userId, memberId, removeSystemMessage]
+        );
+
+        await createNotification({
+          userId: parseInt(memberId),
+          type: "member_removed",
+          title: `You were removed from ${teamName}`,
+          message: null,
+          referenceType: "team_member",
+          referenceId: parseInt(teamId),
+          teamId: parseInt(teamId),
+          actorId: parseInt(userId),
+        });
+
+        io?.to(`user:${memberId}`).emit("notification:new", {
+          type: "member_removed",
+          teamId: parseInt(teamId),
+        });
+
+        // notify remaining members
+        await notifyTeamMembers({
+          teamId: parseInt(teamId),
+          excludeUserId: parseInt(memberId),
+          type: "member_left",
+          title: `${memberName} was removed from ${teamName}`,
+          referenceType: "team_member",
+          referenceId: parseInt(memberId),
+          actorId: parseInt(userId),
+        });
+
+        io?.to(`team:${teamId}`).emit("notification:new", {
+          type: "member_left",
+          teamId: parseInt(teamId),
+        });
+      } catch (e) {
+        console.error("Error creating removal notification:", e);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Member removed successfully",
+    });
   } catch (error) {
     console.error("Remove team member error:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Error removing team member",
       error: error.message,
