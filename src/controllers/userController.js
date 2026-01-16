@@ -308,28 +308,158 @@ const updateUser = async (req, res) => {
 };
 
 /**
- * @description Delete a user (Placeholder)
+ * @description Delete a user and all associated data
  * @route DELETE /api/users/:id
  * @access Private (Requires authentication and authorization)
  */
 const deleteUser = async (req, res) => {
-  try {
-    const userId = req.params.id;
-    console.log(`deleteUser placeholder called for ID: ${userId}`);
+  const client = await pool.connect();
 
-    // Placeholder - Implement actual delete logic later
+  try {
+    const userId = parseInt(req.params.id);
+    const requestingUserId = req.user.id; // From auth middleware
+
+    console.log(
+      `deleteUser called for ID: ${userId} by user: ${requestingUserId}`
+    );
+
+    // Security check: users can only delete their own profile
+    if (userId !== requestingUserId) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only delete your own profile",
+      });
+    }
+
+    // Check if user exists and get their avatar URL
+    const userResult = await client.query(
+      "SELECT id, avatar_url FROM users WHERE id = $1",
+      [userId]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const userAvatarUrl = userResult.rows[0].avatar_url;
+
+    // Check if user is a team owner
+    const ownerCheck = await client.query(
+      "SELECT id, name FROM teams WHERE owner_id = $1 AND status != 'archived'",
+      [userId]
+    );
+
+    if (ownerCheck.rows.length > 0) {
+      const teamNames = ownerCheck.rows.map((t) => t.name).join(", ");
+      return res.status(400).json({
+        success: false,
+        message: `You cannot delete your profile while you own active teams. Please transfer ownership or archive the following teams first: ${teamNames}`,
+        ownedTeams: ownerCheck.rows,
+      });
+    }
+
+    // Begin transaction
+    await client.query("BEGIN");
+
+    // Delete in order to respect foreign key constraints
+
+    // 1. Delete user badges (where user received or awarded badges)
+    await client.query(
+      "DELETE FROM user_badges WHERE user_id = $1 OR awarded_by = $1",
+      [userId]
+    );
+    console.log("Deleted user_badges");
+
+    // 2. Delete team memberships
+    await client.query("DELETE FROM team_members WHERE user_id = $1", [userId]);
+    console.log("Deleted team_members");
+
+    // 3. Handle messages - delete messages sent by this user and received by this user
+    await client.query(
+      "DELETE FROM messages WHERE sender_id = $1 OR receiver_id = $1",
+      [userId]
+    );
+    console.log("Deleted messages");
+
+    // 4. Delete notifications (where user is the recipient or actor)
+    await client.query(
+      "DELETE FROM notifications WHERE user_id = $1 OR actor_id = $1",
+      [userId]
+    );
+    console.log("Deleted notifications");
+
+    // 5. Delete team applications (where user is applicant)
+    await client.query(
+      "DELETE FROM team_applications WHERE applicant_id = $1",
+      [userId]
+    );
+    // Set reviewed_by to null for applications this user reviewed
+    await client.query(
+      "UPDATE team_applications SET reviewed_by = NULL WHERE reviewed_by = $1",
+      [userId]
+    );
+    console.log("Deleted/updated team_applications");
+
+    // 6. Delete user tags
+    await client.query("DELETE FROM user_tags WHERE user_id = $1", [userId]);
+    console.log("Deleted user_tags");
+
+    // 7. Delete team invitations (where user is inviter or invitee)
+    await client.query(
+      "DELETE FROM team_invitations WHERE inviter_id = $1 OR invitee_id = $1",
+      [userId]
+    );
+    console.log("Deleted team_invitations");
+
+    // 8. Handle tags created by this user (set created_by to null)
+    await client.query(
+      "UPDATE tags SET created_by = NULL WHERE created_by = $1",
+      [userId]
+    );
+    console.log("Updated tags created_by");
+
+    // 9. Finally, delete the user
+    await client.query("DELETE FROM users WHERE id = $1", [userId]);
+    console.log("Deleted user");
+
+    // Commit transaction
+    await client.query("COMMIT");
+
+    // Delete avatar from Cloudinary (after successful DB deletion)
+    if (userAvatarUrl && userAvatarUrl.includes("cloudinary.com")) {
+      try {
+        const publicId = extractCloudinaryPublicId(userAvatarUrl);
+        if (publicId) {
+          console.log(`Deleting avatar from Cloudinary: ${publicId}`);
+          const deleteResult = await cloudinary.uploader.destroy(publicId);
+          console.log("Cloudinary deletion result:", deleteResult);
+        }
+      } catch (cloudinaryError) {
+        // Log but don't fail - user is already deleted
+        console.error(
+          "Error deleting avatar from Cloudinary:",
+          cloudinaryError
+        );
+      }
+    }
+
     res.status(200).json({
       success: true,
-      message: `Delete user ${userId} placeholder`,
-      data: { id: userId }, // Return the ID of the "deleted" user
+      message: "Profile deleted successfully",
     });
   } catch (error) {
+    await client.query("ROLLBACK");
     console.error(`Error deleting user ${req.params.id}:`, error);
     res.status(500).json({
       success: false,
-      message: "Error deleting user",
+      message: "Error deleting profile",
       error: error.message,
     });
+  } finally {
+    client.release();
   }
 };
 
