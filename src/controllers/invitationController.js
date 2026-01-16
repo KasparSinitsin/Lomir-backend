@@ -106,6 +106,13 @@ const sendTeamInvitation = async (req, res) => {
       });
     }
 
+    // Remove any previous invitations that were accepted/declined/canceled
+    await db.pool.query(
+      `DELETE FROM team_invitations 
+   WHERE team_id = $1 AND invitee_id = $2 AND status != 'pending'`,
+      [teamId, finalInviteeId]
+    );
+
     // Check if user has a pending application
     const existingApplication = await db.pool.query(
       `SELECT id FROM team_applications 
