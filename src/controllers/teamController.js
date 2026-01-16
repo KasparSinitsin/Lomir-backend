@@ -1954,27 +1954,68 @@ const removeTeamMember = async (req, res) => {
     const isSelfRemoval = String(userId) === String(memberId);
 
     if (isArchivedTeam) {
-      if (!isSelfRemoval) {
-        return res.status(403).json({
-          success: false,
-          message: "Cannot remove other members from an archived team",
-        });
-      }
-
-      // Verify membership
-      const memberCheck = await db.pool.query(
+      // For archived teams, check if user has permission to remove members
+      const authCheckArchived = await db.pool.query(
         `SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2`,
-        [teamId, memberId]
+        [teamId, userId]
       );
 
-      if (memberCheck.rows.length === 0) {
-        return res.status(404).json({
+      if (authCheckArchived.rows.length === 0) {
+        return res.status(403).json({
           success: false,
-          message: "Member not found in this team",
+          message: "Not authorized - you are not a member of this team",
         });
       }
 
-      // Get member name
+      const userRole = authCheckArchived.rows[0].role;
+
+      // Self-removal is always allowed
+      // Owners can remove anyone
+      // Admins can remove regular members
+      if (!isSelfRemoval) {
+        if (userRole !== "owner" && userRole !== "admin") {
+          return res.status(403).json({
+            success: false,
+            message: "Not authorized to remove other members",
+          });
+        }
+
+        // Check the target member's role
+        const targetCheck = await db.pool.query(
+          `SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2`,
+          [teamId, memberId]
+        );
+
+        if (targetCheck.rows.length === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "Member not found in this team",
+          });
+        }
+
+        const targetRole = targetCheck.rows[0].role;
+
+        // Admins cannot remove other admins or owners
+        if (
+          userRole === "admin" &&
+          (targetRole === "admin" || targetRole === "owner")
+        ) {
+          return res.status(403).json({
+            success: false,
+            message: "Admins cannot remove other admins or owners",
+          });
+        }
+
+        // Owners cannot remove other owners
+        if (targetRole === "owner" && userRole !== "owner") {
+          return res.status(403).json({
+            success: false,
+            message: "Only owners can remove other owners",
+          });
+        }
+      }
+
+      // Get member info for the leave/removal message
       const memberInfo = await db.pool.query(
         `SELECT first_name, last_name, username FROM users WHERE id = $1`,
         [memberId]
@@ -1992,13 +2033,52 @@ const removeTeamMember = async (req, res) => {
         [teamId, memberId]
       );
 
-      // Insert leave message to team chat (use db.pool here, no client in this branch)
-      const leaveMessage = `🚪 MEMBER_LEFT:${memberId}:${memberName}`;
-      await db.pool.query(
-        `INSERT INTO messages (sender_id, team_id, content, sent_at)
-         VALUES ($1, $2, $3, NOW())`,
-        [memberId, teamId, leaveMessage]
-      );
+      // Insert appropriate messages
+      if (isSelfRemoval) {
+        const leaveMessage = `🚪 MEMBER_LEFT:${memberId}:${memberName}`;
+        await db.pool.query(
+          `INSERT INTO messages (sender_id, team_id, content, sent_at)
+           VALUES ($1, $2, $3, NOW())`,
+          [memberId, teamId, leaveMessage]
+        );
+      } else {
+        // Get team name and remover name for proper message formatting
+        const teamResult = await db.pool.query(
+          `SELECT name FROM teams WHERE id = $1`,
+          [teamId]
+        );
+        const teamName = teamResult.rows[0]?.name || "the team";
+
+        const removerInfo = await db.pool.query(
+          `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+          [userId]
+        );
+        const r = removerInfo.rows[0];
+        const removerName =
+          r?.first_name && r?.last_name
+            ? `${r.first_name} ${r.last_name}`
+            : r?.username || "An admin";
+
+        // 1. Send DM to removed member
+        const teamToken = `${teamId}:${teamName}`;
+        const removerToken = `${userId}:${removerName}`;
+        const memberToken = `${memberId}:${memberName}`;
+        const dmMessage = `🚫 MEMBER_REMOVED: ${teamToken} | ${removerToken} | ${memberToken}`;
+
+        await db.pool.query(
+          `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+           VALUES ($1, $2, $3, NOW())`,
+          [userId, memberId, dmMessage]
+        );
+
+        // 2. Send message to team chat
+        const teamChatMessage = `🚫 MEMBER_REMOVED_PUBLIC: ${teamToken} | ${memberToken}`;
+        await db.pool.query(
+          `INSERT INTO messages (sender_id, team_id, content, sent_at)
+           VALUES ($1, $2, $3, NOW())`,
+          [userId, teamId, teamChatMessage]
+        );
+      }
 
       // Cleanup archived team if empty
       try {
@@ -2007,9 +2087,27 @@ const removeTeamMember = async (req, res) => {
         console.error("Cleanup check failed:", cleanupError);
       }
 
+      // === Socket events for archived team member removal ===
+      const io = req.app.get("io");
+
+      if (!isSelfRemoval && io) {
+        // Notify the removed member to kick them from the chat
+        io.to(`user:${memberId}`).emit("team:member_kicked", {
+          teamId: parseInt(teamId),
+          memberId: parseInt(memberId),
+        });
+
+        io.to(`user:${memberId}`).emit("notification:new", {
+          type: "member_removed",
+          teamId: parseInt(teamId),
+        });
+      }
+
       return res.status(200).json({
         success: true,
-        message: "Successfully left the archived team",
+        message: isSelfRemoval
+          ? "Successfully left the archived team"
+          : "Member removed successfully",
       });
     }
 
