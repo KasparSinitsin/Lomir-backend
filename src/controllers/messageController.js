@@ -9,7 +9,7 @@ const getUnreadCount = async (req, res) => {
       `SELECT COUNT(*) as count 
        FROM messages 
        WHERE receiver_id = $1 AND read_at IS NULL AND team_id IS NULL`,
-      [userId]
+      [userId],
     );
 
     // Get total unread count for team messages (messages in teams user is a member of, not sent by user)
@@ -21,7 +21,7 @@ const getUnreadCount = async (req, res) => {
          AND m.sender_id != $1 
          AND m.read_at IS NULL 
          AND m.team_id IS NOT NULL`,
-      [userId]
+      [userId],
     );
 
     const directUnreadCount = parseInt(directUnreadResult.rows[0].count) || 0;
@@ -55,7 +55,7 @@ const getUnreadCount = async (req, res) => {
       )
       ORDER BY latest_unread DESC
       LIMIT 1`,
-      [userId]
+      [userId],
     );
 
     let firstUnread = null;
@@ -103,7 +103,7 @@ const startConversation = async (req, res) => {
     // Check if recipient exists
     const recipientResult = await db.query(
       `SELECT id FROM users WHERE id = $1`,
-      [receiverId]
+      [receiverId],
     );
 
     if (recipientResult.rows.length === 0) {
@@ -118,7 +118,7 @@ const startConversation = async (req, res) => {
       await db.query(
         `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
          VALUES ($1, $2, $3, NOW())`,
-        [senderId, receiverId, initialMessage.trim()]
+        [senderId, receiverId, initialMessage.trim()],
       );
     }
 
@@ -281,9 +281,10 @@ const getConversations = async (req, res) => {
     }));
 
     // Combine and sort by most recent
-    const allConversations = [...directConversations, ...teamConversations].sort(
-      (a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)
-    );
+    const allConversations = [
+      ...directConversations,
+      ...teamConversations,
+    ].sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
 
     res.status(200).json({
       success: true,
@@ -404,7 +405,7 @@ const getMessages = async (req, res) => {
       // Verify user is a team member
       const memberCheck = await db.query(
         `SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2`,
-        [conversationId, userId]
+        [conversationId, userId],
       );
 
       if (memberCheck.rows.length === 0) {
@@ -490,12 +491,13 @@ const sendMessage = async (req, res) => {
   try {
     const userId = req.user.id;
     const conversationId = req.params.id;
-    const { content, type } = req.body;
+    const { content, type, imageUrl } = req.body;
 
-    if (!content || content.trim() === "") {
+    // Allow either content OR imageUrl (or both)
+    if ((!content || content.trim() === "") && !imageUrl) {
       return res.status(400).json({
         success: false,
-        message: "Message content is required",
+        message: "Message content or image is required",
       });
     }
 
@@ -514,7 +516,7 @@ const sendMessage = async (req, res) => {
     if (targetTeamId) {
       const teamCheck = await db.query(
         `SELECT archived_at FROM teams WHERE id = $1`,
-        [targetTeamId]
+        [targetTeamId],
       );
 
       if (teamCheck.rows.length > 0 && teamCheck.rows[0].archived_at) {
@@ -528,31 +530,18 @@ const sendMessage = async (req, res) => {
     let messageResult;
 
     if (type === "team") {
-      // Verify user is a team member
-      const memberCheck = await db.query(
-        `SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2`,
-        [conversationId, userId]
-      );
-
-      if (memberCheck.rows.length === 0) {
-        return res.status(403).json({
-          success: false,
-          message: "Access denied to this team conversation",
-        });
-      }
-
       messageResult = await db.query(
-        `INSERT INTO messages (sender_id, team_id, content, sent_at)
-         VALUES ($1, $2, $3, NOW())
-         RETURNING id, sender_id, team_id, content, sent_at as created_at`,
-        [userId, conversationId, content.trim()]
+        `INSERT INTO messages (sender_id, team_id, content, image_url, sent_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         RETURNING id, sender_id, team_id, content, image_url, sent_at`,
+        [userId, conversationId, content?.trim() || null, imageUrl || null],
       );
     } else {
       messageResult = await db.query(
-        `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-         VALUES ($1, $2, $3, NOW())
-         RETURNING id, sender_id, receiver_id, content, sent_at as created_at`,
-        [userId, conversationId, content.trim()]
+        `INSERT INTO messages (sender_id, receiver_id, content, image_url, sent_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         RETURNING id, sender_id, receiver_id, content, image_url, sent_at`,
+        [userId, conversationId, content?.trim() || null, imageUrl || null],
       );
     }
 

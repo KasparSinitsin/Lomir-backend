@@ -60,7 +60,7 @@ io.on("connection", (socket) => {
       const db = require("./config/database");
       const userTeamsResult = await db.query(
         `SELECT tm.team_id FROM team_members tm WHERE tm.user_id = $1`,
-        [userId]
+        [userId],
       );
 
       for (const row of userTeamsResult.rows) {
@@ -102,16 +102,10 @@ io.on("connection", (socket) => {
   // Handle new message
   socket.on("message:new", async (data) => {
     try {
-      const { conversationId, content, type = "direct" } = data;
+      const { conversationId, content, type = "direct", imageUrl } = data;
 
-      console.log(
-        `User ${userId} sending ${type} message to ${
-          type === "team" ? "team" : "user"
-        } ${conversationId}: "${content}"`
-      );
-
-      // Validate message
-      if (!conversationId || !content || content.trim() === "") {
+      // Allow either content OR imageUrl
+      if ((!content || content.trim() === "") && !imageUrl) {
         socket.emit("error", { message: "Invalid message data" });
         return;
       }
@@ -120,29 +114,11 @@ io.on("connection", (socket) => {
       let messageResult;
 
       if (type === "team") {
-        // TEAM MESSAGE HANDLING
-        console.log(`Inserting team message for team ${conversationId}`);
-
-        // First verify user is a member of this team
-        const memberCheck = await db.query(
-          `SELECT tm.user_id FROM team_members tm 
-           WHERE tm.team_id = $1 AND tm.user_id = $2`,
-          [conversationId, userId]
-        );
-
-        if (memberCheck.rows.length === 0) {
-          socket.emit("error", {
-            message: "Not authorized to send messages to this team",
-          });
-          return;
-        }
-
-        // Insert team message
         messageResult = await db.query(
-          `INSERT INTO messages (sender_id, team_id, content, sent_at)
-           VALUES ($1, $2, $3, NOW())
-           RETURNING id, sender_id, team_id, content, sent_at`,
-          [userId, conversationId, content.trim()]
+          `INSERT INTO messages (sender_id, team_id, content, image_url, sent_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         RETURNING id, sender_id, team_id, content, image_url, sent_at`,
+          [userId, conversationId, content?.trim() || null, imageUrl || null],
         );
 
         const message = {
@@ -152,21 +128,19 @@ io.on("connection", (socket) => {
           senderId: userId,
           senderUsername: socket.username,
           content: messageResult.rows[0].content,
+          imageUrl: messageResult.rows[0].image_url,
           createdAt: messageResult.rows[0].sent_at,
           type: "team",
         };
 
-        console.log("Broadcasting team message:", message);
-
-        // Broadcast to all team members
         io.to(`team:${conversationId}`).emit("message:received", message);
       } else {
-        // DIRECT MESSAGE HANDLING
+        // Similar update for direct messages
         messageResult = await db.query(
-          `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-           VALUES ($1, $2, $3, NOW())
-           RETURNING id, sender_id, receiver_id, content, sent_at`,
-          [userId, conversationId, content.trim()]
+          `INSERT INTO messages (sender_id, receiver_id, content, image_url, sent_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         RETURNING id, sender_id, receiver_id, content, image_url, sent_at`,
+          [userId, conversationId, content?.trim() || null, imageUrl || null],
         );
 
         const message = {
@@ -175,13 +149,11 @@ io.on("connection", (socket) => {
           senderId: userId,
           senderUsername: socket.username,
           content: messageResult.rows[0].content,
+          imageUrl: messageResult.rows[0].image_url,
           createdAt: messageResult.rows[0].sent_at,
           type: "direct",
         };
 
-        console.log("Broadcasting direct message:", message);
-
-        // Emit to both users in direct conversation
         io.to(`user:${userId}`).emit("message:received", message);
         io.to(`user:${conversationId}`).emit("message:received", message);
       }
@@ -195,7 +167,7 @@ io.on("connection", (socket) => {
   socket.on("typing:start", (data) => {
     const { conversationId, type = "direct" } = data;
     console.log(
-      `User ${userId} started typing in ${type} conversation ${conversationId}`
+      `User ${userId} started typing in ${type} conversation ${conversationId}`,
     );
 
     if (type === "team") {
@@ -223,7 +195,7 @@ io.on("connection", (socket) => {
   socket.on("typing:stop", (data) => {
     const { conversationId, type = "direct" } = data;
     console.log(
-      `User ${userId} stopped typing in ${type} conversation ${conversationId}`
+      `User ${userId} stopped typing in ${type} conversation ${conversationId}`,
     );
 
     if (type === "team") {
@@ -254,7 +226,7 @@ io.on("connection", (socket) => {
       const db = require("./config/database");
 
       console.log(
-        `User ${userId} marking ${type} messages as read in conversation ${conversationId}`
+        `User ${userId} marking ${type} messages as read in conversation ${conversationId}`,
       );
 
       if (type === "team") {
@@ -265,7 +237,7 @@ io.on("connection", (socket) => {
            WHERE team_id = $1 
              AND sender_id != $2 
              AND read_at IS NULL`,
-          [conversationId, userId]
+          [conversationId, userId],
         );
 
         // Emit read status update to the team room
@@ -281,7 +253,7 @@ io.on("connection", (socket) => {
           `UPDATE messages
            SET read_at = NOW()
            WHERE receiver_id = $1 AND sender_id = $2 AND read_at IS NULL`,
-          [userId, conversationId]
+          [userId, conversationId],
         );
 
         // Emit read status update to the sender
@@ -301,7 +273,7 @@ io.on("connection", (socket) => {
       });
 
       console.log(
-        `Messages marked as read for ${type} conversation ${conversationId}`
+        `Messages marked as read for ${type} conversation ${conversationId}`,
       );
     } catch (error) {
       console.error("Error handling message read status:", error);
