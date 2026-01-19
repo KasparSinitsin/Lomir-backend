@@ -27,7 +27,7 @@ router.put(
       params: req.params,
       body: req.body,
     });
-  }
+  },
 );
 
 // Team routes
@@ -35,65 +35,72 @@ router.post("/", auth.authenticateToken, teamController.createTeam);
 router.get("/", teamController.getAllTeams);
 router.get("/my-teams", auth.authenticateToken, teamController.getUserTeams);
 
+// DELETE /api/teams/:id/avatar - Delete team's avatar image
+router.delete(
+  "/:id/avatar",
+  auth.authenticateToken,
+  teamController.deleteTeamAvatar,
+);
+
 // ==================== INVITATION ROUTES ====================
 // Get teams where current user can invite others
 router.get(
   "/can-invite",
   auth.authenticateToken,
-  invitationController.getTeamsWhereUserCanInvite
+  invitationController.getTeamsWhereUserCanInvite,
 );
 
 // Get all pending invitations received by current user
 router.get(
   "/invitations/received",
   auth.authenticateToken,
-  invitationController.getUserReceivedInvitations
+  invitationController.getUserReceivedInvitations,
 );
 
 // Respond to an invitation (accept or decline)
 router.put(
   "/invitations/:invitationId",
   auth.authenticateToken,
-  invitationController.respondToInvitation
+  invitationController.respondToInvitation,
 );
 
 // Cancel an invitation (by team owner/admin)
 router.delete(
   "/invitations/:invitationId",
   auth.authenticateToken,
-  invitationController.cancelInvitation
+  invitationController.cancelInvitation,
 );
 
 // Get all pending invitations sent by a specific team
 router.get(
   "/:teamId/invitations",
   auth.authenticateToken,
-  invitationController.getTeamSentInvitations
+  invitationController.getTeamSentInvitations,
 );
 
 // Send an invitation to a user
 router.post(
   "/:teamId/invitations",
   auth.authenticateToken,
-  invitationController.sendTeamInvitation
+  invitationController.sendTeamInvitation,
 );
 
 router.get(
   "/applications/user",
   auth.authenticateToken,
-  teamController.getUserPendingApplications
+  teamController.getUserPendingApplications,
 );
 
 router.put(
   "/applications/:applicationId",
   auth.authenticateToken,
-  teamController.handleTeamApplication
+  teamController.handleTeamApplication,
 );
 
 router.delete(
   "/applications/:applicationId",
   auth.authenticateToken,
-  teamController.cancelApplication
+  teamController.cancelApplication,
 );
 
 router.put(
@@ -134,7 +141,7 @@ router.put(
         AND (tm.role = 'owner' OR tm.role = 'admin')
         AND t.archived_at IS NULL
       `,
-        [teamId, userId]
+        [teamId, userId],
       );
 
       if (authCheck.rows.length === 0) {
@@ -152,7 +159,7 @@ router.put(
         SELECT role FROM team_members 
         WHERE team_id = $1 AND user_id = $2
       `,
-        [teamId, memberId]
+        [teamId, memberId],
       );
 
       if (memberCheck.rows.length === 0) {
@@ -202,7 +209,7 @@ router.put(
             `UPDATE team_members 
        SET role = 'admin' 
        WHERE team_id = $1 AND role = 'owner'`,
-            [teamId]
+            [teamId],
           );
 
           // Promote target member to owner
@@ -210,7 +217,7 @@ router.put(
             `UPDATE team_members 
        SET role = 'owner' 
        WHERE team_id = $1 AND user_id = $2`,
-            [teamId, memberId]
+            [teamId, memberId],
           );
 
           // Update teams table owner_id
@@ -218,13 +225,13 @@ router.put(
             `UPDATE teams 
        SET owner_id = $1 
        WHERE id = $2`,
-            [memberId, teamId]
+            [memberId, teamId],
           );
 
           await client.query("COMMIT");
 
           console.log(
-            `✅ Ownership transferred to user ${memberId} in team ${teamId}`
+            `✅ Ownership transferred to user ${memberId} in team ${teamId}`,
           );
 
           // === NOTIFICATION + SYSTEM MESSAGES ===
@@ -236,14 +243,14 @@ router.put(
             // Team name
             const teamResult = await db.pool.query(
               `SELECT name FROM teams WHERE id = $1`,
-              [teamId]
+              [teamId],
             );
             const teamName = teamResult.rows[0]?.name || "the team";
 
             // Previous owner name
             const prevOwnerResult = await db.pool.query(
               `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-              [userId]
+              [userId],
             );
             const prevOwner = prevOwnerResult.rows[0];
             const prevOwnerName =
@@ -254,7 +261,7 @@ router.put(
             // New owner name
             const newOwnerResult = await db.pool.query(
               `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-              [memberId]
+              [memberId],
             );
             const newOwner = newOwnerResult.rows[0];
             const newOwnerName =
@@ -272,7 +279,7 @@ router.put(
             await db.pool.query(
               `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
          VALUES ($1, $2, $3, NOW())`,
-              [userId, memberId, ownershipMessage]
+              [userId, memberId, ownershipMessage],
             );
 
             // Notification for new owner
@@ -301,12 +308,12 @@ router.put(
             await db.pool.query(
               `INSERT INTO messages (sender_id, team_id, content, sent_at)
          VALUES ($1, $2, $3, NOW())`,
-              [userId, teamId, teamChatMessage]
+              [userId, teamId, teamChatMessage],
             );
           } catch (notificationError) {
             console.error(
               "Error creating ownership transfer notification:",
-              notificationError
+              notificationError,
             );
           }
 
@@ -338,13 +345,13 @@ router.put(
           SET role = $1 
           WHERE team_id = $2 AND user_id = $3
         `,
-          [new_role, teamId, memberId]
+          [new_role, teamId, memberId],
         );
 
         await client.query("COMMIT");
 
         console.log(
-          `✅ Successfully updated user ${memberId} to role ${new_role} in team ${teamId}`
+          `✅ Successfully updated user ${memberId} to role ${new_role} in team ${teamId}`,
         );
 
         // === CREATE NOTIFICATION FOR AFFECTED MEMBER ===
@@ -356,14 +363,14 @@ router.put(
           // Get team name
           const teamResult = await db.pool.query(
             `SELECT name FROM teams WHERE id = $1`,
-            [teamId]
+            [teamId],
           );
           const teamName = teamResult.rows[0]?.name || "the team";
 
           // Get changer's name (the admin/owner who made the change)
           const changerResult = await db.pool.query(
             `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-            [userId]
+            [userId],
           );
           const changer = changerResult.rows[0];
           const changerName =
@@ -374,7 +381,7 @@ router.put(
           // Get affected member's name
           const memberResult = await db.pool.query(
             `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-            [memberId]
+            [memberId],
           );
           const member = memberResult.rows[0];
           const memberName =
@@ -397,7 +404,7 @@ router.put(
           await db.pool.query(
             `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
              VALUES ($1, $2, $3, NOW())`,
-            [userId, memberId, roleChangeMessage]
+            [userId, memberId, roleChangeMessage],
           );
 
           // Create notification for affected member
@@ -423,7 +430,7 @@ router.put(
         } catch (notificationError) {
           console.error(
             "Error creating role change notification:",
-            notificationError
+            notificationError,
           );
         }
         // === END NOTIFICATION ===
@@ -451,37 +458,37 @@ router.put(
         error: error.message,
       });
     }
-  }
+  },
 );
 
 router.post(
   "/:id/members",
   auth.authenticateToken,
-  teamController.addTeamMember
+  teamController.addTeamMember,
 );
 
 router.delete(
   "/:id/members/:userId",
   auth.authenticateToken,
-  teamController.removeTeamMember
+  teamController.removeTeamMember,
 );
 
 router.get(
   "/:id/members/:userId/role",
   auth.authenticateToken,
-  teamController.getUserRoleInTeam
+  teamController.getUserRoleInTeam,
 );
 
 router.get(
   "/:id/applications",
   auth.authenticateToken,
-  teamController.getTeamApplications
+  teamController.getTeamApplications,
 );
 
 router.post(
   "/:id/apply",
   auth.authenticateToken,
-  teamController.applyToJoinTeam
+  teamController.applyToJoinTeam,
 );
 
 router.get("/:id", teamController.getTeamById);
