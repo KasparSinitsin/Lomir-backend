@@ -6,9 +6,55 @@ const cloudinary = require("../config/cloudinary");
 const extractCloudinaryPublicId = (url) => {
   if (!url || typeof url !== "string") return null;
 
-  // Match Cloudinary URL pattern and extract public ID
-  const match = url.match(/\/image\/upload\/(?:v\d+\/)?(.+)\.[a-z]+$/);
-  return match ? match[1] : null;
+  try {
+    // Remove query parameters if present
+    const urlWithoutParams = url.split("?")[0];
+
+    // Match various Cloudinary URL patterns:
+    // 1. Standard upload: /image/upload/v1234567890/folder/file.jpg
+    // 2. Without version: /image/upload/folder/file.jpg
+    // 3. With transformations: /image/upload/w_500,h_500/v1234567890/folder/file.jpg
+
+    // Pattern for standard Cloudinary URLs
+    const patterns = [
+      // Standard pattern with optional version and transformations
+      /\/image\/upload\/(?:(?:[^/]+\/)*)?(?:v\d+\/)?(.+)\.[a-zA-Z]+$/i,
+      // Alternative pattern for URLs without /image/upload/
+      /\/([^/]+\/[^/]+)\.[a-zA-Z]+$/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = urlWithoutParams.match(pattern);
+      if (match && match[1]) {
+        // Clean up any transformation prefixes that might be captured
+        let publicId = match[1];
+
+        // If the publicId contains transformation-like patterns at the start, remove them
+        // Transformations usually look like: w_500,h_500,c_fill
+        if (/^[a-z]_\d+/.test(publicId)) {
+          const parts = publicId.split("/");
+          // Find the first part that doesn't look like a transformation
+          const startIndex = parts.findIndex(
+            (part) => !/^[a-z]_[\d\w]+/.test(part) && !/^v\d+$/.test(part),
+          );
+          if (startIndex > -1) {
+            publicId = parts.slice(startIndex).join("/");
+          }
+        }
+
+        console.log(
+          `Extracted Cloudinary public ID: ${publicId} from URL: ${url}`,
+        );
+        return publicId;
+      }
+    }
+
+    console.warn(`Could not extract Cloudinary public ID from URL: ${url}`);
+    return null;
+  } catch (error) {
+    console.error("Error extracting Cloudinary public ID:", error);
+    return null;
+  }
 };
 
 /**
@@ -29,7 +75,7 @@ const getAllUsers = async (req, res) => {
         `SELECT id, username, first_name as "firstName", last_name as "lastName", avatar_url as "avatarUrl"
          FROM users
          ORDER BY created_at DESC
-         LIMIT 20`
+         LIMIT 20`,
       );
 
       return res.status(200).json({
@@ -55,7 +101,7 @@ const getAllUsers = async (req, res) => {
          END,
          username ASC
        LIMIT 10`,
-      [`%${search}%`]
+      [`%${search}%`],
     );
 
     return res.status(200).json({
@@ -93,7 +139,7 @@ const getUserById = async (req, res) => {
           WHERE ut.user_id = u.id) as tags
        FROM users u
        WHERE u.id = $1`,
-      [userId]
+      [userId],
     );
 
     // Check if user was found
@@ -139,7 +185,7 @@ const updateUser = async (req, res) => {
     // First, get the current user data to access the old avatar URL
     const currentUserResult = await pool.query(
       "SELECT avatar_url FROM users WHERE id = $1",
-      [userId]
+      [userId],
     );
 
     if (currentUserResult.rows.length === 0) {
@@ -184,7 +230,7 @@ const updateUser = async (req, res) => {
       // Check if email is already taken by another user
       const emailCheck = await pool.query(
         "SELECT id FROM users WHERE email = $1 AND id != $2",
-        [email, userId]
+        [email, userId],
       );
 
       if (emailCheck.rows.length > 0) {
@@ -231,7 +277,7 @@ const updateUser = async (req, res) => {
           const publicId = extractCloudinaryPublicId(oldAvatarUrl);
           if (publicId) {
             console.log(
-              `Attempting to delete old avatar from Cloudinary: ${publicId}`
+              `Attempting to delete old avatar from Cloudinary: ${publicId}`,
             );
             const deleteResult = await cloudinary.uploader.destroy(publicId);
             console.log("Cloudinary deletion result:", deleteResult);
@@ -239,7 +285,7 @@ const updateUser = async (req, res) => {
         } catch (cloudinaryError) {
           console.error(
             "Error deleting old avatar from Cloudinary:",
-            cloudinaryError
+            cloudinaryError,
           );
           // Don't fail the update if Cloudinary deletion fails
         }
@@ -308,6 +354,82 @@ const updateUser = async (req, res) => {
 };
 
 /**
+ * @description Delete user's avatar image
+ * @route DELETE /api/users/:id/avatar
+ * @access Private (Requires authentication)
+ */
+const deleteUserAvatar = async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const requestingUserId = req.user.id;
+
+    // Security check: users can only delete their own avatar
+    if (parseInt(userId) !== requestingUserId) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only delete your own avatar",
+      });
+    }
+
+    // Get current avatar URL
+    const currentUserResult = await pool.query(
+      "SELECT avatar_url FROM users WHERE id = $1",
+      [userId],
+    );
+
+    if (currentUserResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const currentAvatarUrl = currentUserResult.rows[0].avatar_url;
+
+    // Delete from Cloudinary if it exists
+    if (currentAvatarUrl && currentAvatarUrl.includes("cloudinary.com")) {
+      try {
+        const publicId = extractCloudinaryPublicId(currentAvatarUrl);
+        if (publicId) {
+          console.log(`Deleting avatar from Cloudinary: ${publicId}`);
+          const deleteResult = await cloudinary.uploader.destroy(publicId);
+          console.log("Cloudinary deletion result:", deleteResult);
+
+          if (
+            deleteResult.result !== "ok" &&
+            deleteResult.result !== "not found"
+          ) {
+            console.warn("Cloudinary deletion may have failed:", deleteResult);
+          }
+        }
+      } catch (cloudinaryError) {
+        console.error("Error deleting from Cloudinary:", cloudinaryError);
+        // Continue with DB update even if Cloudinary fails
+      }
+    }
+
+    // Update database to remove avatar URL
+    const result = await pool.query(
+      "UPDATE users SET avatar_url = NULL, updated_at = NOW() WHERE id = $1 RETURNING id, avatar_url",
+      [userId],
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Avatar deleted successfully",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error(`Error deleting avatar for user ${req.params.id}:`, error);
+    res.status(500).json({
+      success: false,
+      message: "Error deleting avatar",
+      error: error.message,
+    });
+  }
+};
+
+/**
  * @description Delete a user and all associated data
  * @route DELETE /api/users/:id
  * @access Private (Requires authentication and authorization)
@@ -320,7 +442,7 @@ const deleteUser = async (req, res) => {
     const requestingUserId = req.user.id; // From auth middleware
 
     console.log(
-      `deleteUser called for ID: ${userId} by user: ${requestingUserId}`
+      `deleteUser called for ID: ${userId} by user: ${requestingUserId}`,
     );
 
     // Security check: users can only delete their own profile
@@ -334,7 +456,7 @@ const deleteUser = async (req, res) => {
     // Check if user exists and get their avatar URL
     const userResult = await client.query(
       "SELECT id, avatar_url FROM users WHERE id = $1",
-      [userId]
+      [userId],
     );
 
     if (userResult.rows.length === 0) {
@@ -349,7 +471,7 @@ const deleteUser = async (req, res) => {
     // Check if user is a team owner
     const ownerCheck = await client.query(
       "SELECT id, name FROM teams WHERE owner_id = $1 AND status != 'archived'",
-      [userId]
+      [userId],
     );
 
     if (ownerCheck.rows.length > 0) {
@@ -369,7 +491,7 @@ const deleteUser = async (req, res) => {
     // 1. Delete user badges (where user received or awarded badges)
     await client.query(
       "DELETE FROM user_badges WHERE user_id = $1 OR awarded_by = $1",
-      [userId]
+      [userId],
     );
     console.log("Deleted user_badges");
 
@@ -380,26 +502,26 @@ const deleteUser = async (req, res) => {
     // 3. Handle messages - delete messages sent by this user and received by this user
     await client.query(
       "DELETE FROM messages WHERE sender_id = $1 OR receiver_id = $1",
-      [userId]
+      [userId],
     );
     console.log("Deleted messages");
 
     // 4. Delete notifications (where user is the recipient or actor)
     await client.query(
       "DELETE FROM notifications WHERE user_id = $1 OR actor_id = $1",
-      [userId]
+      [userId],
     );
     console.log("Deleted notifications");
 
     // 5. Delete team applications (where user is applicant)
     await client.query(
       "DELETE FROM team_applications WHERE applicant_id = $1",
-      [userId]
+      [userId],
     );
     // Set reviewed_by to null for applications this user reviewed
     await client.query(
       "UPDATE team_applications SET reviewed_by = NULL WHERE reviewed_by = $1",
-      [userId]
+      [userId],
     );
     console.log("Deleted/updated team_applications");
 
@@ -410,14 +532,14 @@ const deleteUser = async (req, res) => {
     // 7. Delete team invitations (where user is inviter or invitee)
     await client.query(
       "DELETE FROM team_invitations WHERE inviter_id = $1 OR invitee_id = $1",
-      [userId]
+      [userId],
     );
     console.log("Deleted team_invitations");
 
     // 8. Handle tags created by this user (set created_by to null)
     await client.query(
       "UPDATE tags SET created_by = NULL WHERE created_by = $1",
-      [userId]
+      [userId],
     );
     console.log("Updated tags created_by");
 
@@ -441,7 +563,7 @@ const deleteUser = async (req, res) => {
         // Log but don't fail - user is already deleted
         console.error(
           "Error deleting avatar from Cloudinary:",
-          cloudinaryError
+          cloudinaryError,
         );
       }
     }
@@ -507,7 +629,7 @@ const getUserTags = async (req, res) => {
       JOIN user_tags ut ON t.id = ut.tag_id
       WHERE ut.user_id = $1
     `,
-      [userId]
+      [userId],
     );
 
     console.log(`Found ${tagsResult.rows.length} tags for user ID: ${userId}`);
@@ -556,11 +678,11 @@ const updateUserTags = async (req, res) => {
       (tag) =>
         typeof tag !== "object" ||
         typeof tag.tag_id !== "number" ||
-        !Number.isInteger(tag.tag_id)
+        !Number.isInteger(tag.tag_id),
     )
   ) {
     console.log(
-      `updateUserTags validation failed: invalid tag structure or non-integer tag_id found.`
+      `updateUserTags validation failed: invalid tag structure or non-integer tag_id found.`,
     );
     return res.status(400).json({
       success: false,
@@ -581,10 +703,10 @@ const updateUserTags = async (req, res) => {
     // Clear existing tags for this user first
     const deleteResult = await client.query(
       "DELETE FROM user_tags WHERE user_id = $1",
-      [userId]
+      [userId],
     );
     console.log(
-      `Deleted ${deleteResult.rowCount} existing tags for user ID: ${userId}`
+      `Deleted ${deleteResult.rowCount} existing tags for user ID: ${userId}`,
     );
 
     // Insert new tags if the tags array is not empty
@@ -595,17 +717,17 @@ const updateUserTags = async (req, res) => {
         return client.query(
           // Insert user-tag relationship. ON CONFLICT DO NOTHING handles potential duplicate tag_ids in input.
           "INSERT INTO user_tags (user_id, tag_id) VALUES ($1, $2) ON CONFLICT (user_id, tag_id) DO NOTHING",
-          [userId, tag.tag_id]
+          [userId, tag.tag_id],
         );
       });
       // Wait for all insert operations to complete
       await Promise.all(insertPromises);
       console.log(
-        `Finished inserting ${tags.length} new tags for user ID: ${userId}`
+        `Finished inserting ${tags.length} new tags for user ID: ${userId}`,
       );
     } else {
       console.log(
-        `No new tags provided for user ID: ${userId}, only deletion performed.`
+        `No new tags provided for user ID: ${userId}, only deletion performed.`,
       );
     }
 
@@ -623,7 +745,7 @@ const updateUserTags = async (req, res) => {
     await client.query("ROLLBACK");
     console.error(
       `Error updating tags for user ${userId}, transaction rolled back:`,
-      error
+      error,
     );
     res.status(500).json({
       success: false,
@@ -646,4 +768,5 @@ module.exports = {
   getUserTeams,
   getUserTags,
   updateUserTags,
+  deleteUserAvatar,
 };

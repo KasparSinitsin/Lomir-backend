@@ -24,6 +24,9 @@ router.put("/:id", auth.authenticateToken, userController.updateUser);
 // Access: Private (Requires valid token)
 router.delete("/:id", auth.authenticateToken, userController.deleteUser);
 
+// DELETE /api/users/:id/avatar - Delete user's avatar image
+router.delete('/:id/avatar', auth.authenticateToken, userController.deleteUserAvatar);
+
 // === User-Specific Sub-Resources ===
 
 // GET /api/users/:id/teams - Get teams associated with a specific user (Placeholder in controller)
