@@ -7,11 +7,51 @@ const {
   notifyTeamAdmins,
 } = require("./notificationController");
 
+// Helper function to extract Cloudinary public ID from URL
 const extractCloudinaryPublicId = (url) => {
   if (!url || typeof url !== "string") return null;
 
-  const match = url.match(/\/image\/upload\/(?:v\d+\/)?(.+)\.[a-z]+$/);
-  return match ? match[1] : null;
+  try {
+    // Remove query parameters if present
+    const urlWithoutParams = url.split("?")[0];
+
+    // Match various Cloudinary URL patterns
+    const patterns = [
+      // Standard pattern with optional version and transformations
+      /\/image\/upload\/(?:(?:[^/]+\/)*)?(?:v\d+\/)?(.+)\.[a-zA-Z]+$/i,
+      // Alternative pattern for URLs without /image/upload/
+      /\/([^/]+\/[^/]+)\.[a-zA-Z]+$/i,
+    ];
+
+    for (const pattern of patterns) {
+      const match = urlWithoutParams.match(pattern);
+      if (match && match[1]) {
+        let publicId = match[1];
+
+        // If the publicId contains transformation-like patterns at the start, remove them
+        if (/^[a-z]_\d+/.test(publicId)) {
+          const parts = publicId.split("/");
+          const startIndex = parts.findIndex(
+            (part) => !/^[a-z]_[\d\w]+/.test(part) && !/^v\d+$/.test(part),
+          );
+          if (startIndex > -1) {
+            publicId = parts.slice(startIndex).join("/");
+          }
+        }
+
+        console.log(
+          `Extracted Cloudinary public ID: ${publicId} from URL: ${url}`,
+        );
+        return publicId;
+      }
+    }
+
+    console.warn(`Could not extract Cloudinary public ID from URL: ${url}`);
+    return null;
+  } catch (error) {
+    console.error("Error extracting Cloudinary public ID:", error);
+    return null;
+  }
 };
 
 const permanentlyDeleteTeam = async (teamId) => {
@@ -51,7 +91,7 @@ const checkAndCleanupArchivedTeam = async (teamId) => {
             (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as member_count
      FROM teams t WHERE t.id = $1
    `,
-    [teamId]
+    [teamId],
   );
 
   if (result.rows.length > 0) {
@@ -62,6 +102,82 @@ const checkAndCleanupArchivedTeam = async (teamId) => {
     }
   }
   return false;
+};
+
+/**
+ * @description Delete team's avatar image
+ * @route DELETE /api/teams/:id/avatar
+ * @access Private (Requires authentication, must be owner or admin)
+ */
+const deleteTeamAvatar = async (req, res) => {
+  try {
+    const teamId = req.params.id;
+    const userId = req.user.id;
+
+    // Check if team exists and user is the owner or admin
+    const teamCheck = await db.pool.query(
+      `
+      SELECT t.teamavatar_url, tm.role
+      FROM teams t
+      JOIN team_members tm ON t.id = tm.team_id
+      WHERE t.id = $1 
+      AND tm.user_id = $2 
+      AND (tm.role = 'owner' OR tm.role = 'admin')
+      AND t.archived_at IS NULL
+    `,
+      [teamId, userId],
+    );
+
+    if (teamCheck.rows.length === 0) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to update this team or team not found",
+      });
+    }
+
+    const currentAvatarUrl = teamCheck.rows[0].teamavatar_url;
+
+    // Delete from Cloudinary if it exists
+    if (currentAvatarUrl && currentAvatarUrl.includes("cloudinary.com")) {
+      try {
+        const publicId = extractCloudinaryPublicId(currentAvatarUrl);
+        if (publicId) {
+          console.log(`Deleting team avatar from Cloudinary: ${publicId}`);
+          const deleteResult = await cloudinary.uploader.destroy(publicId);
+          console.log("Cloudinary deletion result:", deleteResult);
+
+          if (
+            deleteResult.result !== "ok" &&
+            deleteResult.result !== "not found"
+          ) {
+            console.warn("Cloudinary deletion may have failed:", deleteResult);
+          }
+        }
+      } catch (cloudinaryError) {
+        console.error("Error deleting from Cloudinary:", cloudinaryError);
+        // Continue with DB update even if Cloudinary fails
+      }
+    }
+
+    // Update database to remove avatar URL
+    const result = await db.pool.query(
+      "UPDATE teams SET teamavatar_url = NULL, updated_at = NOW() WHERE id = $1 RETURNING id, teamavatar_url",
+      [teamId],
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Team avatar deleted successfully",
+      data: result.rows[0],
+    });
+  } catch (error) {
+    console.error(`Error deleting avatar for team ${req.params.id}:`, error);
+    res.status(500).json({
+      success: false,
+      message: "Error deleting team avatar",
+      error: error.message,
+    });
+  }
 };
 
 // Validation schema for team creation
@@ -88,7 +204,7 @@ const teamCreationSchema = Joi.object({
         "number.base": "Maximum members must be a number",
         "number.min": "Team must have at least 2 members",
       }),
-      Joi.valid(null) // null represents "unlimited"
+      Joi.valid(null), // null represents "unlimited"
     )
     .required()
     .messages({
@@ -103,7 +219,7 @@ const teamCreationSchema = Joi.object({
     .items(
       Joi.object({
         tag_id: Joi.number().integer().required(),
-      })
+      }),
     )
     .default([]), // Default([]) so it's optional
 });
@@ -130,7 +246,7 @@ const createTeam = async (req, res) => {
 
     console.log(
       "--> After Joi validation, value.max_members:",
-      value.max_members
+      value.max_members,
     );
 
     // Decide what to insert into max_members
@@ -167,7 +283,7 @@ const createTeam = async (req, res) => {
         maxMembersForInsert,
         value.postal_code || null,
         value.teamavatar_url || null,
-      ]
+      ],
     );
     const team = teamResult.rows[0];
     console.log("--> Team inserted:", team);
@@ -177,7 +293,7 @@ const createTeam = async (req, res) => {
       INSERT INTO team_members (team_id, user_id, role)
       VALUES ($1, $2, $3)
     `,
-      [team.id, ownerId, "owner"]
+      [team.id, ownerId, "owner"],
     );
     console.log("--> Owner added as member");
 
@@ -192,7 +308,7 @@ const createTeam = async (req, res) => {
       if (existingTagIds.length !== tagIdsToCheck.length) {
         console.error(
           "--> Invalid tag IDs:",
-          tagIdsToCheck.filter((tagId) => !existingTagIds.includes(tagId))
+          tagIdsToCheck.filter((tagId) => !existingTagIds.includes(tagId)),
         );
         await client.query("ROLLBACK");
         return res.status(400).json({
@@ -209,8 +325,8 @@ const createTeam = async (req, res) => {
           INSERT INTO team_tags (team_id, tag_id)
           VALUES ($1, $2)
         `,
-          [team.id, tag.tag_id]
-        )
+          [team.id, tag.tag_id],
+        ),
       );
       await Promise.all(tagInserts);
       console.log("--> Tags inserted");
@@ -260,7 +376,7 @@ const getAllTeams = async (req, res) => {
       ORDER BY t.created_at DESC
       LIMIT $1 OFFSET $2
     `,
-      [limit, offset]
+      [limit, offset],
     );
 
     // Get total count for pagination metadata
@@ -305,7 +421,7 @@ const getTeamById = async (req, res) => {
       WHERE t.id = $1
       GROUP BY t.id
       `,
-      [teamId]
+      [teamId],
     );
 
     if (teamResult.rows.length === 0) {
@@ -335,7 +451,7 @@ const getTeamById = async (req, res) => {
     END,
     tm.joined_at ASC
   `,
-      [teamId]
+      [teamId],
     );
 
     // Get team tags
@@ -347,7 +463,7 @@ const getTeamById = async (req, res) => {
       WHERE tt.team_id = $1
       ORDER BY t.supercategory, t.category, t.name
       `,
-      [teamId]
+      [teamId],
     );
 
     // Construct response with proper member count
@@ -406,7 +522,7 @@ const getUserTeams = async (req, res) => {
       GROUP BY t.id, tmr.role
       ORDER BY t.created_at DESC
       `,
-      [userId]
+      [userId],
     );
 
     // Ensure proper boolean values
@@ -440,7 +556,7 @@ const getUserRoleInTeam = async (req, res) => {
       FROM team_members 
       WHERE team_id = $1 AND user_id = $2
       `,
-      [teamId, userId]
+      [teamId, userId],
     );
 
     // ✅ User is NOT a member (normal case, not an error)
@@ -489,7 +605,7 @@ const getUserPendingApplications = async (req, res) => {
    JOIN users owner ON tm.user_id = owner.id
    WHERE ta.applicant_id = $1 AND ta.status = 'pending'
    ORDER BY ta.created_at DESC`,
-      [userId]
+      [userId],
     );
 
     const applications = applicationsResult.rows.map((row) => ({
@@ -545,7 +661,7 @@ const cancelApplication = async (req, res) => {
        JOIN teams t ON ta.team_id = t.id
        JOIN users u ON ta.applicant_id = u.id
        WHERE ta.id = $1 AND ta.applicant_id = $2 AND ta.status = 'pending'`,
-      [applicationId, userId]
+      [applicationId, userId],
     );
 
     if (applicationResult.rows.length === 0) {
@@ -574,7 +690,7 @@ const cancelApplication = async (req, res) => {
        FROM team_members tm
        JOIN users u ON tm.user_id = u.id
        WHERE tm.team_id = $1 AND tm.role IN ('owner', 'admin')`,
-      [application.team_id]
+      [application.team_id],
     );
 
     // Send system message and notification to each admin
@@ -595,7 +711,7 @@ const cancelApplication = async (req, res) => {
       await db.pool.query(
         `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
    VALUES ($1, $2, $3, NOW())`,
-        [userId, admin.user_id, cancelSystemMessage]
+        [userId, admin.user_id, cancelSystemMessage],
       );
 
       // Create notification for admin
@@ -622,7 +738,7 @@ const cancelApplication = async (req, res) => {
       } catch (notificationError) {
         console.error(
           "Error creating application cancel notification:",
-          notificationError
+          notificationError,
         );
       }
     }
@@ -657,7 +773,7 @@ const updateTeam = async (req, res) => {
       AND (tm.role = 'owner' OR tm.role = 'admin')
       AND t.archived_at IS NULL
     `,
-      [teamId, userId]
+      [teamId, userId],
     );
 
     if (teamCheck.rows.length === 0) {
@@ -678,7 +794,7 @@ const updateTeam = async (req, res) => {
       is_public: Joi.boolean(),
       max_members: Joi.alternatives().try(
         Joi.number().integer().min(2),
-        Joi.valid(null) // null = "unlimited"
+        Joi.valid(null), // null = "unlimited"
       ),
       postal_code: Joi.string(),
       status: Joi.string().valid("active", "inactive"),
@@ -686,7 +802,7 @@ const updateTeam = async (req, res) => {
       tags: Joi.array().items(
         Joi.object({
           tag_id: Joi.number().integer().required(),
-        })
+        }),
       ),
     });
 
@@ -743,7 +859,7 @@ const updateTeam = async (req, res) => {
       AND (tm.role = 'owner' OR tm.role = 'admin')
       AND t.archived_at IS NULL
     `,
-          [teamId, userId]
+          [teamId, userId],
         );
 
         if (authCheck.rows.length === 0) {
@@ -761,7 +877,7 @@ const updateTeam = async (req, res) => {
       SELECT role FROM team_members 
       WHERE team_id = $1 AND user_id = $2
     `,
-          [teamId, memberId]
+          [teamId, memberId],
         );
 
         if (memberCheck.rows.length === 0) {
@@ -815,7 +931,7 @@ const updateTeam = async (req, res) => {
         SET archived_at = NOW(), status = 'inactive'
         WHERE id = $1
       `,
-            [teamId]
+            [teamId],
           );
 
           await client.query("COMMIT");
@@ -825,14 +941,14 @@ const updateTeam = async (req, res) => {
             // Get team name
             const teamResult = await db.pool.query(
               `SELECT name FROM teams WHERE id = $1`,
-              [teamId]
+              [teamId],
             );
             const teamName = teamResult.rows[0]?.name || "the team";
 
             // Get changer's name (the admin/owner who made the change)
             const changerResult = await db.pool.query(
               `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-              [userId]
+              [userId],
             );
             const changer = changerResult.rows[0];
             const changerName =
@@ -843,7 +959,7 @@ const updateTeam = async (req, res) => {
             // Get affected member's name
             const memberResult = await db.pool.query(
               `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-              [memberId]
+              [memberId],
             );
             const member = memberResult.rows[0];
             const memberName =
@@ -862,7 +978,7 @@ const updateTeam = async (req, res) => {
             await db.pool.query(
               `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
                VALUES ($1, $2, $3, NOW())`,
-              [userId, memberId, roleChangeMessage]
+              [userId, memberId, roleChangeMessage],
             );
 
             // Create notification for affected member
@@ -888,7 +1004,7 @@ const updateTeam = async (req, res) => {
           } catch (notificationError) {
             console.error(
               "Error creating role change notification:",
-              notificationError
+              notificationError,
             );
           }
           // === END NOTIFICATION ===
@@ -956,7 +1072,7 @@ const updateTeam = async (req, res) => {
             const publicId = extractCloudinaryPublicId(oldAvatarUrl);
             if (publicId) {
               console.log(
-                `Attempting to delete old team avatar from Cloudinary: ${publicId}`
+                `Attempting to delete old team avatar from Cloudinary: ${publicId}`,
               );
               const deleteResult = await cloudinary.uploader.destroy(publicId);
               console.log("Cloudinary deletion result:", deleteResult);
@@ -964,7 +1080,7 @@ const updateTeam = async (req, res) => {
           } catch (cloudinaryError) {
             console.error(
               "Error deleting old team avatar from Cloudinary:",
-              cloudinaryError
+              cloudinaryError,
             );
             // Don't fail the update if Cloudinary deletion fails
           }
@@ -1051,7 +1167,7 @@ const updateTeam = async (req, res) => {
           `
           DELETE FROM team_tags WHERE team_id = $1
         `,
-          [teamId]
+          [teamId],
         );
 
         // Add new tags
@@ -1061,8 +1177,8 @@ const updateTeam = async (req, res) => {
             INSERT INTO team_tags (team_id, tag_id)
             VALUES ($1, $2)
           `,
-            [teamId, tag.tag_id]
-          )
+            [teamId, tag.tag_id],
+          ),
         );
 
         await Promise.all(tagInserts);
@@ -1075,7 +1191,7 @@ const updateTeam = async (req, res) => {
         `
   SELECT * FROM teams WHERE id = $1
 `,
-        [teamId]
+        [teamId],
       );
 
       const updatedTeam = updatedTeamResult.rows[0];
@@ -1119,7 +1235,7 @@ const getTeamApplications = async (req, res) => {
        WHERE tm.team_id = $1 AND tm.user_id = $2 
        AND (tm.role = 'owner' OR tm.role = 'admin')
        AND t.archived_at IS NULL`,
-      [teamId, userId]
+      [teamId, userId],
     );
 
     if (authCheck.rows.length === 0) {
@@ -1139,7 +1255,7 @@ const getTeamApplications = async (req, res) => {
        JOIN users u ON ta.applicant_id = u.id
        WHERE ta.team_id = $1 AND ta.status = 'pending'
        ORDER BY ta.created_at ASC`,
-      [teamId]
+      [teamId],
     );
 
     const applications = applicationsResult.rows.map((row) => ({
@@ -1189,7 +1305,7 @@ const handleTeamApplication = async (req, res) => {
    JOIN users applicant ON ta.applicant_id = applicant.id
    LEFT JOIN team_members tm ON t.id = tm.team_id AND tm.user_id = $1
    WHERE ta.id = $2`,
-      [userId, applicationId]
+      [userId, applicationId],
     );
 
     if (applicationResult.rows.length === 0) {
@@ -1212,7 +1328,7 @@ const handleTeamApplication = async (req, res) => {
     // Get approver's name
     const approverResult = await db.pool.query(
       `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-      [userId]
+      [userId],
     );
     const approver = approverResult.rows[0];
 
@@ -1225,7 +1341,7 @@ const handleTeamApplication = async (req, res) => {
         // Check if team is full
         const memberCountResult = await client.query(
           `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
-          [application.team_id]
+          [application.team_id],
         );
 
         if (
@@ -1243,7 +1359,7 @@ const handleTeamApplication = async (req, res) => {
         await client.query(
           `INSERT INTO team_members (team_id, user_id, role, joined_at)
    VALUES ($1, $2, 'member', NOW())`,
-          [application.team_id, application.applicant_id]
+          [application.team_id, application.applicant_id],
         );
 
         // Clean up any pending invitations for this user to this team
@@ -1251,7 +1367,7 @@ const handleTeamApplication = async (req, res) => {
           `UPDATE team_invitations 
    SET status = 'accepted', responded_at = NOW()
    WHERE team_id = $1 AND invitee_id = $2 AND status = 'pending'`,
-          [application.team_id, application.applicant_id]
+          [application.team_id, application.applicant_id],
         );
 
         // Update application status
@@ -1259,7 +1375,7 @@ const handleTeamApplication = async (req, res) => {
           `UPDATE team_applications 
    SET status = 'approved', reviewed_at = NOW(), reviewed_by = $1
    WHERE id = $2`,
-          [userId, applicationId]
+          [userId, applicationId],
         );
 
         // Add system message to team chat for approved application
@@ -1278,7 +1394,7 @@ const handleTeamApplication = async (req, res) => {
         await client.query(
           `INSERT INTO messages (sender_id, team_id, content, sent_at)
            VALUES ($1, $2, $3, NOW())`,
-          [application.applicant_id, application.team_id, systemMessage]
+          [application.applicant_id, application.team_id, systemMessage],
         );
 
         // Include whether there's a personal message
@@ -1295,7 +1411,7 @@ const handleTeamApplication = async (req, res) => {
         await client.query(
           `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
            VALUES ($1, $2, $3, NOW())`,
-          [userId, application.applicant_id, approvalSystemMessage]
+          [userId, application.applicant_id, approvalSystemMessage],
         );
 
         // If there's a personal message, send it as a separate regular message
@@ -1303,7 +1419,7 @@ const handleTeamApplication = async (req, res) => {
           await client.query(
             `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
              VALUES ($1, $2, $3, NOW())`,
-            [userId, application.applicant_id, response.trim()]
+            [userId, application.applicant_id, response.trim()],
           );
         }
 
@@ -1347,7 +1463,7 @@ const handleTeamApplication = async (req, res) => {
         } catch (notificationError) {
           console.error(
             "Error creating approval notification:",
-            notificationError
+            notificationError,
           );
         }
         // === END NOTIFICATION ===
@@ -1363,7 +1479,7 @@ const handleTeamApplication = async (req, res) => {
           `UPDATE team_applications 
            SET status = 'rejected', reviewed_at = NOW(), reviewed_by = $1
            WHERE id = $2`,
-          [userId, applicationId]
+          [userId, applicationId],
         );
 
         // Get applicant's name for the message
@@ -1386,7 +1502,7 @@ const handleTeamApplication = async (req, res) => {
         await client.query(
           `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
            VALUES ($1, $2, $3, NOW())`,
-          [userId, application.applicant_id, declineSystemMessage]
+          [userId, application.applicant_id, declineSystemMessage],
         );
 
         // If there's a personal message, send it as a separate regular message
@@ -1394,7 +1510,7 @@ const handleTeamApplication = async (req, res) => {
           await client.query(
             `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
              VALUES ($1, $2, $3, NOW())`,
-            [userId, application.applicant_id, response.trim()]
+            [userId, application.applicant_id, response.trim()],
           );
         }
         // === CREATE NOTIFICATION FOR REJECTED APPLICANT ===
@@ -1421,7 +1537,7 @@ const handleTeamApplication = async (req, res) => {
         } catch (notificationError) {
           console.error(
             "Error creating rejection notification:",
-            notificationError
+            notificationError,
           );
         }
 
@@ -1469,7 +1585,7 @@ const deleteTeam = async (req, res) => {
       AND tm.role = 'owner'
       AND t.archived_at IS NULL
     `,
-      [teamId, userId]
+      [teamId, userId],
     );
 
     if (teamCheck.rows.length === 0) {
@@ -1492,7 +1608,7 @@ const deleteTeam = async (req, res) => {
         SET archived_at = NOW(), status = 'inactive'
         WHERE id = $1
       `,
-        [teamId]
+        [teamId],
       );
 
       await client.query("COMMIT");
@@ -1504,7 +1620,7 @@ const deleteTeam = async (req, res) => {
         // Get owner's name
         const ownerResult = await db.pool.query(
           `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-          [userId]
+          [userId],
         );
         const owner = ownerResult.rows[0];
         const ownerName =
@@ -1515,7 +1631,7 @@ const deleteTeam = async (req, res) => {
         // Get all team members (except owner)
         const membersResult = await db.pool.query(
           `SELECT user_id FROM team_members WHERE team_id = $1 AND user_id != $2`,
-          [teamId, userId]
+          [teamId, userId],
         );
 
         // Send ONE system message to the team chat (not DM)
@@ -1524,7 +1640,7 @@ const deleteTeam = async (req, res) => {
         await db.pool.query(
           `INSERT INTO messages (sender_id, team_id, content, sent_at)
    VALUES ($1, $2, $3, NOW())`,
-          [userId, teamId, deleteMessage]
+          [userId, teamId, deleteMessage],
         );
 
         // Send notification to each member (no DM needed)
@@ -1553,7 +1669,7 @@ const deleteTeam = async (req, res) => {
       } catch (notificationError) {
         console.error(
           "Error creating team deletion notifications:",
-          notificationError
+          notificationError,
         );
       }
       // === END NOTIFICATION ===
@@ -1609,7 +1725,7 @@ const applyToJoinTeam = async (req, res) => {
     const teamCheck = await db.pool.query(
       `SELECT id, name, owner_id, max_members FROM teams 
        WHERE id = $1 AND archived_at IS NULL`,
-      [teamId]
+      [teamId],
     );
 
     if (teamCheck.rows.length === 0) {
@@ -1624,7 +1740,7 @@ const applyToJoinTeam = async (req, res) => {
     // Check if user is already a member
     const memberCheck = await db.pool.query(
       `SELECT id FROM team_members WHERE team_id = $1 AND user_id = $2`,
-      [teamId, applicantId]
+      [teamId, applicantId],
     );
 
     if (memberCheck.rows.length > 0) {
@@ -1637,7 +1753,7 @@ const applyToJoinTeam = async (req, res) => {
     // Check if team is full
     const memberCount = await db.pool.query(
       `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
-      [teamId]
+      [teamId],
     );
 
     if (
@@ -1654,7 +1770,7 @@ const applyToJoinTeam = async (req, res) => {
     const existingApplicationCheck = await db.pool.query(
       `SELECT id FROM team_applications 
        WHERE team_id = $1 AND applicant_id = $2 AND status = 'pending'`,
-      [teamId, applicantId]
+      [teamId, applicantId],
     );
 
     if (existingApplicationCheck.rows.length > 0) {
@@ -1675,7 +1791,7 @@ const applyToJoinTeam = async (req, res) => {
          ON CONFLICT (team_id, applicant_id) 
          DO UPDATE SET message = $3, status = $4, updated_at = NOW()
          RETURNING id`,
-        [teamId, applicantId, message.trim(), isDraft ? "draft" : "pending"]
+        [teamId, applicantId, message.trim(), isDraft ? "draft" : "pending"],
       );
 
       await client.query("COMMIT");
@@ -1686,7 +1802,7 @@ const applyToJoinTeam = async (req, res) => {
           // Get applicant's name
           const applicantResult = await db.pool.query(
             `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-            [applicantId]
+            [applicantId],
           );
           const applicant = applicantResult.rows[0];
           const applicantName =
@@ -1715,7 +1831,7 @@ const applyToJoinTeam = async (req, res) => {
         } catch (notificationError) {
           console.error(
             "Error creating application notification:",
-            notificationError
+            notificationError,
           );
         }
       }
@@ -1774,7 +1890,7 @@ const addTeamMember = async (req, res) => {
     // First check if the user is trying to remove themselves from an archived team
     const teamStatusCheck = await db.pool.query(
       `SELECT archived_at FROM teams WHERE id = $1`,
-      [teamId]
+      [teamId],
     );
 
     const isArchivedTeam = teamStatusCheck.rows[0]?.archived_at !== null;
@@ -1792,7 +1908,7 @@ const addTeamMember = async (req, res) => {
       // Verify user is actually a member
       const memberCheck = await db.pool.query(
         `SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2`,
-        [teamId, memberId]
+        [teamId, memberId],
       );
 
       if (memberCheck.rows.length === 0) {
@@ -1806,7 +1922,7 @@ const addTeamMember = async (req, res) => {
       // Just delete the membership
       await db.pool.query(
         `DELETE FROM team_members WHERE team_id = $1 AND user_id = $2`,
-        [teamId, memberId]
+        [teamId, memberId],
       );
 
       return res.status(200).json({
@@ -1825,7 +1941,7 @@ const addTeamMember = async (req, res) => {
   AND tm.user_id = $2
   AND t.archived_at IS NULL
 `,
-      [teamId, userId]
+      [teamId, userId],
     );
 
     if (authCheck.rows.length === 0) {
@@ -1844,7 +1960,7 @@ const addTeamMember = async (req, res) => {
       WHERE t.id = $1 AND t.archived_at IS NULL
       GROUP BY t.id, t.max_members
     `,
-      [teamId]
+      [teamId],
     );
 
     if (teamCheck.rows.length === 0) {
@@ -1870,7 +1986,7 @@ const addTeamMember = async (req, res) => {
       `
       SELECT id FROM users WHERE id = $1
     `,
-      [newMemberId]
+      [newMemberId],
     );
 
     if (userCheck.rows.length === 0) {
@@ -1886,7 +2002,7 @@ const addTeamMember = async (req, res) => {
       SELECT id FROM team_members 
       WHERE team_id = $1 AND user_id = $2
     `,
-      [teamId, newMemberId]
+      [teamId, newMemberId],
     );
 
     if (memberCheck.rows.length > 0) {
@@ -1907,7 +2023,7 @@ const addTeamMember = async (req, res) => {
         INSERT INTO team_members (team_id, user_id, role)
         VALUES ($1, $2, $3)
       `,
-        [teamId, newMemberId, role]
+        [teamId, newMemberId, role],
       );
 
       await client.query("COMMIT");
@@ -1947,7 +2063,7 @@ const removeTeamMember = async (req, res) => {
     // === Handle archived team self-removal ===
     const teamStatusCheck = await db.pool.query(
       `SELECT archived_at FROM teams WHERE id = $1`,
-      [teamId]
+      [teamId],
     );
 
     const isArchivedTeam = teamStatusCheck.rows[0]?.archived_at !== null;
@@ -1957,7 +2073,7 @@ const removeTeamMember = async (req, res) => {
       // For archived teams, check if user has permission to remove members
       const authCheckArchived = await db.pool.query(
         `SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2`,
-        [teamId, userId]
+        [teamId, userId],
       );
 
       if (authCheckArchived.rows.length === 0) {
@@ -1983,7 +2099,7 @@ const removeTeamMember = async (req, res) => {
         // Check the target member's role
         const targetCheck = await db.pool.query(
           `SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2`,
-          [teamId, memberId]
+          [teamId, memberId],
         );
 
         if (targetCheck.rows.length === 0) {
@@ -2018,7 +2134,7 @@ const removeTeamMember = async (req, res) => {
       // Get member info for the leave/removal message
       const memberInfo = await db.pool.query(
         `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-        [memberId]
+        [memberId],
       );
 
       const m = memberInfo.rows[0];
@@ -2030,7 +2146,7 @@ const removeTeamMember = async (req, res) => {
       // Remove membership
       await db.pool.query(
         `DELETE FROM team_members WHERE team_id = $1 AND user_id = $2`,
-        [teamId, memberId]
+        [teamId, memberId],
       );
 
       // Insert appropriate messages
@@ -2039,19 +2155,19 @@ const removeTeamMember = async (req, res) => {
         await db.pool.query(
           `INSERT INTO messages (sender_id, team_id, content, sent_at)
            VALUES ($1, $2, $3, NOW())`,
-          [memberId, teamId, leaveMessage]
+          [memberId, teamId, leaveMessage],
         );
       } else {
         // Get team name and remover name for proper message formatting
         const teamResult = await db.pool.query(
           `SELECT name FROM teams WHERE id = $1`,
-          [teamId]
+          [teamId],
         );
         const teamName = teamResult.rows[0]?.name || "the team";
 
         const removerInfo = await db.pool.query(
           `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-          [userId]
+          [userId],
         );
         const r = removerInfo.rows[0];
         const removerName =
@@ -2068,7 +2184,7 @@ const removeTeamMember = async (req, res) => {
         await db.pool.query(
           `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
            VALUES ($1, $2, $3, NOW())`,
-          [userId, memberId, dmMessage]
+          [userId, memberId, dmMessage],
         );
 
         // 2. Send message to team chat
@@ -2076,7 +2192,7 @@ const removeTeamMember = async (req, res) => {
         await db.pool.query(
           `INSERT INTO messages (sender_id, team_id, content, sent_at)
            VALUES ($1, $2, $3, NOW())`,
-          [userId, teamId, teamChatMessage]
+          [userId, teamId, teamChatMessage],
         );
       }
 
@@ -2121,7 +2237,7 @@ const removeTeamMember = async (req, res) => {
       AND tm.user_id = $2
       AND t.archived_at IS NULL
       `,
-      [teamId, userId]
+      [teamId, userId],
     );
 
     if (authCheck.rows.length === 0) {
@@ -2142,7 +2258,7 @@ const removeTeamMember = async (req, res) => {
 
     const targetMemberCheck = await db.pool.query(
       `SELECT role FROM team_members WHERE team_id = $1 AND user_id = $2`,
-      [teamId, memberId]
+      [teamId, memberId],
     );
 
     if (targetMemberCheck.rows.length === 0) {
@@ -2168,7 +2284,7 @@ const removeTeamMember = async (req, res) => {
     if (memberRole === "owner") {
       const ownerCount = await db.pool.query(
         `SELECT COUNT(*) FROM team_members WHERE team_id = $1 AND role = 'owner'`,
-        [teamId]
+        [teamId],
       );
 
       if (parseInt(ownerCount.rows[0].count, 10) <= 1) {
@@ -2192,13 +2308,13 @@ const removeTeamMember = async (req, res) => {
       // Fetch names inside the transaction so we can write the correct system message ONCE
       const teamResult = await client.query(
         `SELECT name FROM teams WHERE id = $1`,
-        [teamId]
+        [teamId],
       );
       teamName = teamResult.rows[0]?.name || "the team";
 
       const memberInfo = await client.query(
         `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-        [memberId]
+        [memberId],
       );
       const m = memberInfo.rows[0];
       memberName =
@@ -2208,7 +2324,7 @@ const removeTeamMember = async (req, res) => {
 
       const removerInfo = await client.query(
         `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-        [userId]
+        [userId],
       );
       const r = removerInfo.rows[0];
       removerName =
@@ -2219,7 +2335,7 @@ const removeTeamMember = async (req, res) => {
       // Delete membership
       await client.query(
         `DELETE FROM team_members WHERE team_id = $1 AND user_id = $2`,
-        [teamId, memberId]
+        [teamId, memberId],
       );
 
       // Insert ONE team-chat system message
@@ -2239,7 +2355,7 @@ const removeTeamMember = async (req, res) => {
       await client.query(
         `INSERT INTO messages (sender_id, team_id, content, sent_at)
          VALUES ($1, $2, $3, NOW())`,
-        [senderForTeamChat, teamId, teamChatMessage]
+        [senderForTeamChat, teamId, teamChatMessage],
       );
 
       await client.query("COMMIT");
@@ -2283,7 +2399,7 @@ const removeTeamMember = async (req, res) => {
         await db.pool.query(
           `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
            VALUES ($1, $2, $3, NOW())`,
-          [userId, memberId, removeSystemMessage]
+          [userId, memberId, removeSystemMessage],
         );
 
         await createNotification({
@@ -2363,7 +2479,7 @@ const updateMemberRole = async (req, res) => {
       AND (tm.role = 'owner' OR tm.role = 'admin')
       AND t.archived_at IS NULL
     `,
-      [teamId, userId]
+      [teamId, userId],
     );
 
     if (authCheck.rows.length === 0) {
@@ -2381,7 +2497,7 @@ const updateMemberRole = async (req, res) => {
       SELECT role FROM team_members 
       WHERE team_id = $1 AND user_id = $2
     `,
-      [teamId, memberId]
+      [teamId, memberId],
     );
 
     if (memberCheck.rows.length === 0) {
@@ -2429,7 +2545,7 @@ const updateMemberRole = async (req, res) => {
         SET role = $1 
         WHERE team_id = $2 AND user_id = $3
       `,
-        [newRole, teamId, memberId]
+        [newRole, teamId, memberId],
       );
 
       await client.query("COMMIT");
@@ -2477,4 +2593,5 @@ module.exports = {
   updateMemberRole,
   permanentlyDeleteTeam,
   checkAndCleanupArchivedTeam,
+  deleteTeamAvatar,
 };
