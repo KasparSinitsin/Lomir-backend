@@ -59,6 +59,15 @@ const permanentlyDeleteTeam = async (teamId) => {
 
   try {
     await client.query("BEGIN");
+
+    // Fetch team avatar URL before deleting
+    const teamResult = await client.query(
+      `SELECT teamavatar_url FROM teams WHERE id = $1`,
+      [teamId],
+    );
+
+    const teamAvatarUrl = teamResult.rows[0]?.teamavatar_url;
+
     // Delete all related data in order...
     await client.query("DELETE FROM messages WHERE team_id = $1", [teamId]);
     await client.query("DELETE FROM team_invitations WHERE team_id = $1", [
@@ -74,7 +83,40 @@ const permanentlyDeleteTeam = async (teamId) => {
     ]);
     await client.query("DELETE FROM team_members WHERE team_id = $1", [teamId]);
     await client.query("DELETE FROM teams WHERE id = $1", [teamId]);
+
     await client.query("COMMIT");
+
+    // Delete avatar from Cloudinary AFTER successful database deletion
+    // This is done outside the transaction to prevent rollback issues
+    if (teamAvatarUrl && teamAvatarUrl.includes("cloudinary.com")) {
+      try {
+        const publicId = extractCloudinaryPublicId(teamAvatarUrl);
+        if (publicId) {
+          console.log(
+            `Deleting team avatar from Cloudinary for permanently deleted team ${teamId}: ${publicId}`,
+          );
+          const deleteResult = await cloudinary.uploader.destroy(publicId);
+          console.log("Cloudinary deletion result:", deleteResult);
+
+          if (
+            deleteResult.result !== "ok" &&
+            deleteResult.result !== "not found"
+          ) {
+            console.warn(
+              "Cloudinary deletion may have failed for team avatar:",
+              deleteResult,
+            );
+          }
+        }
+      } catch (cloudinaryError) {
+        // Log but don't fail - team is already deleted from database
+        console.error(
+          `Error deleting team avatar from Cloudinary for team ${teamId}:`,
+          cloudinaryError,
+        );
+      }
+    }
+
     return true;
   } catch (error) {
     await client.query("ROLLBACK");
