@@ -102,10 +102,17 @@ io.on("connection", (socket) => {
   // Handle new message
   socket.on("message:new", async (data) => {
     try {
-      const { conversationId, content, type = "direct", imageUrl } = data;
+      const {
+        conversationId,
+        content,
+        type = "direct",
+        imageUrl,
+        fileUrl,
+        fileName,
+      } = data;
 
-      // Allow either content OR imageUrl
-      if ((!content || content.trim() === "") && !imageUrl) {
+      // Allow content OR imageUrl OR fileUrl
+      if ((!content || content.trim() === "") && !imageUrl && !fileUrl) {
         socket.emit("error", { message: "Invalid message data" });
         return;
       }
@@ -115,10 +122,17 @@ io.on("connection", (socket) => {
 
       if (type === "team") {
         messageResult = await db.query(
-          `INSERT INTO messages (sender_id, team_id, content, image_url, sent_at)
-         VALUES ($1, $2, $3, $4, NOW())
-         RETURNING id, sender_id, team_id, content, image_url, sent_at`,
-          [userId, conversationId, content?.trim() || null, imageUrl || null],
+          `INSERT INTO messages (sender_id, team_id, content, image_url, file_url, file_name, sent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW())
+         RETURNING id, sender_id, team_id, content, image_url, file_url, file_name, sent_at`,
+          [
+            userId,
+            conversationId,
+            content?.trim() || null,
+            imageUrl || null,
+            fileUrl || null,
+            fileName || null,
+          ],
         );
 
         const message = {
@@ -129,18 +143,26 @@ io.on("connection", (socket) => {
           senderUsername: socket.username,
           content: messageResult.rows[0].content,
           imageUrl: messageResult.rows[0].image_url,
+          fileUrl: messageResult.rows[0].file_url,
+          fileName: messageResult.rows[0].file_name,
           createdAt: messageResult.rows[0].sent_at,
           type: "team",
         };
 
         io.to(`team:${conversationId}`).emit("message:received", message);
       } else {
-        // Similar update for direct messages
         messageResult = await db.query(
-          `INSERT INTO messages (sender_id, receiver_id, content, image_url, sent_at)
-         VALUES ($1, $2, $3, $4, NOW())
-         RETURNING id, sender_id, receiver_id, content, image_url, sent_at`,
-          [userId, conversationId, content?.trim() || null, imageUrl || null],
+          `INSERT INTO messages (sender_id, receiver_id, content, image_url, file_url, file_name, sent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW())
+         RETURNING id, sender_id, receiver_id, content, image_url, file_url, file_name, sent_at`,
+          [
+            userId,
+            conversationId,
+            content?.trim() || null,
+            imageUrl || null,
+            fileUrl || null,
+            fileName || null,
+          ],
         );
 
         const message = {
@@ -150,6 +172,8 @@ io.on("connection", (socket) => {
           senderUsername: socket.username,
           content: messageResult.rows[0].content,
           imageUrl: messageResult.rows[0].image_url,
+          fileUrl: messageResult.rows[0].file_url,
+          fileName: messageResult.rows[0].file_name,
           createdAt: messageResult.rows[0].sent_at,
           type: "direct",
         };
