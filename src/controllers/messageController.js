@@ -416,45 +416,49 @@ const getMessages = async (req, res) => {
       }
 
       messagesQuery = `
-        SELECT 
-          m.id,
-          m.sender_id,
-          m.team_id,
-          m.content,
-          m.image_url,
-          m.sent_at as created_at,
-          m.read_at,
-          u.username as sender_username,
-          u.first_name as sender_first_name,
-          u.last_name as sender_last_name,
-          u.avatar_url as sender_avatar_url
-        FROM messages m
-        JOIN users u ON m.sender_id = u.id
-        WHERE m.team_id = $1
-        ORDER BY m.sent_at ASC
-      `;
+  SELECT 
+    m.id,
+    m.sender_id,
+    m.team_id,
+    m.content,
+    m.image_url,
+    m.file_url,
+    m.file_name,
+    m.sent_at as created_at,
+    m.read_at,
+    u.username as sender_username,
+    u.first_name as sender_first_name,
+    u.last_name as sender_last_name,
+    u.avatar_url as sender_avatar_url
+  FROM messages m
+  JOIN users u ON m.sender_id = u.id
+  WHERE m.team_id = $1
+  ORDER BY m.sent_at ASC
+`;
       queryParams = [conversationId];
     } else {
       messagesQuery = `
-        SELECT 
-          m.id,
-          m.sender_id,
-          m.receiver_id,
-          m.content,
-          m.image_url,
-          m.sent_at as created_at,
-          m.read_at,
-          u.username as sender_username,
-          u.first_name as sender_first_name,
-          u.last_name as sender_last_name,
-          u.avatar_url as sender_avatar_url
-        FROM messages m
-        JOIN users u ON m.sender_id = u.id
-        WHERE ((m.sender_id = $1 AND m.receiver_id = $2) 
-           OR (m.sender_id = $2 AND m.receiver_id = $1))
-          AND m.team_id IS NULL
-        ORDER BY m.sent_at ASC
-      `;
+  SELECT 
+    m.id,
+    m.sender_id,
+    m.receiver_id,
+    m.content,
+    m.image_url,
+    m.file_url,
+    m.file_name,
+    m.sent_at as created_at,
+    m.read_at,
+    u.username as sender_username,
+    u.first_name as sender_first_name,
+    u.last_name as sender_last_name,
+    u.avatar_url as sender_avatar_url
+  FROM messages m
+  JOIN users u ON m.sender_id = u.id
+  WHERE ((m.sender_id = $1 AND m.receiver_id = $2) 
+     OR (m.sender_id = $2 AND m.receiver_id = $1))
+    AND m.team_id IS NULL
+  ORDER BY m.sent_at ASC
+`;
       queryParams = [userId, conversationId];
     }
 
@@ -467,6 +471,8 @@ const getMessages = async (req, res) => {
       teamId: row.team_id,
       content: row.content,
       imageUrl: row.image_url,
+      fileUrl: row.file_url,
+      fileName: row.file_name,
       createdAt: row.created_at,
       readAt: row.read_at,
       senderUsername: row.sender_username,
@@ -494,13 +500,13 @@ const sendMessage = async (req, res) => {
   try {
     const userId = req.user.id;
     const conversationId = req.params.id;
-    const { content, type, imageUrl } = req.body;
+    const { content, type, imageUrl, fileUrl, fileName } = req.body;
 
-    // Allow either content OR imageUrl (or both)
-    if ((!content || content.trim() === "") && !imageUrl) {
+    // Allow content OR imageUrl OR fileUrl (or combinations)
+    if ((!content || content.trim() === "") && !imageUrl && !fileUrl) {
       return res.status(400).json({
         success: false,
-        message: "Message content or image is required",
+        message: "Message content, image, or file is required",
       });
     }
 
@@ -534,17 +540,31 @@ const sendMessage = async (req, res) => {
 
     if (type === "team") {
       messageResult = await db.query(
-        `INSERT INTO messages (sender_id, team_id, content, image_url, sent_at)
-         VALUES ($1, $2, $3, $4, NOW())
-         RETURNING id, sender_id, team_id, content, image_url, sent_at`,
-        [userId, conversationId, content?.trim() || null, imageUrl || null],
+        `INSERT INTO messages (sender_id, team_id, content, image_url, file_url, file_name, sent_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NOW())
+     RETURNING id, sender_id, team_id, content, image_url, file_url, file_name, sent_at`,
+        [
+          userId,
+          conversationId,
+          content?.trim() || null,
+          imageUrl || null,
+          fileUrl || null,
+          fileName || null,
+        ],
       );
     } else {
       messageResult = await db.query(
-        `INSERT INTO messages (sender_id, receiver_id, content, image_url, sent_at)
-         VALUES ($1, $2, $3, $4, NOW())
-         RETURNING id, sender_id, receiver_id, content, image_url, sent_at`,
-        [userId, conversationId, content?.trim() || null, imageUrl || null],
+        `INSERT INTO messages (sender_id, receiver_id, content, image_url, file_url, file_name, sent_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NOW())
+     RETURNING id, sender_id, receiver_id, content, image_url, file_url, file_name, sent_at`,
+        [
+          userId,
+          conversationId,
+          content?.trim() || null,
+          imageUrl || null,
+          fileUrl || null,
+          fileName || null,
+        ],
       );
     }
 
