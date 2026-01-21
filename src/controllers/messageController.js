@@ -416,49 +416,55 @@ const getMessages = async (req, res) => {
       }
 
       messagesQuery = `
-  SELECT 
-    m.id,
-    m.sender_id,
-    m.team_id,
-    m.content,
-    m.image_url,
-    m.file_url,
-    m.file_name,
-    m.sent_at as created_at,
-    m.read_at,
-    u.username as sender_username,
-    u.first_name as sender_first_name,
-    u.last_name as sender_last_name,
-    u.avatar_url as sender_avatar_url
-  FROM messages m
-  JOIN users u ON m.sender_id = u.id
-  WHERE m.team_id = $1
-  ORDER BY m.sent_at ASC
-`;
+    SELECT 
+      m.id,
+      m.sender_id,
+      m.team_id,
+      m.content,
+      m.image_url,
+      m.file_url,
+      m.file_name,
+      m.file_size,
+      m.file_expires_at,
+      m.file_deleted_at,
+      m.sent_at as created_at,
+      m.read_at,
+      u.username as sender_username,
+      u.first_name as sender_first_name,
+      u.last_name as sender_last_name,
+      u.avatar_url as sender_avatar_url
+    FROM messages m
+    JOIN users u ON m.sender_id = u.id
+    WHERE m.team_id = $1
+    ORDER BY m.sent_at ASC
+  `;
       queryParams = [conversationId];
     } else {
       messagesQuery = `
-  SELECT 
-    m.id,
-    m.sender_id,
-    m.receiver_id,
-    m.content,
-    m.image_url,
-    m.file_url,
-    m.file_name,
-    m.sent_at as created_at,
-    m.read_at,
-    u.username as sender_username,
-    u.first_name as sender_first_name,
-    u.last_name as sender_last_name,
-    u.avatar_url as sender_avatar_url
-  FROM messages m
-  JOIN users u ON m.sender_id = u.id
-  WHERE ((m.sender_id = $1 AND m.receiver_id = $2) 
-     OR (m.sender_id = $2 AND m.receiver_id = $1))
-    AND m.team_id IS NULL
-  ORDER BY m.sent_at ASC
-`;
+    SELECT 
+      m.id,
+      m.sender_id,
+      m.receiver_id,
+      m.content,
+      m.image_url,
+      m.file_url,
+      m.file_name,
+      m.file_size,
+      m.file_expires_at,
+      m.file_deleted_at,
+      m.sent_at as created_at,
+      m.read_at,
+      u.username as sender_username,
+      u.first_name as sender_first_name,
+      u.last_name as sender_last_name,
+      u.avatar_url as sender_avatar_url
+    FROM messages m
+    JOIN users u ON m.sender_id = u.id
+    WHERE ((m.sender_id = $1 AND m.receiver_id = $2) 
+       OR (m.sender_id = $2 AND m.receiver_id = $1))
+      AND m.team_id IS NULL
+    ORDER BY m.sent_at ASC
+  `;
       queryParams = [userId, conversationId];
     }
 
@@ -473,6 +479,9 @@ const getMessages = async (req, res) => {
       imageUrl: row.image_url,
       fileUrl: row.file_url,
       fileName: row.file_name,
+      fileSize: row.file_size,
+      fileExpiresAt: row.file_expires_at,
+      fileDeletedAt: row.file_deleted_at,
       createdAt: row.created_at,
       readAt: row.read_at,
       senderUsername: row.sender_username,

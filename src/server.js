@@ -1,3 +1,4 @@
+const { initScheduledJobs } = require('./jobs/fileCleanupScheduler');
 const { validateChatFileUrl } = require("./utils/fileValidation");
 
 require("dotenv").config();
@@ -119,7 +120,12 @@ io.on("connection", (socket) => {
         return;
       }
 
-      // Validate file URLs before saving
+      // Variables to store file metadata
+      let fileSize = null;
+      let cloudinaryPublicId = null;
+      let fileExpiresAt = null;
+
+      // Validate image URL and extract metadata
       if (imageUrl) {
         const validation = await validateChatFileUrl(imageUrl, "chatImage");
         if (!validation.valid) {
@@ -129,8 +135,13 @@ io.on("connection", (socket) => {
           socket.emit("error", { message: validation.error });
           return;
         }
+        fileSize = validation.size || null;
+        cloudinaryPublicId = validation.publicId || null;
+        // Set expiration to 60 days from now
+        fileExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
       }
 
+      // Validate file URL and extract metadata
       if (fileUrl) {
         const validation = await validateChatFileUrl(fileUrl, "chatFile");
         if (!validation.valid) {
@@ -140,6 +151,10 @@ io.on("connection", (socket) => {
           socket.emit("error", { message: validation.error });
           return;
         }
+        fileSize = validation.size || null;
+        cloudinaryPublicId = validation.publicId || null;
+        // Set expiration to 60 days from now
+        fileExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
       }
 
       const db = require("./config/database");
@@ -147,9 +162,9 @@ io.on("connection", (socket) => {
 
       if (type === "team") {
         messageResult = await db.query(
-          `INSERT INTO messages (sender_id, team_id, content, image_url, file_url, file_name, sent_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW())
-         RETURNING id, sender_id, team_id, content, image_url, file_url, file_name, sent_at`,
+          `INSERT INTO messages (sender_id, team_id, content, image_url, file_url, file_name, file_size, file_expires_at, cloudinary_public_id, sent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+         RETURNING id, sender_id, team_id, content, image_url, file_url, file_name, file_size, file_expires_at, sent_at`,
           [
             userId,
             conversationId,
@@ -157,6 +172,9 @@ io.on("connection", (socket) => {
             imageUrl || null,
             fileUrl || null,
             fileName || null,
+            fileSize,
+            fileExpiresAt,
+            cloudinaryPublicId,
           ],
         );
 
@@ -170,6 +188,8 @@ io.on("connection", (socket) => {
           imageUrl: messageResult.rows[0].image_url,
           fileUrl: messageResult.rows[0].file_url,
           fileName: messageResult.rows[0].file_name,
+          fileSize: messageResult.rows[0].file_size,
+          fileExpiresAt: messageResult.rows[0].file_expires_at,
           createdAt: messageResult.rows[0].sent_at,
           type: "team",
         };
@@ -177,9 +197,9 @@ io.on("connection", (socket) => {
         io.to(`team:${conversationId}`).emit("message:received", message);
       } else {
         messageResult = await db.query(
-          `INSERT INTO messages (sender_id, receiver_id, content, image_url, file_url, file_name, sent_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW())
-         RETURNING id, sender_id, receiver_id, content, image_url, file_url, file_name, sent_at`,
+          `INSERT INTO messages (sender_id, receiver_id, content, image_url, file_url, file_name, file_size, file_expires_at, cloudinary_public_id, sent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+         RETURNING id, sender_id, receiver_id, content, image_url, file_url, file_name, file_size, file_expires_at, sent_at`,
           [
             userId,
             conversationId,
@@ -187,6 +207,9 @@ io.on("connection", (socket) => {
             imageUrl || null,
             fileUrl || null,
             fileName || null,
+            fileSize,
+            fileExpiresAt,
+            cloudinaryPublicId,
           ],
         );
 
@@ -199,6 +222,8 @@ io.on("connection", (socket) => {
           imageUrl: messageResult.rows[0].image_url,
           fileUrl: messageResult.rows[0].file_url,
           fileName: messageResult.rows[0].file_name,
+          fileSize: messageResult.rows[0].file_size,
+          fileExpiresAt: messageResult.rows[0].file_expires_at,
           createdAt: messageResult.rows[0].sent_at,
           type: "direct",
         };
@@ -338,6 +363,9 @@ io.on("connection", (socket) => {
     io.emit("users:online", Array.from(connectedUsers.keys()));
   });
 });
+
+// Initialize scheduled jobs
+initScheduledJobs();
 
 // Start server
 server.listen(PORT, () => {
