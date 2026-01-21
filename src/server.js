@@ -1,3 +1,5 @@
+const { validateChatFileUrl } = require("./utils/fileValidation");
+
 require("dotenv").config();
 
 const app = require("./app");
@@ -115,6 +117,29 @@ io.on("connection", (socket) => {
       if ((!content || content.trim() === "") && !imageUrl && !fileUrl) {
         socket.emit("error", { message: "Invalid message data" });
         return;
+      }
+
+      // Validate file URLs before saving
+      if (imageUrl) {
+        const validation = await validateChatFileUrl(imageUrl, "chatImage");
+        if (!validation.valid) {
+          console.warn(
+            `[SOCKET] Rejected image from user ${userId}: ${validation.error}`,
+          );
+          socket.emit("error", { message: validation.error });
+          return;
+        }
+      }
+
+      if (fileUrl) {
+        const validation = await validateChatFileUrl(fileUrl, "chatFile");
+        if (!validation.valid) {
+          console.warn(
+            `[SOCKET] Rejected file from user ${userId}: ${validation.error}`,
+          );
+          socket.emit("error", { message: validation.error });
+          return;
+        }
       }
 
       const db = require("./config/database");
