@@ -1,4 +1,4 @@
-const { initScheduledJobs } = require('./jobs/fileCleanupScheduler');
+const { initScheduledJobs } = require("./jobs/fileCleanupScheduler");
 const { validateChatFileUrl } = require("./utils/fileValidation");
 
 require("dotenv").config();
