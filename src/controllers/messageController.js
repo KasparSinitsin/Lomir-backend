@@ -427,6 +427,8 @@ const getMessages = async (req, res) => {
       m.file_size,
       m.file_expires_at,
       m.file_deleted_at,
+      m.deleted_at,
+      m.deleted_by,
       m.sent_at as created_at,
       m.read_at,
       u.username as sender_username,
@@ -452,6 +454,8 @@ const getMessages = async (req, res) => {
       m.file_size,
       m.file_expires_at,
       m.file_deleted_at,
+      m.deleted_at,
+      m.deleted_by,
       m.sent_at as created_at,
       m.read_at,
       u.username as sender_username,
@@ -482,6 +486,8 @@ const getMessages = async (req, res) => {
       fileSize: row.file_size,
       fileExpiresAt: row.file_expires_at,
       fileDeletedAt: row.file_deleted_at,
+      deletedAt: row.deleted_at,
+      deletedBy: row.deleted_by,
       createdAt: row.created_at,
       readAt: row.read_at,
       senderUsername: row.sender_username,
@@ -635,37 +641,70 @@ const getMessageById = async (req, res) => {
 const deleteMessage = async (req, res) => {
   try {
     const messageId = req.params.id;
-    const userId = req.user.id;
 
-    // Check if user owns this message
-    const checkQuery = `
-      SELECT id FROM messages 
-      WHERE id = $1 AND sender_id = $2
-    `;
+    // If authenticateToken sets req.user = { id, ... }, use req.user.id
+    // If it sets req.userId, use req.userId
+    const currentUserId = req.user?.id ?? req.userId;
 
-    const checkResult = await db.query(checkQuery, [messageId, userId]);
+    // 1) Fetch message first (so we know whether it’s team or direct + room ids)
+    const msgResult = await db.query(
+      `SELECT id, sender_id, receiver_id, team_id
+       FROM messages
+       WHERE id = $1`,
+      [messageId],
+    );
 
-    if (checkResult.rows.length === 0) {
-      return res.status(403).json({
-        success: false,
-        message: "Not authorized to delete this message",
-      });
+    if (msgResult.rows.length === 0) {
+      return res.status(404).json({ message: "Message not found" });
     }
 
-    // Delete the message
-    await db.query("DELETE FROM messages WHERE id = $1", [messageId]);
+    const msg = msgResult.rows[0];
 
-    res.status(200).json({
-      success: true,
-      message: "Message deleted successfully",
-      data: { id: messageId },
-    });
+    // 2) Authorization: only sender can delete
+    if (Number(msg.sender_id) !== Number(currentUserId)) {
+      return res
+        .status(403)
+        .json({ message: "Not authorized to delete this message" });
+    }
+
+    // 3) SOFT DELETE (matches your UI + your getMessages already returns deleted_at/deleted_by)
+    await db.query(
+      `UPDATE messages
+       SET deleted_at = NOW(),
+           deleted_by = $2,
+           content = NULL,
+           image_url = NULL,
+           file_url = NULL,
+           file_name = NULL,
+           file_size = NULL
+       WHERE id = $1`,
+      [messageId, currentUserId],
+    );
+
+    // 4) Emit socket event to other users
+    const io = req.app.get("io");
+
+    const payload = {
+      messageId: Number(messageId),
+      deletedAt: new Date().toISOString(),
+      deletedBy: Number(currentUserId),
+      type: msg.team_id ? "team" : "direct",
+      teamId: msg.team_id ? Number(msg.team_id) : null,
+      senderId: msg.sender_id ? Number(msg.sender_id) : null,
+      receiverId: msg.receiver_id ? Number(msg.receiver_id) : null,
+    };
+
+    if (msg.team_id) {
+      io.to(`team:${msg.team_id}`).emit("message:deleted", payload);
+    } else {
+      io.to(`user:${msg.sender_id}`).emit("message:deleted", payload);
+      io.to(`user:${msg.receiver_id}`).emit("message:deleted", payload);
+    }
+
+    return res.status(200).json({ success: true, message: "Message deleted" });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Error deleting message",
-      error: error.message,
-    });
+    console.error("deleteMessage error:", error);
+    return res.status(500).json({ message: "Failed to delete message" });
   }
 };
 
