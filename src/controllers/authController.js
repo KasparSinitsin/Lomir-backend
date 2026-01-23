@@ -386,6 +386,138 @@ const authController = {
       });
     }
   },
+
+  /**
+   * Request password reset - sends email with reset link
+   */
+  async forgotPassword(req, res) {
+    try {
+      const { email } = req.body;
+
+      if (!email) {
+        return res.status(400).json({
+          success: false,
+          message: "Email is required",
+        });
+      }
+
+      const result = await db.query(
+        `SELECT id, username, email FROM users WHERE email = $1`,
+        [email],
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(200).json({
+          success: true,
+          message:
+            "If an account exists with this email, a password reset link has been sent.",
+        });
+      }
+
+      const user = result.rows[0];
+
+      const resetToken = crypto.randomBytes(32).toString("hex");
+      const tokenExpires = new Date(Date.now() + 60 * 60 * 1000);
+
+      await db.query(
+        `UPDATE users 
+         SET password_reset_token = $1, password_reset_expires = $2 
+         WHERE id = $3`,
+        [resetToken, tokenExpires, user.id],
+      );
+
+      const emailResult = await emailService.sendPasswordResetEmail(
+        user.email,
+        resetToken,
+        user.username,
+      );
+
+      if (!emailResult.success) {
+        console.error(
+          "Failed to send password reset email:",
+          emailResult.error,
+        );
+      }
+
+      res.status(200).json({
+        success: true,
+        message:
+          "If an account exists with this email, a password reset link has been sent.",
+      });
+    } catch (error) {
+      console.error("Forgot password error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error processing password reset request",
+        error: error.message,
+      });
+    }
+  },
+
+  /**
+   * Reset password with token
+   */
+  async resetPassword(req, res) {
+    try {
+      const { token, password } = req.body;
+
+      if (!token || !password) {
+        return res.status(400).json({
+          success: false,
+          message: "Token and new password are required",
+        });
+      }
+
+      if (password.length < 6) {
+        return res.status(400).json({
+          success: false,
+          message: "Password must be at least 6 characters",
+        });
+      }
+
+      const result = await db.query(
+        `SELECT id, email, username FROM users 
+         WHERE password_reset_token = $1 
+         AND password_reset_expires > NOW()`,
+        [token],
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid or expired reset link",
+        });
+      }
+
+      const user = result.rows[0];
+
+      const bcrypt = require("bcrypt");
+      const saltRounds = 10;
+      const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+      await db.query(
+        `UPDATE users 
+         SET password_hash = $1, 
+             password_reset_token = NULL, 
+             password_reset_expires = NULL 
+         WHERE id = $2`,
+        [hashedPassword, user.id],
+      );
+
+      res.status(200).json({
+        success: true,
+        message:
+          "Password reset successfully! You can now log in with your new password.",
+      });
+    } catch (error) {
+      console.error("Reset password error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error resetting password",
+        error: error.message,
+      });
+    }
+  },
 };
 
 module.exports = authController;
