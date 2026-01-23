@@ -35,6 +35,7 @@
     "multer-storage-cloudinary": "^4.0.0",
     "node-cron": "^4.2.1",
     "pg": "^8.14.1",
+    "resend": "^6.8.0",
     "socket.io": "^4.8.1",
     "uuid": "^11.1.0"
   },
