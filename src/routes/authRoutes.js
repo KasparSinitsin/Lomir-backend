@@ -1,27 +1,30 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
 
-const authController = require('../controllers/authController');
-const { authenticateToken } = require('../middlewares/auth');
-const upload = require('../middlewares/uploadMiddleware');
-const db = require('../config/database');
+const authController = require("../controllers/authController");
+const { authenticateToken } = require("../middlewares/auth");
+const upload = require("../middlewares/uploadMiddleware");
+const db = require("../config/database");
 
 // Register a new user (with optional avatar upload)
-router.post('/register', 
-  upload.single('avatar'),  // Handles avatar file upload
-  authController.register
-);
+router.post("/register", upload.single("avatar"), authController.register);
 
 // Login existing user
-router.post('/login', authController.login);
+router.post("/login", authController.login);
+
+// Email verification routes (NEW)
+router.get("/verify-email/:token", authController.verifyEmail);
+router.post("/resend-verification", authController.resendVerification);
 
 // Get current user (requires token)
-router.get('/me', authenticateToken, authController.getCurrentUser);
+router.get("/me", authenticateToken, authController.getCurrentUser);
 
 // Test endpoint to view latest users
-router.get('/test-users', async (req, res) => {
+router.get("/test-users", async (req, res) => {
   try {
-    const result = await db.query('SELECT * FROM users ORDER BY id DESC LIMIT 10');
+    const result = await db.query(
+      "SELECT * FROM users ORDER BY id DESC LIMIT 10",
+    );
     res.json(result.rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -29,19 +32,19 @@ router.get('/test-users', async (req, res) => {
 });
 
 // Database connection test
-router.get('/db-test-connection', async (req, res) => {
+router.get("/db-test-connection", async (req, res) => {
   try {
-    const timeResult = await db.query('SELECT NOW() as current_time');
+    const timeResult = await db.query("SELECT NOW() as current_time");
     const tableResult = await db.query(`
       SELECT table_name 
       FROM information_schema.tables 
       WHERE table_schema = 'public' 
       AND table_name = 'users'
     `);
-    
+
     res.json({
       current_time: timeResult.rows[0].current_time,
-      users_table_exists: tableResult.rows.length > 0
+      users_table_exists: tableResult.rows.length > 0,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -49,9 +52,11 @@ router.get('/db-test-connection', async (req, res) => {
 });
 
 // Get database and table info
-router.get('/db-info', async (req, res) => {
+router.get("/db-info", async (req, res) => {
   try {
-    const dbInfo = await db.query('SELECT current_database() as database, current_schema() as schema');
+    const dbInfo = await db.query(
+      "SELECT current_database() as database, current_schema() as schema",
+    );
     const tableList = await db.query(`
       SELECT table_name, table_schema
       FROM information_schema.tables
@@ -61,7 +66,7 @@ router.get('/db-info', async (req, res) => {
 
     res.json({
       connection: dbInfo.rows[0],
-      tables: tableList.rows
+      tables: tableList.rows,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -69,7 +74,7 @@ router.get('/db-info', async (req, res) => {
 });
 
 // Get the 10 latest registered users
-router.get('/check-latest-users', async (req, res) => {
+router.get("/check-latest-users", async (req, res) => {
   try {
     const result = await db.query(`
       SELECT id, username, email, created_at 
