@@ -19,6 +19,10 @@ router.post("/resend-verification", authController.resendVerification);
 // Get current user (requires token)
 router.get("/me", authenticateToken, authController.getCurrentUser);
 
+// Password reset routes
+router.post("/forgot-password", authController.forgotPassword);
+router.post("/reset-password", authController.resetPassword);
+
 // Test endpoint to view latest users
 router.get("/test-users", async (req, res) => {
   try {
