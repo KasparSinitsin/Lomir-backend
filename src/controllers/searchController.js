@@ -7,7 +7,7 @@ const searchController = {
    */
   async globalSearch(req, res) {
     try {
-      const { query, authenticated, sortBy } = req.query;
+      const { query, authenticated, sortBy, sortDir } = req.query;
       const userId = req.user?.id;
 
       // === PAGINATION PARAMETERS ===
@@ -16,15 +16,21 @@ const searchController = {
       const offset = (page - 1) * limit;
 
       // === SORTING PARAMETERS ===
-      // Options: 'recent' (updated_at DESC), 'newest' (created_at DESC), 'name' (alphabetical)
-      const validSortOptions = ['recent', 'newest', 'name'];
-      const sort = validSortOptions.includes(sortBy) ? sortBy : 'name';
+      // Options: 'recent' (updated_at), 'newest' (created_at), 'name' (alphabetical)
+      const validSortOptions = ["recent", "newest", "name"];
+      const sort = validSortOptions.includes(sortBy) ? sortBy : "name";
+
+      // Direction: 'asc' or 'desc'
+      const validDirections = ["asc", "desc"];
+      const direction = validDirections.includes(sortDir)
+        ? sortDir.toUpperCase()
+        : "ASC";
 
       console.log(`=== SEARCH DEBUG ===`);
       console.log(`Search query: "${query}"`);
       console.log(`User ID from JWT: ${userId}`);
       console.log(`Pagination: page=${page}, limit=${limit}, offset=${offset}`);
-      console.log(`Sort by: ${sort}`);
+      console.log(`Sort by: ${sort}, direction: ${direction}`);
 
       if (!query || query.trim().length < 2) {
         return res.status(400).json({
@@ -120,18 +126,22 @@ const searchController = {
         teamQuery += ` AND t.is_public = TRUE`;
       }
 
-      // Determine ORDER BY clause based on sort parameter
+      // Determine ORDER BY clause based on sort parameter and direction
       let teamOrderBy;
       switch (sort) {
-        case 'recent':
-          teamOrderBy = 't.updated_at DESC NULLS LAST';
+        case "recent":
+          teamOrderBy =
+            direction === "DESC"
+              ? "t.updated_at DESC NULLS LAST"
+              : "t.updated_at ASC NULLS LAST";
           break;
-        case 'newest':
-          teamOrderBy = 't.created_at DESC';
+        case "newest":
+          teamOrderBy =
+            direction === "DESC" ? "t.created_at DESC" : "t.created_at ASC";
           break;
-        case 'name':
+        case "name":
         default:
-          teamOrderBy = 't.name ASC';
+          teamOrderBy = direction === "DESC" ? "t.name DESC" : "t.name ASC";
           break;
       }
 
@@ -218,18 +228,23 @@ const searchController = {
         userQuery += ` AND u.is_public = TRUE`;
       }
 
-      // Determine ORDER BY clause for users based on sort parameter
+      // Determine ORDER BY clause for users based on sort parameter and direction
       let userOrderBy;
       switch (sort) {
-        case 'recent':
-          userOrderBy = 'u.updated_at DESC NULLS LAST';
+        case "recent":
+          userOrderBy =
+            direction === "DESC"
+              ? "u.updated_at DESC NULLS LAST"
+              : "u.updated_at ASC NULLS LAST";
           break;
-        case 'newest':
-          userOrderBy = 'u.created_at DESC';
+        case "newest":
+          userOrderBy =
+            direction === "DESC" ? "u.created_at DESC" : "u.created_at ASC";
           break;
-        case 'name':
+        case "name":
         default:
-          userOrderBy = 'u.username ASC';
+          userOrderBy =
+            direction === "DESC" ? "u.username DESC" : "u.username ASC";
           break;
       }
 
@@ -311,6 +326,7 @@ const searchController = {
         },
         sorting: {
           sortBy: sort,
+          sortDir: direction.toLowerCase(),
         },
       });
     } catch (error) {
@@ -329,7 +345,7 @@ const searchController = {
    */
   async getAllUsersAndTeams(req, res) {
     try {
-      const { authenticated, sortBy } = req.query;
+      const { authenticated, sortBy, sortDir } = req.query;
       const userId = req.user?.id;
 
       // === PAGINATION PARAMETERS ===
@@ -338,11 +354,17 @@ const searchController = {
       const offset = (page - 1) * limit;
 
       // === SORTING PARAMETERS ===
-      const validSortOptions = ['recent', 'newest', 'name'];
-      const sort = validSortOptions.includes(sortBy) ? sortBy : 'name';
+      const validSortOptions = ["recent", "newest", "name"];
+      const sort = validSortOptions.includes(sortBy) ? sortBy : "name";
+
+      // Direction: 'asc' or 'desc'
+      const validDirections = ["asc", "desc"];
+      const direction = validDirections.includes(sortDir)
+        ? sortDir.toUpperCase()
+        : "ASC";
 
       console.log(
-        `getAllUsersAndTeams: userId=${userId}, authenticated=${authenticated}, page=${page}, limit=${limit}, sortBy=${sort}`,
+        `getAllUsersAndTeams: userId=${userId}, authenticated=${authenticated}, page=${page}, limit=${limit}, sortBy=${sort}, sortDir=${direction}`,
       );
 
       // ========== TEAM COUNT QUERY ==========
@@ -418,18 +440,22 @@ const searchController = {
         teamQuery += ` AND t.is_public = TRUE`;
       }
 
-      // Determine ORDER BY clause based on sort parameter
+      // Determine ORDER BY clause based on sort parameter and direction
       let teamOrderBy;
       switch (sort) {
-        case 'recent':
-          teamOrderBy = 't.updated_at DESC NULLS LAST';
+        case "recent":
+          teamOrderBy =
+            direction === "DESC"
+              ? "t.updated_at DESC NULLS LAST"
+              : "t.updated_at ASC NULLS LAST";
           break;
-        case 'newest':
-          teamOrderBy = 't.created_at DESC';
+        case "newest":
+          teamOrderBy =
+            direction === "DESC" ? "t.created_at DESC" : "t.created_at ASC";
           break;
-        case 'name':
+        case "name":
         default:
-          teamOrderBy = 't.name ASC';
+          teamOrderBy = direction === "DESC" ? "t.name DESC" : "t.name ASC";
           break;
       }
 
@@ -500,18 +526,23 @@ const searchController = {
         userQuery += ` AND u.is_public = TRUE`;
       }
 
-      // Determine ORDER BY clause for users based on sort parameter
+      // Determine ORDER BY clause for users based on sort parameter and direction
       let userOrderBy;
       switch (sort) {
-        case 'recent':
-          userOrderBy = 'u.updated_at DESC NULLS LAST';
+        case "recent":
+          userOrderBy =
+            direction === "DESC"
+              ? "u.updated_at DESC NULLS LAST"
+              : "u.updated_at ASC NULLS LAST";
           break;
-        case 'newest':
-          userOrderBy = 'u.created_at DESC';
+        case "newest":
+          userOrderBy =
+            direction === "DESC" ? "u.created_at DESC" : "u.created_at ASC";
           break;
-        case 'name':
+        case "name":
         default:
-          userOrderBy = 'u.username ASC';
+          userOrderBy =
+            direction === "DESC" ? "u.username DESC" : "u.username ASC";
           break;
       }
 
@@ -591,6 +622,7 @@ const searchController = {
         },
         sorting: {
           sortBy: sort,
+          sortDir: direction.toLowerCase(),
         },
       });
     } catch (error) {
