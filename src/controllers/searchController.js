@@ -2,23 +2,29 @@ const db = require("../config/database");
 
 const searchController = {
   /**
-   * Global search with pagination
+   * Global search with pagination and sorting
    * Searches teams and users based on query string
    */
   async globalSearch(req, res) {
     try {
-      const { query, authenticated } = req.query;
+      const { query, authenticated, sortBy } = req.query;
       const userId = req.user?.id;
 
       // === PAGINATION PARAMETERS ===
       const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 20; // Default 20 results per page
+      const limit = parseInt(req.query.limit) || 20;
       const offset = (page - 1) * limit;
+
+      // === SORTING PARAMETERS ===
+      // Options: 'recent' (updated_at DESC), 'newest' (created_at DESC), 'name' (alphabetical)
+      const validSortOptions = ['recent', 'newest', 'name'];
+      const sort = validSortOptions.includes(sortBy) ? sortBy : 'name';
 
       console.log(`=== SEARCH DEBUG ===`);
       console.log(`Search query: "${query}"`);
       console.log(`User ID from JWT: ${userId}`);
       console.log(`Pagination: page=${page}, limit=${limit}, offset=${offset}`);
+      console.log(`Sort by: ${sort}`);
 
       if (!query || query.trim().length < 2) {
         return res.status(400).json({
@@ -30,7 +36,6 @@ const searchController = {
       const searchTerm = `%${query.trim()}%`;
 
       // ========== TEAM COUNT QUERY ==========
-      // First, get total count of matching teams for pagination metadata
       let teamCountQuery = `
         SELECT COUNT(DISTINCT t.id) as total
         FROM teams t
@@ -72,6 +77,8 @@ const searchController = {
           t.max_members,
           t.owner_id,
           t.teamavatar_url as "teamavatarUrl",
+          t.created_at,
+          t.updated_at,
           COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
           STRING_AGG(
             DISTINCT CASE 
@@ -113,11 +120,25 @@ const searchController = {
         teamQuery += ` AND t.is_public = TRUE`;
       }
 
-      // Add GROUP BY, ORDER BY, LIMIT and OFFSET for pagination
+      // Determine ORDER BY clause based on sort parameter
+      let teamOrderBy;
+      switch (sort) {
+        case 'recent':
+          teamOrderBy = 't.updated_at DESC NULLS LAST';
+          break;
+        case 'newest':
+          teamOrderBy = 't.created_at DESC';
+          break;
+        case 'name':
+        default:
+          teamOrderBy = 't.name ASC';
+          break;
+      }
+
       teamQuery += `
         GROUP BY
-          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url
-        ORDER BY t.name ASC
+          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at
+        ORDER BY ${teamOrderBy}
         LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
       `;
       teamParams.push(limit, offset);
@@ -163,6 +184,8 @@ const searchController = {
           u.city,
           u.avatar_url,
           u.is_public,
+          u.created_at,
+          u.updated_at,
           (SELECT STRING_AGG(t.name, ', ')
             FROM user_tags ut
             JOIN tags t ON ut.tag_id = t.id
@@ -195,11 +218,25 @@ const searchController = {
         userQuery += ` AND u.is_public = TRUE`;
       }
 
-      // Add GROUP BY, ORDER BY, LIMIT and OFFSET for pagination
+      // Determine ORDER BY clause for users based on sort parameter
+      let userOrderBy;
+      switch (sort) {
+        case 'recent':
+          userOrderBy = 'u.updated_at DESC NULLS LAST';
+          break;
+        case 'newest':
+          userOrderBy = 'u.created_at DESC';
+          break;
+        case 'name':
+        default:
+          userOrderBy = 'u.username ASC';
+          break;
+      }
+
       userQuery += `
         GROUP BY
-          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.avatar_url, u.is_public
-        ORDER BY u.username ASC
+          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.avatar_url, u.is_public, u.created_at, u.updated_at
+        ORDER BY ${userOrderBy}
         LIMIT $${userParamIndex} OFFSET $${userParamIndex + 1}
       `;
       userParams.push(limit, offset);
@@ -254,8 +291,6 @@ const searchController = {
       }));
 
       // ========== RETURN RESPONSE WITH PAGINATION METADATA ==========
-      // Calculate totalPages based on the larger collection since teams and users
-      // are paginated separately with the same offset
       const maxItems = Math.max(totalTeams, totalUsers);
 
       res.status(200).json({
@@ -274,6 +309,9 @@ const searchController = {
           hasNextPage: offset + limit < maxItems,
           hasPrevPage: page > 1,
         },
+        sorting: {
+          sortBy: sort,
+        },
       });
     } catch (error) {
       console.error("Search error:", error);
@@ -286,21 +324,25 @@ const searchController = {
   },
 
   /**
-   * Get all users and teams with pagination
+   * Get all users and teams with pagination and sorting
    * Used when page loads initially (no search query)
    */
   async getAllUsersAndTeams(req, res) {
     try {
-      const { authenticated } = req.query;
+      const { authenticated, sortBy } = req.query;
       const userId = req.user?.id;
 
       // === PAGINATION PARAMETERS ===
       const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 20; // Default 20 results per page
+      const limit = parseInt(req.query.limit) || 20;
       const offset = (page - 1) * limit;
 
+      // === SORTING PARAMETERS ===
+      const validSortOptions = ['recent', 'newest', 'name'];
+      const sort = validSortOptions.includes(sortBy) ? sortBy : 'name';
+
       console.log(
-        `getAllUsersAndTeams: userId=${userId}, authenticated=${authenticated}, page=${page}, limit=${limit}`,
+        `getAllUsersAndTeams: userId=${userId}, authenticated=${authenticated}, page=${page}, limit=${limit}, sortBy=${sort}`,
       );
 
       // ========== TEAM COUNT QUERY ==========
@@ -338,6 +380,8 @@ const searchController = {
           t.max_members,
           t.owner_id,
           t.teamavatar_url as "teamavatarUrl",
+          t.created_at,
+          t.updated_at,
           COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
           STRING_AGG(
             DISTINCT CASE 
@@ -374,10 +418,25 @@ const searchController = {
         teamQuery += ` AND t.is_public = TRUE`;
       }
 
+      // Determine ORDER BY clause based on sort parameter
+      let teamOrderBy;
+      switch (sort) {
+        case 'recent':
+          teamOrderBy = 't.updated_at DESC NULLS LAST';
+          break;
+        case 'newest':
+          teamOrderBy = 't.created_at DESC';
+          break;
+        case 'name':
+        default:
+          teamOrderBy = 't.name ASC';
+          break;
+      }
+
       teamQuery += `
         GROUP BY
-          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url
-        ORDER BY t.created_at DESC
+          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at
+        ORDER BY ${teamOrderBy}
         LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
       `;
       teamParams.push(limit, offset);
@@ -415,6 +474,8 @@ const searchController = {
           u.city,
           u.avatar_url,
           u.is_public,
+          u.created_at,
+          u.updated_at,
           (SELECT STRING_AGG(t.name, ', ')
             FROM user_tags ut
             JOIN tags t ON ut.tag_id = t.id
@@ -439,10 +500,23 @@ const searchController = {
         userQuery += ` AND u.is_public = TRUE`;
       }
 
+      // Determine ORDER BY clause for users based on sort parameter
+      let userOrderBy;
+      switch (sort) {
+        case 'recent':
+          userOrderBy = 'u.updated_at DESC NULLS LAST';
+          break;
+        case 'newest':
+          userOrderBy = 'u.created_at DESC';
+          break;
+        case 'name':
+        default:
+          userOrderBy = 'u.username ASC';
+          break;
+      }
+
       userQuery += `
-        GROUP BY
-          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.avatar_url, u.is_public
-        ORDER BY u.created_at DESC
+        ORDER BY ${userOrderBy}
         LIMIT $${userParamIndex} OFFSET $${userParamIndex + 1}
       `;
       userParams.push(limit, offset);
@@ -497,8 +571,6 @@ const searchController = {
       }));
 
       // ========== RETURN RESPONSE WITH PAGINATION METADATA ==========
-      // Calculate totalPages based on the larger collection since teams and users
-      // are paginated separately with the same offset
       const maxItems = Math.max(totalTeams, totalUsers);
 
       res.status(200).json({
@@ -516,6 +588,9 @@ const searchController = {
           totalPages: Math.ceil(maxItems / limit),
           hasNextPage: offset + limit < maxItems,
           hasPrevPage: page > 1,
+        },
+        sorting: {
+          sortBy: sort,
         },
       });
     } catch (error) {
@@ -536,7 +611,6 @@ const searchController = {
       const { query, tags, location, distance } = req.query;
       const userId = req.user?.id;
 
-      // Build dynamic search query with parameter placeholders
       let searchQuery = `
         SELECT
           t.id,
@@ -550,7 +624,6 @@ const searchController = {
         LEFT JOIN team_members tm ON t.id = tm.team_id
       `;
 
-      // Add tag joins if searching by tags
       if (tags) {
         searchQuery += `
           JOIN team_tags tt ON t.id = tt.team_id
@@ -558,14 +631,11 @@ const searchController = {
         `;
       }
 
-      // Start WHERE clause
       searchQuery += ` WHERE t.archived_at IS NULL `;
 
-      // Initialize parameters array
       const queryParams = [];
       let paramIndex = 1;
 
-      // Add visibility condition based on authentication
       if (userId) {
         searchQuery += `
           AND (
@@ -583,82 +653,59 @@ const searchController = {
         searchQuery += ` AND t.is_public = TRUE`;
       }
 
-      // Add search term condition if query is provided
       if (query) {
         searchQuery += ` AND (t.name ILIKE $${paramIndex} OR t.description ILIKE $${paramIndex}) `;
         queryParams.push(`%${query}%`);
         paramIndex++;
       }
 
-      // Add tag condition if tags are provided
       if (tags) {
         const tagIds = Array.isArray(tags) ? tags : [tags];
-        const tagPlaceholders = tagIds
-          .map((_, i) => `$${paramIndex + i}`)
-          .join(",");
-        searchQuery += ` AND tag.id IN (${tagPlaceholders}) `;
-        queryParams.push(...tagIds);
-        paramIndex += tagIds.length;
-      }
-
-      // Add location condition if location is provided
-      if (location) {
-        searchQuery += ` AND t.postal_code = $${paramIndex} `;
-        queryParams.push(location);
+        searchQuery += ` AND tag.id = ANY($${paramIndex}::int[]) `;
+        queryParams.push(tagIds);
         paramIndex++;
       }
 
-      // Group by and limit
-      searchQuery += `
-        GROUP BY t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id
-        LIMIT 20
-      `;
+      searchQuery += ` GROUP BY t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id `;
+      searchQuery += ` ORDER BY t.name ASC LIMIT 20`;
 
       const result = await db.pool.query(searchQuery, queryParams);
 
-      // Ensure proper boolean values for is_public in teams
-      const teamsWithFixedVisibility = result.rows.map((team) => ({
-        ...team,
-        is_public: team.is_public === true,
-      }));
-
       res.status(200).json({
         success: true,
-        data: {
-          results: teamsWithFixedVisibility,
-        },
+        data: result.rows,
       });
     } catch (error) {
-      console.error("Error during search:", error);
+      console.error("Search error:", error);
       res.status(500).json({
         success: false,
-        message: "Error during search",
+        message: "Error performing search",
         error: error.message,
       });
     }
   },
 
   /**
-   * Search teams by tag ID
+   * Search by tag
    */
   async searchByTag(req, res) {
     try {
-      const tagId = req.params.tagId;
+      const { tagId } = req.params;
       const userId = req.user?.id;
 
-      let query = `
-        SELECT 
+      let searchQuery = `
+        SELECT DISTINCT
           t.id,
           t.name,
           t.description,
           t.is_public,
           t.max_members,
+          t.owner_id,
           COUNT(tm.id) as member_count
         FROM teams t
         JOIN team_tags tt ON t.id = tt.team_id
         LEFT JOIN team_members tm ON t.id = tm.team_id
-        WHERE 
-          tt.tag_id = $1
+        WHERE tt.tag_id = $1
           AND t.archived_at IS NULL
       `;
 
@@ -666,7 +713,7 @@ const searchController = {
       let paramIndex = 2;
 
       if (userId) {
-        query += `
+        searchQuery += `
           AND (
             t.is_public = TRUE
             OR t.owner_id = $${paramIndex}
@@ -677,74 +724,75 @@ const searchController = {
           )
         `;
         queryParams.push(userId);
-        paramIndex++;
       } else {
-        query += ` AND t.is_public = TRUE`;
+        searchQuery += ` AND t.is_public = TRUE`;
       }
 
-      query += `
-        GROUP BY t.id, t.name, t.description, t.is_public, t.max_members
-        LIMIT 20
-      `;
+      searchQuery += ` GROUP BY t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id `;
+      searchQuery += ` ORDER BY t.name ASC LIMIT 20`;
 
-      const result = await db.pool.query(query, queryParams);
-
-      const teamsWithFixedVisibility = result.rows.map((team) => ({
-        ...team,
-        is_public: team.is_public === true,
-      }));
+      const result = await db.pool.query(searchQuery, queryParams);
 
       res.status(200).json({
         success: true,
-        data: {
-          results: teamsWithFixedVisibility,
-        },
+        data: result.rows,
       });
     } catch (error) {
-      console.error(`Error searching by tag ${req.params.tagId}:`, error);
+      console.error("Search by tag error:", error);
       res.status(500).json({
         success: false,
-        message: "Error during tag search",
+        message: "Error searching by tag",
         error: error.message,
       });
     }
   },
 
   /**
-   * Search teams by location/postal code
+   * Search by location
    */
   async searchByLocation(req, res) {
     try {
-      const { postalCode, distance } = req.query;
+      const { latitude, longitude, distance = 50 } = req.query;
       const userId = req.user?.id;
 
-      if (!postalCode) {
+      if (!latitude || !longitude) {
         return res.status(400).json({
           success: false,
-          message: "Postal code is required for location search",
+          message: "Latitude and longitude are required",
         });
       }
 
-      let query = `
-        SELECT 
+      // Calculate distance using Haversine formula in PostgreSQL
+      let searchQuery = `
+        SELECT
           t.id,
           t.name,
           t.description,
           t.is_public,
           t.max_members,
-          COUNT(tm.id) as member_count
+          t.owner_id,
+          t.latitude,
+          t.longitude,
+          COUNT(tm.id) as member_count,
+          (
+            6371 * acos(
+              cos(radians($1)) * cos(radians(t.latitude)) *
+              cos(radians(t.longitude) - radians($2)) +
+              sin(radians($1)) * sin(radians(t.latitude))
+            )
+          ) as distance_km
         FROM teams t
         LEFT JOIN team_members tm ON t.id = tm.team_id
-        WHERE 
-          t.postal_code = $1
+        WHERE t.latitude IS NOT NULL
+          AND t.longitude IS NOT NULL
           AND t.archived_at IS NULL
       `;
 
-      const queryParams = [postalCode];
-      let paramIndex = 2;
+      const queryParams = [latitude, longitude];
+      let paramIndex = 3;
 
       if (userId) {
-        query += `
+        searchQuery += `
           AND (
             t.is_public = TRUE
             OR t.owner_id = $${paramIndex}
@@ -757,32 +805,34 @@ const searchController = {
         queryParams.push(userId);
         paramIndex++;
       } else {
-        query += ` AND t.is_public = TRUE`;
+        searchQuery += ` AND t.is_public = TRUE`;
       }
 
-      query += `
-        GROUP BY t.id, t.name, t.description, t.is_public, t.max_members
+      searchQuery += `
+        GROUP BY t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.latitude, t.longitude
+        HAVING (
+          6371 * acos(
+            cos(radians($1)) * cos(radians(t.latitude)) *
+            cos(radians(t.longitude) - radians($2)) +
+            sin(radians($1)) * sin(radians(t.latitude))
+          )
+        ) <= $${paramIndex}
+        ORDER BY distance_km ASC
         LIMIT 20
       `;
+      queryParams.push(distance);
 
-      const result = await db.pool.query(query, queryParams);
-
-      const teamsWithFixedVisibility = result.rows.map((team) => ({
-        ...team,
-        is_public: team.is_public === true,
-      }));
+      const result = await db.pool.query(searchQuery, queryParams);
 
       res.status(200).json({
         success: true,
-        data: {
-          results: teamsWithFixedVisibility,
-        },
+        data: result.rows,
       });
     } catch (error) {
-      console.error("Error during location search:", error);
+      console.error("Search by location error:", error);
       res.status(500).json({
         success: false,
-        message: "Error during location search",
+        message: "Error searching by location",
         error: error.message,
       });
     }
