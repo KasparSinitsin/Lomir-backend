@@ -1,17 +1,24 @@
 const db = require("../config/database");
 
 const searchController = {
+  /**
+   * Global search with pagination
+   * Searches teams and users based on query string
+   */
   async globalSearch(req, res) {
     try {
       const { query, authenticated } = req.query;
       const userId = req.user?.id;
 
+      // === PAGINATION PARAMETERS ===
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 20; // Default 20 results per page
+      const offset = (page - 1) * limit;
+
       console.log(`=== SEARCH DEBUG ===`);
       console.log(`Search query: "${query}"`);
       console.log(`User ID from JWT: ${userId}`);
-      console.log(`User ID type: ${typeof userId}`);
-      console.log(`Authenticated param: ${authenticated}`);
-      console.log(`Full req.user:`, req.user);
+      console.log(`Pagination: page=${page}, limit=${limit}, offset=${offset}`);
 
       if (!query || query.trim().length < 2) {
         return res.status(400).json({
@@ -22,43 +29,25 @@ const searchController = {
 
       const searchTerm = `%${query.trim()}%`;
 
-      // Team query - including tags and visibility conditions
-      let teamQuery = `
-  SELECT
-    t.id,
-    t.name,
-    t.description,
-    t.is_public,
-    t.max_members,
-    t.owner_id,
-    t.teamavatar_url as "teamavatarUrl",
-    COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
-    STRING_AGG(
-      DISTINCT CASE 
-        WHEN tag.id IS NOT NULL 
-        THEN json_build_object('id', tag.id, 'name', tag.name, 'category', tag.category)::text 
-        ELSE NULL 
-      END, 
-      ','
-    ) as tags_json
-  FROM teams t
-  LEFT JOIN team_members tm ON t.id = tm.team_id
-  LEFT JOIN team_tags tt ON t.id = tt.team_id
-  LEFT JOIN tags tag ON tt.tag_id = tag.id
-  WHERE (
-      t.name ILIKE $1 OR
-      t.description ILIKE $1 OR
-      tag.name ILIKE $1
-    )
-    AND t.archived_at IS NULL
-`;
+      // ========== TEAM COUNT QUERY ==========
+      // First, get total count of matching teams for pagination metadata
+      let teamCountQuery = `
+        SELECT COUNT(DISTINCT t.id) as total
+        FROM teams t
+        LEFT JOIN team_tags tt ON t.id = tt.team_id
+        LEFT JOIN tags tag ON tt.tag_id = tag.id
+        WHERE (
+            t.name ILIKE $1 OR
+            t.description ILIKE $1 OR
+            tag.name ILIKE $1
+          )
+          AND t.archived_at IS NULL
+      `;
 
-      // Initialize parameters array with the search term
-      const teamParams = [searchTerm];
+      const teamCountParams = [searchTerm];
 
-      // Add visibility condition based on authentication
       if (userId) {
-        teamQuery += `
+        teamCountQuery += `
           AND (
             t.is_public = TRUE
             OR t.owner_id = $2
@@ -68,19 +57,101 @@ const searchController = {
             )
           )
         `;
+        teamCountParams.push(userId);
+      } else {
+        teamCountQuery += ` AND t.is_public = TRUE`;
+      }
+
+      // ========== TEAM DATA QUERY ==========
+      let teamQuery = `
+        SELECT
+          t.id,
+          t.name,
+          t.description,
+          t.is_public,
+          t.max_members,
+          t.owner_id,
+          t.teamavatar_url as "teamavatarUrl",
+          COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
+          STRING_AGG(
+            DISTINCT CASE 
+              WHEN tag.id IS NOT NULL 
+              THEN json_build_object('id', tag.id, 'name', tag.name, 'category', tag.category)::text 
+              ELSE NULL 
+            END, 
+            ','
+          ) as tags_json
+        FROM teams t
+        LEFT JOIN team_members tm ON t.id = tm.team_id
+        LEFT JOIN team_tags tt ON t.id = tt.team_id
+        LEFT JOIN tags tag ON tt.tag_id = tag.id
+        WHERE (
+            t.name ILIKE $1 OR
+            t.description ILIKE $1 OR
+            tag.name ILIKE $1
+          )
+          AND t.archived_at IS NULL
+      `;
+
+      const teamParams = [searchTerm];
+      let teamParamIndex = 2;
+
+      if (userId) {
+        teamQuery += `
+          AND (
+            t.is_public = TRUE
+            OR t.owner_id = $${teamParamIndex}
+            OR EXISTS (
+              SELECT 1 FROM team_members
+              WHERE team_id = t.id AND user_id = $${teamParamIndex}
+            )
+          )
+        `;
         teamParams.push(userId);
+        teamParamIndex++;
       } else {
         teamQuery += ` AND t.is_public = TRUE`;
       }
 
-      // Add group by and limit - UPDATED to include all non-aggregated columns
+      // Add GROUP BY, ORDER BY, LIMIT and OFFSET for pagination
       teamQuery += `
         GROUP BY
           t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url
-        LIMIT 20
+        ORDER BY t.name ASC
+        LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
+      `;
+      teamParams.push(limit, offset);
+
+      // ========== USER COUNT QUERY ==========
+      let userCountQuery = `
+        SELECT COUNT(DISTINCT u.id) as total
+        FROM users u
+        LEFT JOIN user_tags ut ON u.id = ut.user_id
+        LEFT JOIN tags t ON ut.tag_id = t.id
+        WHERE (
+            u.username ILIKE $1 OR
+            u.first_name ILIKE $1 OR
+            u.last_name ILIKE $1 OR
+            u.bio ILIKE $1 OR
+            t.name ILIKE $1
+        )
       `;
 
-      // User query remains the same as it was working correctly
+      const userCountParams = [searchTerm];
+
+      if (userId) {
+        userCountQuery += `
+          AND (
+            u.is_public = TRUE
+            OR u.id = $2
+          )
+        `;
+        userCountParams.push(userId);
+      } else {
+        userCountQuery += ` AND u.is_public = TRUE`;
+      }
+
+      // ========== USER DATA QUERY ==========
       let userQuery = `
         SELECT
           u.id,
@@ -109,36 +180,41 @@ const searchController = {
       `;
 
       const userParams = [searchTerm];
+      let userParamIndex = 2;
 
       if (userId) {
         userQuery += `
           AND (
             u.is_public = TRUE
-            OR u.id = $2
+            OR u.id = $${userParamIndex}
           )
         `;
         userParams.push(userId);
+        userParamIndex++;
       } else {
         userQuery += ` AND u.is_public = TRUE`;
       }
 
+      // Add GROUP BY, ORDER BY, LIMIT and OFFSET for pagination
       userQuery += `
         GROUP BY
           u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.avatar_url, u.is_public
-        LIMIT 20
+        ORDER BY u.username ASC
+        LIMIT $${userParamIndex} OFFSET $${userParamIndex + 1}
       `;
+      userParams.push(limit, offset);
 
-      console.log(`Executing team query with userId: ${userId}`);
-      console.log("Team query:", teamQuery);
-      console.log("Team params:", teamParams);
+      // ========== EXECUTE ALL QUERIES ==========
+      const [teamCountResult, teamResults, userCountResult, userResults] =
+        await Promise.all([
+          db.pool.query(teamCountQuery, teamCountParams),
+          db.pool.query(teamQuery, teamParams),
+          db.pool.query(userCountQuery, userCountParams),
+          db.pool.query(userQuery, userParams),
+        ]);
 
-      const [teamResults, userResults] = await Promise.all([
-        db.pool.query(teamQuery, teamParams),
-        db.pool.query(userQuery, userParams),
-      ]);
-
-      console.log(`Raw team results:`, teamResults.rows);
-      console.log(`Raw user results:`, userResults.rows);
+      const totalTeams = parseInt(teamCountResult.rows[0].total);
+      const totalUsers = parseInt(userCountResult.rows[0].total);
 
       // Process team results to parse the tags JSON
       const teamsWithFixedVisibility = teamResults.rows.map((team) => {
@@ -146,7 +222,6 @@ const searchController = {
 
         if (team.tags_json) {
           try {
-            // Split the concatenated JSON strings and parse each one
             const tagStrings = team.tags_json.split(",");
             parsedTags = tagStrings
               .filter((tagStr) => tagStr && tagStr.trim() !== "null")
@@ -164,7 +239,6 @@ const searchController = {
           }
         }
 
-        // Remove the tags_json field and add the parsed tags
         const { tags_json, ...teamWithoutTagsJson } = team;
 
         return {
@@ -179,14 +253,26 @@ const searchController = {
         is_public: user.is_public === true,
       }));
 
-      console.log(`Final processed team results:`, teamsWithFixedVisibility);
-      console.log(`Final user results:`, usersWithFixedVisibility);
+      // ========== RETURN RESPONSE WITH PAGINATION METADATA ==========
+      // Calculate totalPages based on the larger collection since teams and users
+      // are paginated separately with the same offset
+      const maxItems = Math.max(totalTeams, totalUsers);
 
       res.status(200).json({
         success: true,
         data: {
           teams: teamsWithFixedVisibility,
           users: usersWithFixedVisibility,
+        },
+        pagination: {
+          page,
+          limit,
+          totalTeams,
+          totalUsers,
+          totalItems: totalTeams + totalUsers,
+          totalPages: Math.ceil(maxItems / limit),
+          hasNextPage: offset + limit < maxItems,
+          hasPrevPage: page > 1,
         },
       });
     } catch (error) {
@@ -199,95 +285,156 @@ const searchController = {
     }
   },
 
+  /**
+   * Get all users and teams with pagination
+   * Used when page loads initially (no search query)
+   */
   async getAllUsersAndTeams(req, res) {
     try {
       const { authenticated } = req.query;
       const userId = req.user?.id;
 
+      // === PAGINATION PARAMETERS ===
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 20; // Default 20 results per page
+      const offset = (page - 1) * limit;
+
       console.log(
-        `getAllUsersAndTeams: userId=${userId}, authenticated=${authenticated}`
+        `getAllUsersAndTeams: userId=${userId}, authenticated=${authenticated}, page=${page}, limit=${limit}`,
       );
 
-      // TEAM QUERY - Fixed parameter handling
+      // ========== TEAM COUNT QUERY ==========
+      let teamCountQuery = `
+        SELECT COUNT(*) as total
+        FROM teams t
+        WHERE t.archived_at IS NULL
+      `;
+
+      let teamCountParams = [];
+
+      if (userId) {
+        teamCountQuery += `
+          AND (
+            t.is_public = TRUE
+            OR t.owner_id = $1
+            OR EXISTS (
+              SELECT 1 FROM team_members
+              WHERE team_id = t.id AND user_id = $1
+            )
+          )
+        `;
+        teamCountParams.push(userId);
+      } else {
+        teamCountQuery += ` AND t.is_public = TRUE`;
+      }
+
+      // ========== TEAM DATA QUERY ==========
       let teamQuery = `
-      SELECT
-        t.id,
-        t.name,
-        t.description,
-        t.is_public,
-        t.max_members,
-        t.owner_id,
-        t.teamavatar_url as "teamavatarUrl",
-        COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
-        STRING_AGG(
-          DISTINCT CASE 
-            WHEN tag.id IS NOT NULL 
-            THEN json_build_object('id', tag.id, 'name', tag.name, 'category', tag.category)::text 
-            ELSE NULL 
-          END, 
-          ','
-        ) as tags_json
-      FROM teams t
-      LEFT JOIN team_members tm ON t.id = tm.team_id
-      LEFT JOIN team_tags tt ON t.id = tt.team_id
-      LEFT JOIN tags tag ON tt.tag_id = tag.id
-      WHERE t.archived_at IS NULL
-    `;
+        SELECT
+          t.id,
+          t.name,
+          t.description,
+          t.is_public,
+          t.max_members,
+          t.owner_id,
+          t.teamavatar_url as "teamavatarUrl",
+          COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
+          STRING_AGG(
+            DISTINCT CASE 
+              WHEN tag.id IS NOT NULL 
+              THEN json_build_object('id', tag.id, 'name', tag.name, 'category', tag.category)::text 
+              ELSE NULL 
+            END, 
+            ','
+          ) as tags_json
+        FROM teams t
+        LEFT JOIN team_members tm ON t.id = tm.team_id
+        LEFT JOIN team_tags tt ON t.id = tt.team_id
+        LEFT JOIN tags tag ON tt.tag_id = tag.id
+        WHERE t.archived_at IS NULL
+      `;
 
       let teamParams = [];
+      let teamParamIndex = 1;
 
       if (userId) {
         teamQuery += `
-        AND (
-          t.is_public = TRUE
-          OR t.owner_id = $1
-          OR EXISTS (
-            SELECT 1 FROM team_members
-            WHERE team_id = t.id AND user_id = $1
+          AND (
+            t.is_public = TRUE
+            OR t.owner_id = $${teamParamIndex}
+            OR EXISTS (
+              SELECT 1 FROM team_members
+              WHERE team_id = t.id AND user_id = $${teamParamIndex}
+            )
           )
-        )
-      `;
+        `;
         teamParams.push(userId);
+        teamParamIndex++;
       } else {
         teamQuery += ` AND t.is_public = TRUE`;
       }
 
       teamQuery += `
-      GROUP BY
-        t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url
-      LIMIT 20
-    `;
+        GROUP BY
+          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url
+        ORDER BY t.created_at DESC
+        LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
+      `;
+      teamParams.push(limit, offset);
 
-      // USER QUERY - Fixed parameter handling
+      // ========== USER COUNT QUERY ==========
+      let userCountQuery = `
+        SELECT COUNT(*) as total
+        FROM users u
+        WHERE 1=1
+      `;
+
+      let userCountParams = [];
+
+      if (userId) {
+        userCountQuery += `
+          AND (
+            u.is_public = TRUE
+            OR u.id = $1
+          )
+        `;
+        userCountParams.push(userId);
+      } else {
+        userCountQuery += ` AND u.is_public = TRUE`;
+      }
+
+      // ========== USER DATA QUERY ==========
       let userQuery = `
-      SELECT
-        u.id,
-        u.username,
-        u.first_name,
-        u.last_name,
-        u.bio,
-        u.postal_code,
-        u.city,
-        u.avatar_url,
-        u.is_public,
-        (SELECT STRING_AGG(t.name, ', ')
-          FROM user_tags ut
-          JOIN tags t ON ut.tag_id = t.id
-          WHERE ut.user_id = u.id) as tags
-      FROM users u
-      WHERE 1=1
-    `;
+        SELECT
+          u.id,
+          u.username,
+          u.first_name,
+          u.last_name,
+          u.bio,
+          u.postal_code,
+          u.city,
+          u.avatar_url,
+          u.is_public,
+          (SELECT STRING_AGG(t.name, ', ')
+            FROM user_tags ut
+            JOIN tags t ON ut.tag_id = t.id
+            WHERE ut.user_id = u.id) as tags
+        FROM users u
+        WHERE 1=1
+      `;
 
       let userParams = [];
+      let userParamIndex = 1;
 
       if (userId) {
         userQuery += `
-        AND (
-          u.is_public = TRUE
-          OR u.id = $1
-        )
-      `;
+          AND (
+            u.is_public = TRUE
+            OR u.id = $${userParamIndex}
+          )
+        `;
         userParams.push(userId);
+        userParamIndex++;
       } else {
         userQuery += ` AND u.is_public = TRUE`;
       }
@@ -295,18 +442,22 @@ const searchController = {
       userQuery += `
         GROUP BY
           u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.avatar_url, u.is_public
-        LIMIT 20
+        ORDER BY u.created_at DESC
+        LIMIT $${userParamIndex} OFFSET $${userParamIndex + 1}
       `;
+      userParams.push(limit, offset);
 
-      console.log("Team query:", teamQuery);
-      console.log("Team params:", teamParams);
-      console.log("User query:", userQuery);
-      console.log("User params:", userParams);
+      // ========== EXECUTE ALL QUERIES ==========
+      const [teamCountResult, teamResults, userCountResult, userResults] =
+        await Promise.all([
+          db.pool.query(teamCountQuery, teamCountParams),
+          db.pool.query(teamQuery, teamParams),
+          db.pool.query(userCountQuery, userCountParams),
+          db.pool.query(userQuery, userParams),
+        ]);
 
-      const [teamResults, userResults] = await Promise.all([
-        db.pool.query(teamQuery, teamParams),
-        db.pool.query(userQuery, userParams),
-      ]);
+      const totalTeams = parseInt(teamCountResult.rows[0].total);
+      const totalUsers = parseInt(userCountResult.rows[0].total);
 
       // Process team results to parse the tags JSON
       const teamsWithFixedVisibility = teamResults.rows.map((team) => {
@@ -345,14 +496,26 @@ const searchController = {
         is_public: user.is_public === true,
       }));
 
-      console.log(`Final processed team results:`, teamsWithFixedVisibility);
-      console.log(`Final user results:`, usersWithFixedVisibility);
+      // ========== RETURN RESPONSE WITH PAGINATION METADATA ==========
+      // Calculate totalPages based on the larger collection since teams and users
+      // are paginated separately with the same offset
+      const maxItems = Math.max(totalTeams, totalUsers);
 
       res.status(200).json({
         success: true,
         data: {
           teams: teamsWithFixedVisibility,
           users: usersWithFixedVisibility,
+        },
+        pagination: {
+          page,
+          limit,
+          totalTeams,
+          totalUsers,
+          totalItems: totalTeams + totalUsers,
+          totalPages: Math.ceil(maxItems / limit),
+          hasNextPage: offset + limit < maxItems,
+          hasPrevPage: page > 1,
         },
       });
     } catch (error) {
@@ -365,6 +528,9 @@ const searchController = {
     }
   },
 
+  /**
+   * Search with filters (existing method - kept for compatibility)
+   */
   async search(req, res) {
     try {
       const { query, tags, location, distance } = req.query;
@@ -401,7 +567,6 @@ const searchController = {
 
       // Add visibility condition based on authentication
       if (userId) {
-        // For authenticated users: show public teams OR teams they created OR teams they're a member of
         searchQuery += `
           AND (
             t.is_public = TRUE
@@ -415,7 +580,6 @@ const searchController = {
         queryParams.push(userId);
         paramIndex++;
       } else {
-        // For non-authenticated users: show only public teams
         searchQuery += ` AND t.is_public = TRUE`;
       }
 
@@ -474,12 +638,14 @@ const searchController = {
     }
   },
 
+  /**
+   * Search teams by tag ID
+   */
   async searchByTag(req, res) {
     try {
       const tagId = req.params.tagId;
       const userId = req.user?.id;
 
-      // Define the query to get teams with the specified tag
       let query = `
         SELECT 
           t.id,
@@ -499,9 +665,7 @@ const searchController = {
       const queryParams = [tagId];
       let paramIndex = 2;
 
-      // Add visibility condition based on authentication
       if (userId) {
-        // For authenticated users: show public teams OR teams they created OR teams they're a member of
         query += `
           AND (
             t.is_public = TRUE
@@ -515,11 +679,9 @@ const searchController = {
         queryParams.push(userId);
         paramIndex++;
       } else {
-        // For non-authenticated users: show only public teams
         query += ` AND t.is_public = TRUE`;
       }
 
-      // Add group by and limit
       query += `
         GROUP BY t.id, t.name, t.description, t.is_public, t.max_members
         LIMIT 20
@@ -527,7 +689,6 @@ const searchController = {
 
       const result = await db.pool.query(query, queryParams);
 
-      // Ensure proper boolean values for is_public in teams
       const teamsWithFixedVisibility = result.rows.map((team) => ({
         ...team,
         is_public: team.is_public === true,
@@ -549,6 +710,9 @@ const searchController = {
     }
   },
 
+  /**
+   * Search teams by location/postal code
+   */
   async searchByLocation(req, res) {
     try {
       const { postalCode, distance } = req.query;
@@ -561,8 +725,6 @@ const searchController = {
         });
       }
 
-      // A simple implementation - in a real-world scenario, you would use
-      // geospatial queries with coordinates and distance calculations
       let query = `
         SELECT 
           t.id,
@@ -581,9 +743,7 @@ const searchController = {
       const queryParams = [postalCode];
       let paramIndex = 2;
 
-      // Add visibility condition based on authentication
       if (userId) {
-        // For authenticated users: show public teams OR teams they created OR teams they're a member of
         query += `
           AND (
             t.is_public = TRUE
@@ -597,11 +757,9 @@ const searchController = {
         queryParams.push(userId);
         paramIndex++;
       } else {
-        // For non-authenticated users: show only public teams
         query += ` AND t.is_public = TRUE`;
       }
 
-      // Add group by and limit
       query += `
         GROUP BY t.id, t.name, t.description, t.is_public, t.max_members
         LIMIT 20
@@ -609,7 +767,6 @@ const searchController = {
 
       const result = await db.pool.query(query, queryParams);
 
-      // Ensure proper boolean values for is_public in teams
       const teamsWithFixedVisibility = result.rows.map((team) => ({
         ...team,
         is_public: team.is_public === true,
