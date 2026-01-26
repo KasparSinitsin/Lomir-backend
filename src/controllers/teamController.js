@@ -538,11 +538,42 @@ const getTeamById = async (req, res) => {
   }
 };
 
+/**
+ * Get all teams for the authenticated user with pagination
+ *
+ * INSTRUCTIONS: Find the existing getUserTeams function in teamController.js
+ * and replace it entirely with this code.
+ *
+ * @route GET /api/teams/my-teams
+ * @query {number} page - Page number (default: 1)
+ * @query {number} limit - Results per page (default: 10)
+ */
 const getUserTeams = async (req, res) => {
   try {
     // Use the authenticated user's ID from the token
     const userId = req.user.id;
 
+    // === PAGINATION PARAMETERS ===
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    console.log(`getUserTeams: userId=${userId}, page=${page}, limit=${limit}`);
+
+    // === COUNT QUERY - Get total teams for pagination metadata ===
+    const countResult = await db.pool.query(
+      `
+      SELECT COUNT(DISTINCT t.id) as total
+      FROM teams t
+      JOIN team_members tmr ON t.id = tmr.team_id AND tmr.user_id = $1
+      WHERE t.archived_at IS NULL
+      `,
+      [userId],
+    );
+
+    const totalTeams = parseInt(countResult.rows[0].total);
+
+    // === DATA QUERY - Get paginated teams ===
     const teamsResult = await db.pool.query(
       `
       SELECT t.id, 
@@ -563,19 +594,29 @@ const getUserTeams = async (req, res) => {
       WHERE t.archived_at IS NULL
       GROUP BY t.id, tmr.role
       ORDER BY t.created_at DESC
+      LIMIT $2 OFFSET $3
       `,
-      [userId],
+      [userId, limit, offset],
     );
 
-    // Ensure proper boolean values
-    const teamsWithFixedData = teamsResult.rows.map((team) => ({
+    // Ensure boolean values for is_public
+    const teamsWithFixedVisibility = teamsResult.rows.map((team) => ({
       ...team,
       is_public: team.is_public === true,
     }));
 
+    // === RETURN RESPONSE WITH PAGINATION METADATA ===
     res.status(200).json({
       success: true,
-      data: teamsWithFixedData,
+      data: teamsWithFixedVisibility,
+      pagination: {
+        page,
+        limit,
+        totalTeams,
+        totalPages: Math.ceil(totalTeams / limit),
+        hasNextPage: offset + limit < totalTeams,
+        hasPrevPage: page > 1,
+      },
     });
   } catch (error) {
     console.error("Database error while fetching user teams:", error);
