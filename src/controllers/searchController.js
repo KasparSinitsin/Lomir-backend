@@ -2,6 +2,91 @@ const db = require("../config/database");
 
 const searchController = {
   /**
+   * Helper function to get user's location data (coordinates, postal_code, city)
+   */
+  async getUserLocation(userId) {
+    if (!userId) return null;
+
+    const result = await db.pool.query(
+      "SELECT latitude, longitude, postal_code, city FROM users WHERE id = $1",
+      [userId],
+    );
+
+    if (result.rows.length === 0) return null;
+
+    const user = result.rows[0];
+
+    const lat =
+      user.latitude !== null && user.latitude !== undefined
+        ? parseFloat(user.latitude)
+        : null;
+
+    const lng =
+      user.longitude !== null && user.longitude !== undefined
+        ? parseFloat(user.longitude)
+        : null;
+
+    // coords are valid only if both parse into finite numbers
+    const hasCoordinates = Number.isFinite(lat) && Number.isFinite(lng);
+
+    const hasPostalCode =
+      typeof user.postal_code === "string" && user.postal_code.trim() !== "";
+
+    const hasCity = typeof user.city === "string" && user.city.trim() !== "";
+
+    if (!hasCoordinates && !hasPostalCode && !hasCity) return null;
+
+    return {
+      latitude: hasCoordinates ? lat : null,
+      longitude: hasCoordinates ? lng : null,
+      postal_code: hasPostalCode ? user.postal_code.trim() : null,
+      city: hasCity ? user.city.trim().toLowerCase() : null,
+      hasCoordinates,
+      hasPostalCode,
+      hasCity,
+    };
+  },
+
+  /**
+   * Build SQL for postal code based distance calculation
+   * German postal codes: same prefix = closer proximity
+   * Returns a score from 0 (same) to 5 (completely different)
+   */
+  buildPostalCodeDistanceSQL(
+    userPostalCode,
+    tableAlias,
+    postalCodeColumn = "postal_code",
+  ) {
+    const sanitizedPostalCode = userPostalCode.replace(/'/g, "''");
+    return `
+      CASE
+        WHEN ${tableAlias}.${postalCodeColumn} IS NULL OR ${tableAlias}.${postalCodeColumn} = '' THEN 999999
+        WHEN ${tableAlias}.${postalCodeColumn} = '${sanitizedPostalCode}' THEN 0
+        WHEN LEFT(${tableAlias}.${postalCodeColumn}::text, 4) = LEFT('${sanitizedPostalCode}', 4) THEN 1
+        WHEN LEFT(${tableAlias}.${postalCodeColumn}::text, 3) = LEFT('${sanitizedPostalCode}', 3) THEN 2
+        WHEN LEFT(${tableAlias}.${postalCodeColumn}::text, 2) = LEFT('${sanitizedPostalCode}', 2) THEN 3
+        WHEN LEFT(${tableAlias}.${postalCodeColumn}::text, 1) = LEFT('${sanitizedPostalCode}', 1) THEN 4
+        ELSE 5
+      END
+    `;
+  },
+
+  /**
+   * Build SQL for city based distance calculation
+   * Returns 0 for same city, 999999 for different/no city
+   */
+  buildCityDistanceSQL(userCity, tableAlias) {
+    const sanitizedCity = userCity.replace(/'/g, "''");
+    return `
+      CASE
+        WHEN ${tableAlias}.city IS NULL OR ${tableAlias}.city = '' THEN 999999
+        WHEN LOWER(${tableAlias}.city) = '${sanitizedCity}' THEN 0
+        ELSE 999998
+      END
+    `;
+  },
+
+  /**
    * Global search with pagination and sorting
    * Searches teams and users based on query string
    */
@@ -16,8 +101,14 @@ const searchController = {
       const offset = (page - 1) * limit;
 
       // === SORTING PARAMETERS ===
-      // Options: 'recent' (updated_at), 'newest' (created_at), 'name' (alphabetical), 'capacity' (available spots)
-      const validSortOptions = ["recent", "newest", "name", "capacity"];
+      // Options: 'recent' (updated_at), 'newest' (created_at), 'name' (alphabetical), 'capacity' (available spots), 'proximity' (distance)
+      const validSortOptions = [
+        "recent",
+        "newest",
+        "name",
+        "capacity",
+        "proximity",
+      ];
       const sort = validSortOptions.includes(sortBy) ? sortBy : "name";
 
       // Direction: 'asc' or 'desc'
@@ -40,6 +131,14 @@ const searchController = {
       }
 
       const searchTerm = `%${query.trim()}%`;
+
+      // === GET USER LOCATION (needed for proximity sorting + for UI metadata) ===
+      let userLocation = null;
+
+      if (userId) {
+        userLocation = await searchController.getUserLocation(userId);
+        console.log("SEARCH DEBUG: userLocation =", userLocation);
+      }
 
       // ========== TEAM COUNT QUERY ==========
       let teamCountQuery = `
@@ -74,6 +173,39 @@ const searchController = {
       }
 
       // ========== TEAM DATA QUERY ==========
+      // Build distance calculation for proximity sort
+      let teamDistanceSelect = "";
+      let teamDistanceGroupBy = "";
+      if (sort === "proximity" && userLocation) {
+        if (userLocation.hasCoordinates) {
+          // Use Haversine formula for coordinate-based distance
+          teamDistanceSelect = `,
+            CASE 
+              WHEN t.latitude IS NULL OR t.longitude IS NULL THEN 999999
+              ELSE (
+                6371 * acos(
+                  LEAST(1.0, GREATEST(-1.0,
+                    cos(radians(${userLocation.latitude})) * cos(radians(t.latitude)) *
+                    cos(radians(t.longitude) - radians(${userLocation.longitude})) +
+                    sin(radians(${userLocation.latitude})) * sin(radians(t.latitude))
+                  ))
+                )
+              )
+            END as distance_km`;
+          teamDistanceGroupBy = ", t.latitude, t.longitude";
+        } else if (userLocation.hasPostalCode) {
+          // Use postal code based distance
+          teamDistanceSelect = `,
+            ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "t")} as distance_km`;
+          teamDistanceGroupBy = ", t.postal_code";
+        } else if (userLocation.hasCity) {
+          // Use city based distance
+          teamDistanceSelect = `,
+            ${searchController.buildCityDistanceSQL(userLocation.city, "t")} as distance_km`;
+          teamDistanceGroupBy = ", t.city";
+        }
+      }
+
       let teamQuery = `
         SELECT
           t.id,
@@ -98,6 +230,7 @@ const searchController = {
             END, 
             ','
           ) as tags_json
+          ${teamDistanceSelect}
         FROM teams t
         LEFT JOIN team_members tm ON t.id = tm.team_id
         LEFT JOIN team_tags tt ON t.id = tt.team_id
@@ -144,13 +277,20 @@ const searchController = {
             direction === "DESC" ? "t.created_at DESC" : "t.created_at ASC";
           break;
         case "capacity":
-          // Sort by available capacity (max_members - current_members_count)
-          // DESC = most available spots first, ASC = least available spots first
-          // Teams with unlimited capacity (NULL max_members) go last
           teamOrderBy =
             direction === "DESC"
               ? "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC"
               : "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC";
+          break;
+        case "proximity":
+          if (userLocation) {
+            // Sort by distance, high values (no location) go last
+            teamOrderBy =
+              direction === "DESC" ? "distance_km DESC" : "distance_km ASC";
+          } else {
+            // No user location, fall back to name
+            teamOrderBy = "t.name ASC";
+          }
           break;
         case "name":
         default:
@@ -160,7 +300,7 @@ const searchController = {
 
       teamQuery += `
         GROUP BY
-          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at
+          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at${teamDistanceGroupBy}
         ORDER BY ${teamOrderBy}
         LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
       `;
@@ -196,6 +336,39 @@ const searchController = {
       }
 
       // ========== USER DATA QUERY ==========
+      // Build distance calculation for proximity sort
+      let userDistanceSelect = "";
+      let userDistanceGroupBy = "";
+      if (sort === "proximity" && userLocation) {
+        if (userLocation.hasCoordinates) {
+          // Use Haversine formula for coordinate-based distance
+          userDistanceSelect = `,
+            CASE 
+              WHEN u.latitude IS NULL OR u.longitude IS NULL THEN 999999
+              ELSE (
+                6371 * acos(
+                  LEAST(1.0, GREATEST(-1.0,
+                    cos(radians(${userLocation.latitude})) * cos(radians(u.latitude)) *
+                    cos(radians(u.longitude) - radians(${userLocation.longitude})) +
+                    sin(radians(${userLocation.latitude})) * sin(radians(u.latitude))
+                  ))
+                )
+              )
+            END as distance_km`;
+          userDistanceGroupBy = ", u.latitude, u.longitude";
+        } else if (userLocation.hasPostalCode) {
+          // Use postal code based distance
+          userDistanceSelect = `,
+            ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "u")} as distance_km`;
+          // postal_code already in GROUP BY
+        } else if (userLocation.hasCity) {
+          // Use city based distance
+          userDistanceSelect = `,
+            ${searchController.buildCityDistanceSQL(userLocation.city, "u")} as distance_km`;
+          // city already in GROUP BY
+        }
+      }
+
       let userQuery = `
         SELECT
           u.id,
@@ -213,6 +386,7 @@ const searchController = {
             FROM user_tags ut
             JOIN tags t ON ut.tag_id = t.id
             WHERE ut.user_id = u.id) as tags
+          ${userDistanceSelect}
         FROM users u
         LEFT JOIN user_tags ut ON u.id = ut.user_id
         LEFT JOIN tags t ON ut.tag_id = t.id
@@ -242,7 +416,6 @@ const searchController = {
       }
 
       // Determine ORDER BY clause for users based on sort parameter and direction
-      // Note: 'capacity' sort doesn't apply to users, fall back to 'name'
       let userOrderBy;
       switch (sort) {
         case "recent":
@@ -259,6 +432,16 @@ const searchController = {
           // Capacity doesn't apply to users, default to name
           userOrderBy = "u.username ASC";
           break;
+        case "proximity":
+          if (userLocation) {
+            // Sort by distance, high values (no location) go last
+            userOrderBy =
+              direction === "DESC" ? "distance_km DESC" : "distance_km ASC";
+          } else {
+            // No user location, fall back to name
+            userOrderBy = "u.username ASC";
+          }
+          break;
         case "name":
         default:
           userOrderBy =
@@ -268,7 +451,7 @@ const searchController = {
 
       userQuery += `
         GROUP BY
-          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.avatar_url, u.is_public, u.created_at, u.updated_at
+          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.avatar_url, u.is_public, u.created_at, u.updated_at${userDistanceGroupBy}
         ORDER BY ${userOrderBy}
         LIMIT $${userParamIndex} OFFSET $${userParamIndex + 1}
       `;
@@ -319,12 +502,20 @@ const searchController = {
             team.available_capacity !== null
               ? parseInt(team.available_capacity)
               : null,
+          distance_km:
+            team.distance_km !== undefined && team.distance_km !== null
+              ? parseFloat(team.distance_km.toFixed(1))
+              : null,
         };
       });
 
       const usersWithFixedVisibility = userResults.rows.map((user) => ({
         ...user,
         is_public: user.is_public === true,
+        distance_km:
+          user.distance_km !== undefined && user.distance_km !== null
+            ? parseFloat(user.distance_km.toFixed(1))
+            : null,
       }));
 
       // ========== RETURN RESPONSE WITH PAGINATION METADATA ==========
@@ -350,6 +541,9 @@ const searchController = {
           sortBy: sort,
           sortDir: direction.toLowerCase(),
         },
+        userLocation: userLocation
+          ? { hasLocation: true }
+          : { hasLocation: false },
       });
     } catch (error) {
       console.error("Search error:", error);
@@ -370,13 +564,22 @@ const searchController = {
       const { authenticated, sortBy, sortDir } = req.query;
       const userId = req.user?.id;
 
+      console.log("GETALL DEBUG: req.user =", req.user);
+      console.log("GETALL DEBUG: userId =", userId);
+
       // === PAGINATION PARAMETERS ===
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 20;
       const offset = (page - 1) * limit;
 
       // === SORTING PARAMETERS ===
-      const validSortOptions = ["recent", "newest", "name", "capacity"];
+      const validSortOptions = [
+        "recent",
+        "newest",
+        "name",
+        "capacity",
+        "proximity",
+      ];
       const sort = validSortOptions.includes(sortBy) ? sortBy : "name";
 
       // Direction: 'asc' or 'desc'
@@ -388,6 +591,19 @@ const searchController = {
       console.log(
         `getAllUsersAndTeams: userId=${userId}, authenticated=${authenticated}, page=${page}, limit=${limit}, sortBy=${sort}, sortDir=${direction}`,
       );
+
+      // === GET USER LOCATION (needed to decide if UI can show proximity) ===
+      let userLocation = null;
+
+      if (userId) {
+        userLocation = await searchController.getUserLocation(userId);
+
+        console.log("GETALL DEBUG: userLocation =", userLocation);
+      } else {
+        console.log(
+          "GETALL DEBUG: no userId (req.user missing) -> userLocation null",
+        );
+      }
 
       // ========== TEAM COUNT QUERY ==========
       let teamCountQuery = `
@@ -415,6 +631,37 @@ const searchController = {
       }
 
       // ========== TEAM DATA QUERY ==========
+      // Build distance calculation for proximity sort
+      let teamDistanceSelect = "";
+      let teamDistanceGroupBy = "";
+      if (sort === "proximity" && userLocation) {
+        if (userLocation.hasCoordinates) {
+          // Use Haversine formula for coordinate-based distance
+          teamDistanceSelect = `,
+            CASE 
+              WHEN t.latitude IS NULL OR t.longitude IS NULL THEN 999999
+              ELSE (
+                6371 * acos(
+                  LEAST(1.0, GREATEST(-1.0,
+                    cos(radians(${userLocation.latitude})) * cos(radians(t.latitude)) *
+                    cos(radians(t.longitude) - radians(${userLocation.longitude})) +
+                    sin(radians(${userLocation.latitude})) * sin(radians(t.latitude))
+                  ))
+                )
+              )
+            END as distance_km`;
+          teamDistanceGroupBy = ", t.latitude, t.longitude";
+        } else if (userLocation.hasPostalCode) {
+          // Use postal code based distance
+          teamDistanceSelect = `,
+            ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "t")} as distance_km`;
+          teamDistanceGroupBy = ", t.postal_code";
+        } else if (userLocation.hasCity) {
+          // Use city based distance (teams don't have city, use postal_code only)
+          teamDistanceSelect = `, 999999 as distance_km`;
+        }
+      }
+
       let teamQuery = `
         SELECT
           t.id,
@@ -439,6 +686,7 @@ const searchController = {
             END, 
             ','
           ) as tags_json
+          ${teamDistanceSelect}
         FROM teams t
         LEFT JOIN team_members tm ON t.id = tm.team_id
         LEFT JOIN team_tags tt ON t.id = tt.team_id
@@ -480,13 +728,18 @@ const searchController = {
             direction === "DESC" ? "t.created_at DESC" : "t.created_at ASC";
           break;
         case "capacity":
-          // Sort by available capacity (max_members - current_members_count)
-          // DESC = most available spots first, ASC = least available spots first
-          // Teams with unlimited capacity (NULL max_members) go last
           teamOrderBy =
             direction === "DESC"
               ? "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC"
               : "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC";
+          break;
+        case "proximity":
+          if (userLocation) {
+            teamOrderBy =
+              direction === "DESC" ? "distance_km DESC" : "distance_km ASC";
+          } else {
+            teamOrderBy = "t.name ASC";
+          }
           break;
         case "name":
         default:
@@ -496,7 +749,7 @@ const searchController = {
 
       teamQuery += `
         GROUP BY
-          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at
+          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at${teamDistanceGroupBy}
         ORDER BY ${teamOrderBy}
         LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
       `;
@@ -524,6 +777,39 @@ const searchController = {
       }
 
       // ========== USER DATA QUERY ==========
+      // Build distance calculation for proximity sort
+      let userDistanceSelect = "";
+      let userDistanceGroupBy = "";
+      if (sort === "proximity" && userLocation) {
+        if (userLocation.hasCoordinates) {
+          // Use Haversine formula for coordinate-based distance
+          userDistanceSelect = `,
+            CASE 
+              WHEN u.latitude IS NULL OR u.longitude IS NULL THEN 999999
+              ELSE (
+                6371 * acos(
+                  LEAST(1.0, GREATEST(-1.0,
+                    cos(radians(${userLocation.latitude})) * cos(radians(u.latitude)) *
+                    cos(radians(u.longitude) - radians(${userLocation.longitude})) +
+                    sin(radians(${userLocation.latitude})) * sin(radians(u.latitude))
+                  ))
+                )
+              )
+            END as distance_km`;
+          userDistanceGroupBy = ", u.latitude, u.longitude";
+        } else if (userLocation.hasPostalCode) {
+          // Use postal code based distance
+          userDistanceSelect = `,
+            ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "u")} as distance_km`;
+          // postal_code already in GROUP BY
+        } else if (userLocation.hasCity) {
+          // Use city based distance
+          userDistanceSelect = `,
+            ${searchController.buildCityDistanceSQL(userLocation.city, "u")} as distance_km`;
+          // city already in GROUP BY
+        }
+      }
+
       let userQuery = `
         SELECT
           u.id,
@@ -541,6 +827,7 @@ const searchController = {
             FROM user_tags ut
             JOIN tags t ON ut.tag_id = t.id
             WHERE ut.user_id = u.id) as tags
+          ${userDistanceSelect}
         FROM users u
         WHERE 1=1
       `;
@@ -562,7 +849,6 @@ const searchController = {
       }
 
       // Determine ORDER BY clause for users based on sort parameter and direction
-      // Note: 'capacity' sort doesn't apply to users, fall back to 'name'
       let userOrderBy;
       switch (sort) {
         case "recent":
@@ -576,8 +862,15 @@ const searchController = {
             direction === "DESC" ? "u.created_at DESC" : "u.created_at ASC";
           break;
         case "capacity":
-          // Capacity doesn't apply to users, default to name
           userOrderBy = "u.username ASC";
+          break;
+        case "proximity":
+          if (userLocation) {
+            userOrderBy =
+              direction === "DESC" ? "distance_km DESC" : "distance_km ASC";
+          } else {
+            userOrderBy = "u.username ASC";
+          }
           break;
         case "name":
         default:
@@ -637,12 +930,20 @@ const searchController = {
             team.available_capacity !== null
               ? parseInt(team.available_capacity)
               : null,
+          distance_km:
+            team.distance_km !== undefined && team.distance_km !== null
+              ? parseFloat(team.distance_km.toFixed(1))
+              : null,
         };
       });
 
       const usersWithFixedVisibility = userResults.rows.map((user) => ({
         ...user,
         is_public: user.is_public === true,
+        distance_km:
+          user.distance_km !== undefined && user.distance_km !== null
+            ? parseFloat(user.distance_km.toFixed(1))
+            : null,
       }));
 
       // ========== RETURN RESPONSE WITH PAGINATION METADATA ==========
@@ -668,6 +969,9 @@ const searchController = {
           sortBy: sort,
           sortDir: direction.toLowerCase(),
         },
+        userLocation: userLocation
+          ? { hasLocation: true }
+          : { hasLocation: false },
       });
     } catch (error) {
       console.error("Error fetching all users and teams:", error);
