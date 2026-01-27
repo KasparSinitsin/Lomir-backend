@@ -16,8 +16,8 @@ const searchController = {
       const offset = (page - 1) * limit;
 
       // === SORTING PARAMETERS ===
-      // Options: 'recent' (updated_at), 'newest' (created_at), 'name' (alphabetical)
-      const validSortOptions = ["recent", "newest", "name"];
+      // Options: 'recent' (updated_at), 'newest' (created_at), 'name' (alphabetical), 'capacity' (available spots)
+      const validSortOptions = ["recent", "newest", "name", "capacity"];
       const sort = validSortOptions.includes(sortBy) ? sortBy : "name";
 
       // Direction: 'asc' or 'desc'
@@ -86,6 +86,10 @@ const searchController = {
           t.created_at,
           t.updated_at,
           COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
+          CASE 
+            WHEN t.max_members IS NULL THEN NULL
+            ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0)
+          END as available_capacity,
           STRING_AGG(
             DISTINCT CASE 
               WHEN tag.id IS NOT NULL 
@@ -138,6 +142,15 @@ const searchController = {
         case "newest":
           teamOrderBy =
             direction === "DESC" ? "t.created_at DESC" : "t.created_at ASC";
+          break;
+        case "capacity":
+          // Sort by available capacity (max_members - current_members_count)
+          // DESC = most available spots first, ASC = least available spots first
+          // Teams with unlimited capacity (NULL max_members) go last
+          teamOrderBy =
+            direction === "DESC"
+              ? "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC"
+              : "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC";
           break;
         case "name":
         default:
@@ -229,6 +242,7 @@ const searchController = {
       }
 
       // Determine ORDER BY clause for users based on sort parameter and direction
+      // Note: 'capacity' sort doesn't apply to users, fall back to 'name'
       let userOrderBy;
       switch (sort) {
         case "recent":
@@ -240,6 +254,10 @@ const searchController = {
         case "newest":
           userOrderBy =
             direction === "DESC" ? "u.created_at DESC" : "u.created_at ASC";
+          break;
+        case "capacity":
+          // Capacity doesn't apply to users, default to name
+          userOrderBy = "u.username ASC";
           break;
         case "name":
         default:
@@ -297,6 +315,10 @@ const searchController = {
           ...teamWithoutTagsJson,
           is_public: team.is_public === true,
           tags: parsedTags,
+          available_capacity:
+            team.available_capacity !== null
+              ? parseInt(team.available_capacity)
+              : null,
         };
       });
 
@@ -354,7 +376,7 @@ const searchController = {
       const offset = (page - 1) * limit;
 
       // === SORTING PARAMETERS ===
-      const validSortOptions = ["recent", "newest", "name"];
+      const validSortOptions = ["recent", "newest", "name", "capacity"];
       const sort = validSortOptions.includes(sortBy) ? sortBy : "name";
 
       // Direction: 'asc' or 'desc'
@@ -405,6 +427,10 @@ const searchController = {
           t.created_at,
           t.updated_at,
           COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
+          CASE 
+            WHEN t.max_members IS NULL THEN NULL
+            ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0)
+          END as available_capacity,
           STRING_AGG(
             DISTINCT CASE 
               WHEN tag.id IS NOT NULL 
@@ -452,6 +478,15 @@ const searchController = {
         case "newest":
           teamOrderBy =
             direction === "DESC" ? "t.created_at DESC" : "t.created_at ASC";
+          break;
+        case "capacity":
+          // Sort by available capacity (max_members - current_members_count)
+          // DESC = most available spots first, ASC = least available spots first
+          // Teams with unlimited capacity (NULL max_members) go last
+          teamOrderBy =
+            direction === "DESC"
+              ? "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC"
+              : "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC";
           break;
         case "name":
         default:
@@ -527,6 +562,7 @@ const searchController = {
       }
 
       // Determine ORDER BY clause for users based on sort parameter and direction
+      // Note: 'capacity' sort doesn't apply to users, fall back to 'name'
       let userOrderBy;
       switch (sort) {
         case "recent":
@@ -538,6 +574,10 @@ const searchController = {
         case "newest":
           userOrderBy =
             direction === "DESC" ? "u.created_at DESC" : "u.created_at ASC";
+          break;
+        case "capacity":
+          // Capacity doesn't apply to users, default to name
+          userOrderBy = "u.username ASC";
           break;
         case "name":
         default:
@@ -593,6 +633,10 @@ const searchController = {
           ...teamWithoutTagsJson,
           is_public: team.is_public === true,
           tags: parsedTags,
+          available_capacity:
+            team.available_capacity !== null
+              ? parseInt(team.available_capacity)
+              : null,
         };
       });
 
