@@ -76,6 +76,7 @@ const getUserById = async (req, res) => {
         u.postal_code,
         u.city,
         u.country,
+        u.state,
         u.latitude,
         u.longitude,
         u.avatar_url,
@@ -143,7 +144,7 @@ const updateUser = async (req, res) => {
 
     // First, get the current user data to access the old avatar URL and location
     const currentUserResult = await pool.query(
-      "SELECT avatar_url, postal_code, city, country, latitude, longitude FROM users WHERE id = $1",
+      "SELECT avatar_url, postal_code, city, country, state, latitude, longitude FROM users WHERE id = $1",
       [userId],
     );
 
@@ -290,6 +291,10 @@ const updateUser = async (req, res) => {
         updateFields.push(`longitude = $${paramPosition}`);
         queryParams.push(coordinates.longitude);
         paramPosition++;
+
+        updateFields.push(`state = $${paramPosition}`);
+        queryParams.push(coordinates.state);
+        paramPosition++;
       } else {
         console.log(
           "Geocoding failed or returned no results, clearing coordinates",
@@ -300,6 +305,10 @@ const updateUser = async (req, res) => {
         paramPosition++;
 
         updateFields.push(`longitude = $${paramPosition}`);
+        queryParams.push(null);
+        paramPosition++;
+
+        updateFields.push(`state = $${paramPosition}`);
         queryParams.push(null);
         paramPosition++;
       }
@@ -325,7 +334,7 @@ const updateUser = async (req, res) => {
       UPDATE users 
       SET ${updateFields.join(", ")} 
       WHERE id = $${paramPosition}
-      RETURNING id, username, email, first_name, last_name, bio, postal_code, city, country, latitude, longitude, avatar_url, is_public, created_at, updated_at
+      RETURNING id, username, email, first_name, last_name, bio, postal_code, city, country, state, latitude, longitude, avatar_url, is_public, created_at, updated_at
     `;
 
     console.log("Executing update query:", query);

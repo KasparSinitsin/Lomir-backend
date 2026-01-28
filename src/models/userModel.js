@@ -16,7 +16,7 @@ const userModel = {
       // Start a database transaction
       await client.query("BEGIN");
 
-      // Insert user with all location fields
+      // Insert user with all location fields including state
       const userResult = await client.query(
         `
         INSERT INTO users (
@@ -29,11 +29,12 @@ const userModel = {
           postal_code,
           city,
           country,
+          state,
           latitude,
           longitude,
           avatar_url
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) 
-        RETURNING id, username, email, first_name, last_name, postal_code, city, country, latitude, longitude, avatar_url
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) 
+        RETURNING id, username, email, first_name, last_name, postal_code, city, country, state, latitude, longitude, avatar_url
       `,
         [
           userDetails.username,
@@ -45,6 +46,7 @@ const userModel = {
           userDetails.postal_code || null,
           userDetails.city || null,
           userDetails.country || null,
+          userDetails.state || null,
           userDetails.latitude || null,
           userDetails.longitude || null,
           userDetails.avatar_url || null,
@@ -153,22 +155,23 @@ const userModel = {
    */
   async getUserLocation(userId) {
     const result = await db.query(
-      "SELECT postal_code, city, country, latitude, longitude FROM users WHERE id = $1",
+      "SELECT postal_code, city, country, state, latitude, longitude FROM users WHERE id = $1",
       [userId],
     );
     return result.rows[0] || null;
   },
 
   /**
-   * Update user's coordinates
+   * Update user's coordinates and state
    * @param {Number} userId - User ID
    * @param {Number} latitude - Latitude
    * @param {Number} longitude - Longitude
+   * @param {String} state - State/region name (optional)
    */
-  async updateCoordinates(userId, latitude, longitude) {
+  async updateCoordinates(userId, latitude, longitude, state = null) {
     await db.query(
-      "UPDATE users SET latitude = $1, longitude = $2, updated_at = NOW() WHERE id = $3",
-      [latitude, longitude, userId],
+      "UPDATE users SET latitude = $1, longitude = $2, state = $3, updated_at = NOW() WHERE id = $4",
+      [latitude, longitude, state, userId],
     );
   },
 };

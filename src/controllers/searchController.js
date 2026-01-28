@@ -378,6 +378,8 @@ const searchController = {
           u.bio,
           u.postal_code,
           u.city,
+          u.country,
+          u.state,
           u.avatar_url,
           u.is_public,
           u.created_at,
@@ -451,7 +453,7 @@ const searchController = {
 
       userQuery += `
         GROUP BY
-          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.avatar_url, u.is_public, u.created_at, u.updated_at${userDistanceGroupBy}
+          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.country, u.state, u.avatar_url, u.is_public, u.created_at, u.updated_at${userDistanceGroupBy}
         ORDER BY ${userOrderBy}
         LIMIT $${userParamIndex} OFFSET $${userParamIndex + 1}
       `;
@@ -819,6 +821,8 @@ const searchController = {
           u.bio,
           u.postal_code,
           u.city,
+          u.country,
+          u.state,
           u.avatar_url,
           u.is_public,
           u.created_at,
