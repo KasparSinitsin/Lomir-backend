@@ -1,6 +1,6 @@
 /**
  * Geocoding Utility
- * Converts postal code + country to latitude/longitude coordinates
+ * Converts postal code + country to latitude/longitude coordinates AND state/region
  * Uses OpenStreetMap Nominatim API (free, no API key required)
  */
 
@@ -32,8 +32,40 @@ const COUNTRY_CODES = {
   BR: "Brazil",
   MX: "Mexico",
   ZA: "South Africa",
+  PT: "Portugal",
+  IE: "Ireland",
+  GR: "Greece",
+  HU: "Hungary",
+  RO: "Romania",
+  BG: "Bulgaria",
+  HR: "Croatia",
+  SK: "Slovakia",
+  SI: "Slovenia",
+  LT: "Lithuania",
+  LV: "Latvia",
+  EE: "Estonia",
+  LU: "Luxembourg",
   // Add more as needed
 };
+
+/**
+ * Extract state/region from Nominatim address response
+ * @param {Object} address - Nominatim address object
+ * @returns {string|null} State/region name or null
+ */
+function extractState(address) {
+  if (!address) return null;
+
+  // Nominatim returns state in different fields depending on the country
+  // Priority: state > county > region > state_district
+  return (
+    address.state ||
+    address.county ||
+    address.region ||
+    address.state_district ||
+    null
+  );
+}
 
 /**
  * Geocode an address using OpenStreetMap Nominatim
@@ -41,7 +73,7 @@ const COUNTRY_CODES = {
  * @param {string} locationData.postal_code - Postal/ZIP code
  * @param {string} locationData.city - City name (optional)
  * @param {string} locationData.country - Country code (e.g., 'DE', 'US')
- * @returns {Promise<{latitude: number, longitude: number} | null>}
+ * @returns {Promise<{latitude: number, longitude: number, state: string|null} | null>}
  */
 async function geocodeAddress({ postal_code, city, country }) {
   // Need at least postal_code and country, or city and country
@@ -77,7 +109,7 @@ async function geocodeAddress({ postal_code, city, country }) {
           q: searchQuery,
           format: "json",
           limit: 1,
-          addressdetails: 1,
+          addressdetails: 1, // Important: this returns the state info
         },
         headers: {
           "User-Agent": "Lomir-App/1.0 (team-building-app)",
@@ -90,14 +122,16 @@ async function geocodeAddress({ postal_code, city, country }) {
       const result = response.data[0];
       const latitude = parseFloat(result.lat);
       const longitude = parseFloat(result.lon);
+      const state = extractState(result.address);
 
       console.log(
-        `Geocoding success: "${searchQuery}" -> lat: ${latitude}, lng: ${longitude}`,
+        `Geocoding success: "${searchQuery}" -> lat: ${latitude}, lng: ${longitude}, state: ${state}`,
       );
 
       return {
         latitude,
         longitude,
+        state,
       };
     }
 
@@ -128,14 +162,16 @@ async function geocodeAddress({ postal_code, city, country }) {
         const result = retryResponse.data[0];
         const latitude = parseFloat(result.lat);
         const longitude = parseFloat(result.lon);
+        const state = extractState(result.address);
 
         console.log(
-          `Geocoding retry success: lat: ${latitude}, lng: ${longitude}`,
+          `Geocoding retry success: lat: ${latitude}, lng: ${longitude}, state: ${state}`,
         );
 
         return {
           latitude,
           longitude,
+          state,
         };
       }
     }
@@ -167,14 +203,16 @@ async function geocodeAddress({ postal_code, city, country }) {
         const result = cityResponse.data[0];
         const latitude = parseFloat(result.lat);
         const longitude = parseFloat(result.lon);
+        const state = extractState(result.address);
 
         console.log(
-          `Geocoding city retry success: lat: ${latitude}, lng: ${longitude}`,
+          `Geocoding city retry success: lat: ${latitude}, lng: ${longitude}, state: ${state}`,
         );
 
         return {
           latitude,
           longitude,
+          state,
         };
       }
     }

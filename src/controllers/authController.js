@@ -106,6 +106,7 @@ const authController = {
           );
           value.latitude = coordinates.latitude;
           value.longitude = coordinates.longitude;
+          value.state = coordinates.state;
         }
       }
 
