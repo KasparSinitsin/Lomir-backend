@@ -4,6 +4,7 @@ const userModel = require("../models/userModel");
 const { generateToken } = require("../utils/jwtUtils");
 const emailService = require("../services/emailService");
 const db = require("../config/database");
+const { geocodeAddress } = require("../utils/geocodingUtil");
 
 // Validation schema for registration
 const registerSchema = Joi.object({
@@ -14,6 +15,8 @@ const registerSchema = Joi.object({
   last_name: Joi.string().allow("", null),
   bio: Joi.string().allow("", null),
   postal_code: Joi.string().allow("", null),
+  city: Joi.string().allow("", null),
+  country: Joi.string().allow("", null),
   avatar_url: Joi.string().uri().allow(null),
   tags: Joi.array()
     .items(
@@ -87,6 +90,25 @@ const authController = {
         });
       }
 
+      // Geocode the address if location data is provided
+      let coordinates = null;
+      if (value.postal_code || value.city) {
+        console.log("Attempting to geocode address for new user...");
+        coordinates = await geocodeAddress({
+          postal_code: value.postal_code,
+          city: value.city,
+          country: value.country,
+        });
+
+        if (coordinates) {
+          console.log(
+            `Geocoded coordinates for new user: lat=${coordinates.latitude}, lng=${coordinates.longitude}`,
+          );
+          value.latitude = coordinates.latitude;
+          value.longitude = coordinates.longitude;
+        }
+      }
+
       // Create the user (email_verified defaults to FALSE)
       const user = await userModel.createUser(value);
 
@@ -120,16 +142,16 @@ const authController = {
         message:
           "Registration successful! Please check your email to verify your account.",
         data: {
+          requiresVerification: true,
           user: {
             id: user.id,
             username: user.username,
             email: user.email,
           },
-          requiresVerification: true,
         },
       });
     } catch (error) {
-      console.error("Full registration error:", error);
+      console.error("Registration error:", error);
       res.status(500).json({
         success: false,
         message: "Error registering user",
@@ -139,11 +161,11 @@ const authController = {
   },
 
   /**
-   * Verify user's email with token
+   * Verify user's email address
    */
   async verifyEmail(req, res) {
     try {
-      const { token } = req.params;
+      const { token } = req.query;
 
       if (!token) {
         return res.status(400).json({
@@ -152,26 +174,33 @@ const authController = {
         });
       }
 
-      // Find user with valid token
+      // Find user with this token that hasn't expired
       const result = await db.query(
-        `SELECT id, email, username, first_name, last_name, avatar_url 
+        `SELECT id, username, email, email_verified 
          FROM users 
          WHERE verification_token = $1 
-         AND verification_token_expires > NOW()
-         AND email_verified = FALSE`,
+         AND verification_token_expires > NOW()`,
         [token],
       );
 
       if (result.rows.length === 0) {
         return res.status(400).json({
           success: false,
-          message: "Invalid or expired verification link",
+          message: "Invalid or expired verification token",
         });
       }
 
       const user = result.rows[0];
 
-      // Mark email as verified and clear token
+      // Check if already verified
+      if (user.email_verified) {
+        return res.status(200).json({
+          success: true,
+          message: "Email already verified. You can now log in.",
+        });
+      }
+
+      // Mark email as verified and clear the token
       await db.query(
         `UPDATE users 
          SET email_verified = TRUE, 
@@ -181,23 +210,9 @@ const authController = {
         [user.id],
       );
 
-      // Now generate JWT token since email is verified
-      const authToken = generateToken(user);
-
       res.status(200).json({
         success: true,
-        message: "Email verified successfully!",
-        data: {
-          token: authToken,
-          user: {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            first_name: user.first_name,
-            last_name: user.last_name,
-            avatar_url: user.avatar_url,
-          },
-        },
+        message: "Email verified successfully! You can now log in.",
       });
     } catch (error) {
       console.error("Email verification error:", error);
@@ -223,28 +238,36 @@ const authController = {
         });
       }
 
-      // Find unverified user
+      // Find user by email
       const result = await db.query(
-        `SELECT id, username, email FROM users WHERE email = $1 AND email_verified = FALSE`,
+        `SELECT id, username, email, email_verified FROM users WHERE email = $1`,
         [email],
       );
 
       if (result.rows.length === 0) {
-        // Don't reveal if email exists or is already verified (security)
+        // Don't reveal if email exists or not
         return res.status(200).json({
           success: true,
           message:
-            "If an unverified account exists with this email, a verification link has been sent.",
+            "If an account exists with this email, a verification link has been sent.",
         });
       }
 
       const user = result.rows[0];
 
+      // Check if already verified
+      if (user.email_verified) {
+        return res.status(400).json({
+          success: false,
+          message: "Email is already verified. You can log in.",
+        });
+      }
+
       // Generate new verification token
       const verificationToken = crypto.randomBytes(32).toString("hex");
       const tokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
-      // Update token in database
+      // Save new token
       await db.query(
         `UPDATE users 
          SET verification_token = $1, verification_token_expires = $2 
@@ -252,17 +275,28 @@ const authController = {
         [verificationToken, tokenExpires, user.id],
       );
 
-      // Send new verification email
-      await emailService.sendVerificationEmail(
+      // Send verification email
+      const emailResult = await emailService.sendVerificationEmail(
         user.email,
         verificationToken,
         user.username,
       );
 
+      if (!emailResult.success) {
+        console.error(
+          "Failed to resend verification email:",
+          emailResult.error,
+        );
+        return res.status(500).json({
+          success: false,
+          message: "Failed to send verification email. Please try again later.",
+        });
+      }
+
       res.status(200).json({
         success: true,
         message:
-          "If an unverified account exists with this email, a verification link has been sent.",
+          "If an account exists with this email, a verification link has been sent.",
       });
     } catch (error) {
       console.error("Resend verification error:", error);
@@ -275,7 +309,7 @@ const authController = {
   },
 
   /**
-   * Login user (only if email is verified)
+   * Login an existing user
    */
   async login(req, res) {
     try {
@@ -290,6 +324,7 @@ const authController = {
       }
 
       const user = await userModel.findByEmail(value.email);
+
       if (!user) {
         return res.status(401).json({
           success: false,
@@ -303,15 +338,15 @@ const authController = {
           success: false,
           message: "Please verify your email before logging in",
           requiresVerification: true,
-          email: user.email,
         });
       }
 
-      const isPasswordValid = await userModel.comparePassword(
+      const isValidPassword = await userModel.verifyPassword(
         value.password,
         user.password_hash,
       );
-      if (!isPasswordValid) {
+
+      if (!isValidPassword) {
         return res.status(401).json({
           success: false,
           message: "Invalid email or password",
@@ -320,22 +355,29 @@ const authController = {
 
       const token = generateToken(user);
 
-      const userResponse = {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        first_name: user.first_name,
-        last_name: user.last_name,
-        avatar_url: user.avatar_url,
-      };
-
       res.status(200).json({
         success: true,
         message: "Login successful",
-        data: { token, user: userResponse },
+        data: {
+          token,
+          user: {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            first_name: user.first_name,
+            last_name: user.last_name,
+            bio: user.bio,
+            postal_code: user.postal_code,
+            city: user.city,
+            country: user.country,
+            avatar_url: user.avatar_url,
+            is_public: user.is_public,
+            created_at: user.created_at,
+          },
+        },
       });
     } catch (error) {
-      console.error("Login error (catch):", error);
+      console.error("Login error:", error);
       res.status(500).json({
         success: false,
         message: "Error logging in",
@@ -345,13 +387,13 @@ const authController = {
   },
 
   /**
-   * Get current user info
+   * Get current user's profile
    */
   async getCurrentUser(req, res) {
     try {
       const userId = req.user.id;
-
       const user = await userModel.findById(userId);
+
       if (!user) {
         return res.status(404).json({
           success: false,
@@ -361,6 +403,7 @@ const authController = {
 
       res.status(200).json({
         success: true,
+        message: "User profile retrieved",
         data: {
           user: {
             id: user.id,
@@ -370,6 +413,7 @@ const authController = {
             last_name: user.last_name,
             bio: user.bio,
             city: user.city,
+            country: user.country,
             postalCode: user.postal_code,
             avatarUrl: user.avatar_url,
             isPublic: user.is_public,
@@ -455,7 +499,7 @@ const authController = {
   },
 
   /**
-   * Reset password with token
+   * Reset password using token
    */
   async resetPassword(req, res) {
     try {
@@ -475,8 +519,9 @@ const authController = {
         });
       }
 
+      // Find user with valid reset token
       const result = await db.query(
-        `SELECT id, email, username FROM users 
+        `SELECT id, username FROM users 
          WHERE password_reset_token = $1 
          AND password_reset_expires > NOW()`,
         [token],
@@ -485,29 +530,29 @@ const authController = {
       if (result.rows.length === 0) {
         return res.status(400).json({
           success: false,
-          message: "Invalid or expired reset link",
+          message: "Invalid or expired reset token",
         });
       }
 
       const user = result.rows[0];
 
-      const bcrypt = require("bcrypt");
-      const saltRounds = 10;
-      const hashedPassword = await bcrypt.hash(password, saltRounds);
+      // Hash new password
+      const hashedPassword = await userModel.hashPassword(password);
 
+      // Update password and clear reset token
       await db.query(
         `UPDATE users 
          SET password_hash = $1, 
              password_reset_token = NULL, 
-             password_reset_expires = NULL 
+             password_reset_expires = NULL,
+             updated_at = NOW()
          WHERE id = $2`,
         [hashedPassword, user.id],
       );
 
       res.status(200).json({
         success: true,
-        message:
-          "Password reset successfully! You can now log in with your new password.",
+        message: "Password reset successful. You can now log in.",
       });
     } catch (error) {
       console.error("Reset password error:", error);

@@ -16,7 +16,7 @@ const userModel = {
       // Start a database transaction
       await client.query("BEGIN");
 
-      // Insert user
+      // Insert user with all location fields
       const userResult = await client.query(
         `
         INSERT INTO users (
@@ -26,21 +26,29 @@ const userModel = {
           first_name, 
           last_name, 
           bio, 
-          postal_code, 
+          postal_code,
+          city,
+          country,
+          latitude,
+          longitude,
           avatar_url
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
-        RETURNING id, username, email, first_name, last_name, avatar_url
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) 
+        RETURNING id, username, email, first_name, last_name, postal_code, city, country, latitude, longitude, avatar_url
       `,
         [
           userDetails.username,
           userDetails.email,
           await bcrypt.hash(userDetails.password, 10), // Hash password
-          userDetails.first_name,
-          userDetails.last_name,
-          userDetails.bio,
-          userDetails.postal_code,
-          userDetails.avatar_url,
-        ]
+          userDetails.first_name || null,
+          userDetails.last_name || null,
+          userDetails.bio || null,
+          userDetails.postal_code || null,
+          userDetails.city || null,
+          userDetails.country || null,
+          userDetails.latitude || null,
+          userDetails.longitude || null,
+          userDetails.avatar_url || null,
+        ],
       );
 
       const userId = userResult.rows[0].id;
@@ -62,8 +70,8 @@ const userModel = {
               tag.tag_id,
               tag.experience_level || 2,
               tag.interest_level || 3,
-            ]
-          )
+            ],
+          ),
         );
 
         await Promise.all(tagInserts);
@@ -99,14 +107,13 @@ const userModel = {
 
   /**
    * Find a user by username
-   * @param {String} username - Username
+   * @param {String} username - User username
    * @returns {Object|null} User object or null if not found
    */
   async findByUsername(username) {
     const result = await db.query("SELECT * FROM users WHERE username = $1", [
       username,
     ]);
-
     return result.rows[0] || null;
   },
 
@@ -116,22 +123,53 @@ const userModel = {
    * @returns {Object|null} User object or null if not found
    */
   async findById(id) {
-    const result = await db.query(
-      "SELECT id, username, email, first_name, last_name, bio, postal_code, city, avatar_url, is_public, created_at, updated_at FROM users WHERE id = $1",
-      [id]
-    );
-
+    const result = await db.query("SELECT * FROM users WHERE id = $1", [id]);
     return result.rows[0] || null;
   },
 
   /**
-   * Check if password matches for a user
-   * @param {String} password - Plain text password to check
-   * @param {String} hashedPassword - Hashed password from database
-   * @returns {Boolean} True if password matches, false otherwise
+   * Verify a password against a hash
+   * @param {String} password - Plain text password
+   * @param {String} hash - Hashed password
+   * @returns {Boolean} True if password matches
    */
-  async comparePassword(password, hashedPassword) {
-    return await bcrypt.compare(password, hashedPassword);
+  async verifyPassword(password, hash) {
+    return bcrypt.compare(password, hash);
+  },
+
+  /**
+   * Hash a password
+   * @param {String} password - Plain text password
+   * @returns {String} Hashed password
+   */
+  async hashPassword(password) {
+    return bcrypt.hash(password, 10);
+  },
+
+  /**
+   * Get user's current location data
+   * @param {Number} userId - User ID
+   * @returns {Object|null} Location data or null
+   */
+  async getUserLocation(userId) {
+    const result = await db.query(
+      "SELECT postal_code, city, country, latitude, longitude FROM users WHERE id = $1",
+      [userId],
+    );
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Update user's coordinates
+   * @param {Number} userId - User ID
+   * @param {Number} latitude - Latitude
+   * @param {Number} longitude - Longitude
+   */
+  async updateCoordinates(userId, latitude, longitude) {
+    await db.query(
+      "UPDATE users SET latitude = $1, longitude = $2, updated_at = NOW() WHERE id = $3",
+      [latitude, longitude, userId],
+    );
   },
 };
 
