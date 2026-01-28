@@ -481,7 +481,7 @@ const getTeamById = async (req, res) => {
   SELECT tm.user_id, tm.role, tm.joined_at, 
          u.username, u.email, u.avatar_url, 
          u.first_name, u.last_name, u.is_public,
-         u.postal_code
+         u.postal_code, u.city, u.country, u.state
   FROM team_members tm
   JOIN users u ON tm.user_id = u.id
   WHERE tm.team_id = $1
@@ -1333,7 +1333,7 @@ const getTeamApplications = async (req, res) => {
       `SELECT 
         ta.id, ta.message, ta.status, ta.created_at,
         u.id as applicant_id, u.username, u.first_name, u.last_name, 
-        u.bio, u.avatar_url, u.postal_code
+        u.bio, u.avatar_url, u.postal_code, u.city, u.country, u.state
        FROM team_applications ta
        JOIN users u ON ta.applicant_id = u.id
        WHERE ta.team_id = $1 AND ta.status = 'pending'
