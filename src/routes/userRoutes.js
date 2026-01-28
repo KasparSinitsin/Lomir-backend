@@ -9,7 +9,7 @@ const router = express.Router();
 
 // GET /api/users - Get all users (Placeholder in controller)
 // Access: Public (or add auth.authenticateToken if needed)
-router.get("/", userController.getAllUsers);
+router.get("/", userController.getUsers);
 
 // GET /api/users/:id - Get a specific user by their ID
 // Access: Public (or add auth.authenticateToken if needed)
@@ -25,14 +25,18 @@ router.put("/:id", auth.authenticateToken, userController.updateUser);
 router.delete("/:id", auth.authenticateToken, userController.deleteUser);
 
 // DELETE /api/users/:id/avatar - Delete user's avatar image
-router.delete('/:id/avatar', auth.authenticateToken, userController.deleteUserAvatar);
+router.delete(
+  "/:id/avatar",
+  auth.authenticateToken,
+  userController.deleteAvatar,
+);
 
 // === User-Specific Sub-Resources ===
 
 // GET /api/users/:id/teams - Get teams associated with a specific user (Placeholder in controller)
 // Access: Private (Requires valid token - added assumption, adjust if needed)
 // *** CORRECTED: Added /:id parameter to specify the user ***
-router.get("/:id/teams", auth.authenticateToken, userController.getUserTeams);
+// router.get("/:id/teams", auth.authenticateToken, userController.getUserTeams);
 
 // GET /api/users/:id/tags - Get tags associated with a specific user
 // Access: Public (as written - add auth.authenticateToken if it should be private)
