@@ -2,6 +2,10 @@ const db = require("../config/database");
 const Joi = require("joi");
 const cloudinary = require("../config/cloudinary");
 const {
+  geocodeAddress,
+  hasLocationChanged,
+} = require("../utils/geocodingUtil");
+const {
   createNotification,
   notifyTeamMembers,
   notifyTeamAdmins,
@@ -246,12 +250,19 @@ const teamCreationSchema = Joi.object({
         "number.base": "Maximum members must be a number",
         "number.min": "Team must have at least 2 members",
       }),
-      Joi.valid(null), // null represents "unlimited"
+      Joi.valid(null),
     )
     .required()
     .messages({
       "any.required": "Maximum members is required",
     }),
+
+  // LOCATION FIELDS (move them here!)
+  is_remote: Joi.boolean().default(false),
+  postal_code: Joi.string().allow(null, "").optional(),
+  city: Joi.string().allow(null, "").optional(),
+  state: Joi.string().allow(null, "").optional(),
+  country: Joi.string().allow(null, "").optional(),
 
   teamavatar_url: Joi.string().uri().allow(null, "").messages({
     "string.uri": "Team avatar URL must be a valid URL",
@@ -263,7 +274,7 @@ const teamCreationSchema = Joi.object({
         tag_id: Joi.number().integer().required(),
       }),
     )
-    .default([]), // Default([]) so it's optional
+    .default([]),
 });
 
 const createTeam = async (req, res) => {
@@ -307,26 +318,38 @@ const createTeam = async (req, res) => {
     const teamResult = await client.query(
       `
   INSERT INTO teams (
-    name, 
-    description, 
-    owner_id, 
-    is_public, 
-    max_members, 
+    name,
+    description,
+    owner_id,
+    is_public,
+    max_members,
+    is_remote,
     postal_code,
+    city,
+    state,
+    country,
     teamavatar_url
-  ) VALUES ($1, $2, $3, $4, $5, $6, $7) 
-  RETURNING id, name, description, is_public, max_members, postal_code, teamavatar_url, created_at
-`,
+  ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+  RETURNING
+    id, name, description, owner_id, is_public, max_members,
+    is_remote, postal_code, city, state, country,
+    teamavatar_url, created_at
+  `,
       [
         value.name,
         value.description,
         ownerId,
         isPublicBoolean,
         maxMembersForInsert,
+        value.is_remote ?? false,
         value.postal_code || null,
+        value.city || null,
+        value.state || null,
+        value.country || null,
         value.teamavatar_url || null,
       ],
     );
+
     const team = teamResult.rows[0];
     console.log("--> Team inserted:", team);
 
@@ -874,14 +897,25 @@ const updateTeam = async (req, res) => {
     const updateSchema = Joi.object({
       name: Joi.string().min(3).max(100),
       description: Joi.string().min(10).max(500),
+
       is_public: Joi.boolean(),
+
       max_members: Joi.alternatives().try(
         Joi.number().integer().min(2),
-        Joi.valid(null), // null = "unlimited"
+        Joi.valid(null),
       ),
-      postal_code: Joi.string(),
+
+      // ✅ LOCATION (add these)
+      is_remote: Joi.boolean(),
+      postal_code: Joi.string().allow(null, ""),
+      city: Joi.string().allow(null, ""),
+      state: Joi.string().allow(null, ""),
+      country: Joi.string().allow(null, ""),
+
       status: Joi.string().valid("active", "inactive"),
+
       teamavatar_url: Joi.string().uri().allow(null, ""),
+
       tags: Joi.array().items(
         Joi.object({
           tag_id: Joi.number().integer().required(),
@@ -1128,6 +1162,40 @@ const updateTeam = async (req, res) => {
       });
     }
 
+    // Normalize location rules:
+    // - If is_remote is true: clear location fields
+    // - Convert empty strings to null so DB stores NULL instead of ""
+    const isRemoteProvided = value.is_remote !== undefined;
+    const isRemote = value.is_remote === true;
+
+    const hasAnyLocationField =
+      value.postal_code !== undefined ||
+      value.city !== undefined ||
+      value.state !== undefined ||
+      value.country !== undefined;
+
+    if (isRemoteProvided && isRemote) {
+      value.postal_code = null;
+      value.city = null;
+      value.state = null;
+      value.country = null;
+      if (isRemoteProvided && isRemote) {
+        delete value.postal_code;
+        delete value.city;
+        delete value.state;
+        delete value.country;
+      }
+    } else if (!isRemoteProvided && hasAnyLocationField) {
+      // optional: if user sets location fields we assume not remote
+      value.is_remote = false;
+    }
+
+    // normalize empties to null
+    if (value.postal_code === "") value.postal_code = null;
+    if (value.city === "") value.city = null;
+    if (value.state === "") value.state = null;
+    if (value.country === "") value.country = null;
+
     // Begin transaction
     const client = await db.pool.connect();
 
@@ -1192,17 +1260,47 @@ const updateTeam = async (req, res) => {
         paramCounter++;
       }
 
-      // 🔧 IMPORTANT FIX: allow null to be saved (unlimited),
+      // Allow null to be saved (unlimited),
       // but only update when the field was actually sent.
       if (value.max_members !== undefined) {
         updateFields.push(`max_members = $${paramCounter}`);
         queryParams.push(value.max_members); // can be null or number
         paramCounter++;
       }
+      // ✅ LOCATION FIELDS (single-pass, no duplicates)
 
-      if (value.postal_code) {
+      // is_remote
+      if (value.is_remote !== undefined) {
+        updateFields.push(`is_remote = $${paramCounter}`);
+        queryParams.push(value.is_remote);
+        paramCounter++;
+      }
+
+      // postal_code
+      if (value.postal_code !== undefined) {
         updateFields.push(`postal_code = $${paramCounter}`);
-        queryParams.push(value.postal_code);
+        queryParams.push(value.postal_code); // already normalized to null above
+        paramCounter++;
+      }
+
+      // city
+      if (value.city !== undefined) {
+        updateFields.push(`city = $${paramCounter}`);
+        queryParams.push(value.city); // already normalized to null above
+        paramCounter++;
+      }
+
+      // state
+      if (value.state !== undefined) {
+        updateFields.push(`state = $${paramCounter}`);
+        queryParams.push(value.state); // already normalized to null above
+        paramCounter++;
+      }
+
+      // country
+      if (value.country !== undefined) {
+        updateFields.push(`country = $${paramCounter}`);
+        queryParams.push(value.country); // already normalized to null above
         paramCounter++;
       }
 
