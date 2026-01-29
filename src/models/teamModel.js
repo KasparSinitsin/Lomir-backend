@@ -82,43 +82,43 @@ const teamModel = {
   },
 
   /**
- * Update an existing team in the database (including location fields)
- * Supports updating tags via team_tags join table.
- *
- * Location rules:
- * - if is_remote === true  -> postal_code/city/country are forced to NULL
- * - if is_remote === false -> location fields stored as provided (or NULL)
- */
-async updateTeam(teamId, teamData) {
-  const { tags, ...teamDetails } = teamData;
+   * Update an existing team in the database (including location fields)
+   * Supports updating tags via team_tags join table.
+   *
+   * Location rules:
+   * - if is_remote === true  -> postal_code/city/country are forced to NULL
+   * - if is_remote === false -> location fields stored as provided (or NULL)
+   */
+  async updateTeam(teamId, teamData) {
+    const { tags, ...teamDetails } = teamData;
 
-  const client = await db.pool.connect();
+    const client = await db.pool.connect();
 
-  try {
-    await client.query("BEGIN");
+    try {
+      await client.query("BEGIN");
 
-    // --- Normalize location fields (IMPORTANT) ---
-    // Accept both snake_case and camelCase to be safe
-    const isRemoteRaw =
-      teamDetails.is_remote ?? teamDetails.isRemote ?? false;
+      // --- Normalize location fields (IMPORTANT) ---
+      // Accept both snake_case and camelCase to be safe
+      const isRemoteRaw =
+        teamDetails.is_remote ?? teamDetails.isRemote ?? false;
 
-    const isRemote =
-      isRemoteRaw === true || isRemoteRaw === "true" || isRemoteRaw === 1;
+      const isRemote =
+        isRemoteRaw === true || isRemoteRaw === "true" || isRemoteRaw === 1;
 
-    const postalCode =
-      teamDetails.postal_code ?? teamDetails.postalCode ?? null;
-    const city = teamDetails.city ?? null;
-    const country = teamDetails.country ?? null;
+      const postalCode =
+        teamDetails.postal_code ?? teamDetails.postalCode ?? null;
+      const city = teamDetails.city ?? null;
+      const country = teamDetails.country ?? null;
 
-    // If remote: force location fields to NULL
-    const finalPostalCode = isRemote ? null : (postalCode || null);
-    const finalCity = isRemote ? null : (city || null);
-    const finalCountry = isRemote ? null : (country || null);
+      // If remote: force location fields to NULL
+      const finalPostalCode = isRemote ? null : postalCode || null;
+      const finalCity = isRemote ? null : city || null;
+      const finalCountry = isRemote ? null : country || null;
 
-    // --- Update teams table ---
-    // NOTE: You can add/remove fields here depending on what you allow updating.
-    const updateResult = await client.query(
-      `
+      // --- Update teams table ---
+      // NOTE: You can add/remove fields here depending on what you allow updating.
+      const updateResult = await client.query(
+        `
       UPDATE teams
       SET
         name = COALESCE($2, name),
@@ -135,62 +135,67 @@ async updateTeam(teamId, teamData) {
         id, name, description, is_public, max_members,
         teamavatar_url, is_remote, postal_code, city, country
       `,
-      [
-        teamId,
-        teamDetails.name ?? null,
-        teamDetails.description ?? null,
-        typeof teamDetails.is_public === "boolean" ? teamDetails.is_public : null,
-        // max_members: allow NULL for unlimited; if omitted entirely keep existing
-        teamDetails.max_members !== undefined ? teamDetails.max_members : null,
-        teamDetails.teamavatar_url ?? null,
-        isRemote,
-        finalPostalCode,
-        finalCity,
-        finalCountry,
-      ]
-    );
+        [
+          teamId,
+          teamDetails.name ?? null,
+          teamDetails.description ?? null,
+          typeof teamDetails.is_public === "boolean"
+            ? teamDetails.is_public
+            : null,
+          // max_members: allow NULL for unlimited; if omitted entirely keep existing
+          teamDetails.max_members !== undefined
+            ? teamDetails.max_members
+            : null,
+          teamDetails.teamavatar_url ?? null,
+          isRemote,
+          finalPostalCode,
+          finalCity,
+          finalCountry,
+        ],
+      );
 
-    // If you want "max_members omitted" to preserve old value, do this instead:
-    // - read current max_members first OR build dynamic SQL.
-    // For now, this expects your controller sends max_members always (which your UI does).
+      // If you want "max_members omitted" to preserve old value, do this instead:
+      // - read current max_members first OR build dynamic SQL.
+      // For now, this expects your controller sends max_members always (which your UI does).
 
-    if (!updateResult.rows[0]) {
-      throw new Error("Team not found");
-    }
+      if (!updateResult.rows[0]) {
+        throw new Error("Team not found");
+      }
 
-    // --- Update team tags (optional) ---
-    // If tags is provided, we replace existing tags with the new set.
-    if (Array.isArray(tags)) {
-      // Clear existing
-      await client.query(`DELETE FROM team_tags WHERE team_id = $1`, [teamId]);
+      // --- Update team tags (optional) ---
+      // If tags is provided, we replace existing tags with the new set.
+      if (Array.isArray(tags)) {
+        // Clear existing
+        await client.query(`DELETE FROM team_tags WHERE team_id = $1`, [
+          teamId,
+        ]);
 
-      // Insert new
-      if (tags.length > 0) {
-        const tagInserts = tags.map((tag) =>
-          client.query(
-            `
+        // Insert new
+        if (tags.length > 0) {
+          const tagInserts = tags.map((tag) =>
+            client.query(
+              `
             INSERT INTO team_tags (team_id, tag_id)
             VALUES ($1, $2)
             `,
-            [teamId, tag.tag_id]
-          )
-        );
+              [teamId, tag.tag_id],
+            ),
+          );
 
-        await Promise.all(tagInserts);
+          await Promise.all(tagInserts);
+        }
       }
+
+      await client.query("COMMIT");
+      return updateResult.rows[0];
+    } catch (error) {
+      await client.query("ROLLBACK");
+      console.error("Error updating team:", error);
+      throw error;
+    } finally {
+      client.release();
     }
-
-    await client.query("COMMIT");
-    return updateResult.rows[0];
-  } catch (error) {
-    await client.query("ROLLBACK");
-    console.error("Error updating team:", error);
-    throw error;
-  } finally {
-    client.release();
-  }
-},
-
+  },
 
   /**
    * Find a team by ID
@@ -219,7 +224,5 @@ async updateTeam(teamId, teamData) {
     return result.rows;
   },
 };
-
-
 
 module.exports = teamModel;

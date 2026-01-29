@@ -302,6 +302,24 @@ const createTeam = async (req, res) => {
       value.max_members,
     );
 
+    if (
+      !value.is_remote &&
+      (value.postal_code || value.city) &&
+      value.country
+    ) {
+      const coordinates = await geocodeAddress({
+        postal_code: value.postal_code,
+        city: value.city,
+        country: value.country,
+      });
+
+      if (coordinates) {
+        value.latitude = coordinates.latitude;
+        value.longitude = coordinates.longitude;
+        value.state = coordinates.state;
+      }
+    }
+
     // Decide what to insert into max_members
     const maxMembersForInsert =
       value.max_members === undefined ? null : value.max_members;
@@ -328,25 +346,26 @@ const createTeam = async (req, res) => {
     city,
     state,
     country,
+    latitude,
+    longitude,
     teamavatar_url
-  ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-  RETURNING
-    id, name, description, owner_id, is_public, max_members,
-    is_remote, postal_code, city, state, country,
-    teamavatar_url, created_at
+  ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+  RETURNING *
   `,
       [
-        value.name,
-        value.description,
-        ownerId,
-        isPublicBoolean,
-        maxMembersForInsert,
-        value.is_remote ?? false,
-        value.postal_code || null,
-        value.city || null,
-        value.state || null,
-        value.country || null,
-        value.teamavatar_url || null,
+        value.name, // $1
+        value.description, // $2
+        ownerId, // $3
+        isPublicBoolean, // $4
+        maxMembersForInsert, // $5
+        value.is_remote ?? false, // $6
+        value.is_remote ? null : (value.postal_code ?? null), // $7
+        value.is_remote ? null : (value.city ?? null), // $8
+        value.is_remote ? null : (value.state ?? null), // $9
+        value.is_remote ? null : (value.country ?? null), // $10
+        value.is_remote ? null : (value.latitude ?? null), // $11
+        value.is_remote ? null : (value.longitude ?? null), // $12
+        value.teamavatar_url ?? null, // $13
       ],
     );
 
@@ -564,9 +583,6 @@ const getTeamById = async (req, res) => {
 /**
  * Get all teams for the authenticated user with pagination
  *
- * INSTRUCTIONS: Find the existing getUserTeams function in teamController.js
- * and replace it entirely with this code.
- *
  * @route GET /api/teams/my-teams
  * @query {number} page - Page number (default: 1)
  * @query {number} limit - Results per page (default: 10)
@@ -665,7 +681,7 @@ const getUserRoleInTeam = async (req, res) => {
       [teamId, userId],
     );
 
-    // ✅ User is NOT a member (normal case, not an error)
+    // User is NOT a member (normal case, not an error)
     if (roleResult.rows.length === 0) {
       return res.status(200).json({
         success: true,
@@ -674,7 +690,7 @@ const getUserRoleInTeam = async (req, res) => {
       });
     }
 
-    // ✅ User IS a member
+    // User IS a member
     return res.status(200).json({
       success: true,
       isMember: true,
@@ -905,7 +921,7 @@ const updateTeam = async (req, res) => {
         Joi.valid(null),
       ),
 
-      // ✅ LOCATION (add these)
+      // LOCATION
       is_remote: Joi.boolean(),
       postal_code: Joi.string().allow(null, ""),
       city: Joi.string().allow(null, ""),
@@ -923,19 +939,13 @@ const updateTeam = async (req, res) => {
       ),
     });
 
-    // NOTE: This nested function is unrelated to max_members;
+    // This nested function is unrelated to max_members;
     // leaving it as-is from your original code.
     const updateMemberRole = async (req, res) => {
       try {
         const teamId = req.params.teamId;
         const memberId = req.params.memberId;
         const userId = req.user.id;
-
-        // ✅ DEBUG: Log what we're receiving
-        console.log("=== ROLE UPDATE DEBUG ===");
-        console.log("Request body:", req.body);
-        console.log("Request body type:", typeof req.body);
-        console.log("Request body keys:", Object.keys(req.body));
 
         // Accept both camelCase and snake_case
         const { newRole, new_role } = req.body;
@@ -1196,6 +1206,40 @@ const updateTeam = async (req, res) => {
     if (value.state === "") value.state = null;
     if (value.country === "") value.country = null;
 
+    // Geocode if location changed and not remote
+    if (!isRemote && (value.postal_code || value.city) && value.country) {
+      const coordinates = await geocodeAddress({
+        postal_code: value.postal_code,
+        city: value.city,
+        country: value.country,
+      });
+
+      if (coordinates) {
+        value.latitude = coordinates.latitude;
+        value.longitude = coordinates.longitude;
+        value.state = coordinates.state;
+      } else {
+        // Clear coordinates if geocoding fails
+        value.latitude = null;
+        value.longitude = null;
+      }
+    } else if (isRemote) {
+      // Clear coordinates for remote teams
+      value.latitude = null;
+      value.longitude = null;
+    }
+
+    // After geocoding block, before transaction:
+    console.log("--> Location data to insert:", {
+      is_remote: value.is_remote,
+      postal_code: value.postal_code,
+      city: value.city,
+      country: value.country,
+      state: value.state,
+      latitude: value.latitude,
+      longitude: value.longitude,
+    });
+
     // Begin transaction
     const client = await db.pool.connect();
 
@@ -1267,7 +1311,8 @@ const updateTeam = async (req, res) => {
         queryParams.push(value.max_members); // can be null or number
         paramCounter++;
       }
-      // ✅ LOCATION FIELDS (single-pass, no duplicates)
+
+      // LOCATION FIELDS (single-pass, no duplicates)
 
       // is_remote
       if (value.is_remote !== undefined) {
@@ -1301,6 +1346,20 @@ const updateTeam = async (req, res) => {
       if (value.country !== undefined) {
         updateFields.push(`country = $${paramCounter}`);
         queryParams.push(value.country); // already normalized to null above
+        paramCounter++;
+      }
+
+      // latitude
+      if (value.latitude !== undefined) {
+        updateFields.push(`latitude = $${paramCounter}`);
+        queryParams.push(value.latitude);
+        paramCounter++;
+      }
+
+      // longitude
+      if (value.longitude !== undefined) {
+        updateFields.push(`longitude = $${paramCounter}`);
+        queryParams.push(value.longitude);
         paramCounter++;
       }
 
