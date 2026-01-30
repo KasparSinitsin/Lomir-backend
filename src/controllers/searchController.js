@@ -1,4 +1,9 @@
 const db = require("../config/database");
+const {
+  parseBooleanSearch,
+  hasBooleanOperators,
+  validateBooleanQuery,
+} = require("../utils/booleanSearchParser");
 
 const searchController = {
   /**
@@ -130,6 +135,32 @@ const searchController = {
         });
       }
 
+      // boolean search?
+      const useBoolean = hasBooleanOperators(query);
+
+      if (useBoolean) {
+        const validation = validateBooleanQuery(query);
+        if (!validation.valid) {
+          return res.status(400).json({
+            success: false,
+            message: "Invalid boolean search query",
+            error: validation.message,
+          });
+        }
+      }
+
+      // searchable columns
+      const teamColumns = ["t.name", "t.description", "tag.name", "t.city"];
+      const userColumns = [
+        "u.username",
+        "u.first_name",
+        "u.last_name",
+        "u.bio",
+        "t.name",
+        "u.city",
+      ];
+
+      // normal ILIKE fallback term
       const searchTerm = `%${query.trim()}%`;
 
       // === GET USER LOCATION (needed for proximity sorting + for UI metadata) ===
@@ -142,31 +173,60 @@ const searchController = {
 
       // ========== TEAM COUNT QUERY ==========
       let teamCountQuery = `
-        SELECT COUNT(DISTINCT t.id) as total
-        FROM teams t
-        LEFT JOIN team_tags tt ON t.id = tt.team_id
-        LEFT JOIN tags tag ON tt.tag_id = tag.id
-        WHERE (
-            t.name ILIKE $1 OR
-            t.description ILIKE $1 OR
-            tag.name ILIKE $1
-          )
-          AND t.archived_at IS NULL
-      `;
+  SELECT COUNT(DISTINCT t.id) as total
+  FROM teams t
+  LEFT JOIN team_tags tt ON t.id = tt.team_id
+  LEFT JOIN tags tag ON tt.tag_id = tag.id
+  WHERE t.archived_at IS NULL
+`;
 
-      const teamCountParams = [searchTerm];
+      let teamCountParams = [];
 
-      if (userId) {
+      if (useBoolean) {
+        const teamTagConfig = {
+          tagColumn: "tag.name",
+          existsTemplate:
+            "EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND t2.name ILIKE $PARAM)",
+          notExistsTemplate:
+            "NOT EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND t2.name ILIKE $PARAM)",
+        };
+        const teamSearch = parseBooleanSearch(
+          query,
+          teamColumns,
+          1,
+          teamTagConfig,
+        );
+        console.log("DEBUG teamSearch:", JSON.stringify(teamSearch));
+        if (!teamSearch || !teamSearch.params) {
+          console.log("ERROR: teamSearch.params is undefined!");
+        }
+
+        teamCountQuery += ` AND ${teamSearch.whereClause}`;
+        teamCountParams.push(...teamSearch.params);
+      } else {
         teamCountQuery += `
-          AND (
-            t.is_public = TRUE
-            OR t.owner_id = $2
-            OR EXISTS (
-              SELECT 1 FROM team_members
-              WHERE team_id = t.id AND user_id = $2
-            )
-          )
-        `;
+    AND (
+      t.name ILIKE $1 OR
+      t.description ILIKE $1 OR
+      tag.name ILIKE $1
+    )
+  `;
+        teamCountParams.push(searchTerm);
+      }
+
+      // visibility
+      if (userId) {
+        const userParamIdx = teamCountParams.length + 1;
+        teamCountQuery += `
+    AND (
+      t.is_public = TRUE
+      OR t.owner_id = $${userParamIdx}
+      OR EXISTS (
+        SELECT 1 FROM team_members
+        WHERE team_id = t.id AND user_id = $${userParamIdx}
+      )
+    )
+  `;
         teamCountParams.push(userId);
       } else {
         teamCountQuery += ` AND t.is_public = TRUE`;
@@ -235,16 +295,41 @@ const searchController = {
         LEFT JOIN team_members tm ON t.id = tm.team_id
         LEFT JOIN team_tags tt ON t.id = tt.team_id
         LEFT JOIN tags tag ON tt.tag_id = tag.id
-        WHERE (
-            t.name ILIKE $1 OR
-            t.description ILIKE $1 OR
-            tag.name ILIKE $1
-          )
-          AND t.archived_at IS NULL
-      `;
+        WHERE t.archived_at IS NULL
+`;
 
-      const teamParams = [searchTerm];
-      let teamParamIndex = 2;
+      let teamParams = [];
+      let teamParamIndex = 1;
+
+      // search condition
+      if (useBoolean) {
+        const teamTagConfig = {
+          tagColumn: "tag.name",
+          existsTemplate:
+            "EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND t2.name ILIKE $PARAM)",
+          notExistsTemplate:
+            "NOT EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND t2.name ILIKE $PARAM)",
+        };
+        const teamSearch = parseBooleanSearch(
+          query,
+          teamColumns,
+          teamParamIndex,
+          teamTagConfig,
+        );
+        teamQuery += ` AND ${teamSearch.whereClause}`;
+        teamParams.push(...teamSearch.params);
+        teamParamIndex = teamSearch.nextParamIndex;
+      } else {
+        teamQuery += `
+    AND (
+      t.name ILIKE $${teamParamIndex} OR
+      t.description ILIKE $${teamParamIndex} OR
+      tag.name ILIKE $${teamParamIndex}
+    )
+  `;
+        teamParams.push(searchTerm);
+        teamParamIndex++;
+      }
 
       if (userId) {
         teamQuery += `
@@ -308,28 +393,53 @@ const searchController = {
 
       // ========== USER COUNT QUERY ==========
       let userCountQuery = `
-        SELECT COUNT(DISTINCT u.id) as total
-        FROM users u
-        LEFT JOIN user_tags ut ON u.id = ut.user_id
-        LEFT JOIN tags t ON ut.tag_id = t.id
-        WHERE (
-            u.username ILIKE $1 OR
-            u.first_name ILIKE $1 OR
-            u.last_name ILIKE $1 OR
-            u.bio ILIKE $1 OR
-            t.name ILIKE $1
-        )
-      `;
+  SELECT COUNT(DISTINCT u.id) as total
+  FROM users u
+  LEFT JOIN user_tags ut ON u.id = ut.user_id
+  LEFT JOIN tags t ON ut.tag_id = t.id
+  WHERE 1=1
+`;
 
-      const userCountParams = [searchTerm];
+      let userCountParams = [];
 
-      if (userId) {
+      if (useBoolean) {
+        const userTagConfig = {
+          tagColumn: "t.name",
+          existsTemplate:
+            "EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
+          notExistsTemplate:
+            "NOT EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
+        };
+        const userSearch = parseBooleanSearch(
+          query,
+          userColumns,
+          1,
+          userTagConfig,
+        );
+        userCountQuery += ` AND ${userSearch.whereClause}`;
+        userCountParams.push(...userSearch.params);
+      } else {
         userCountQuery += `
-          AND (
-            u.is_public = TRUE
-            OR u.id = $2
-          )
-        `;
+    AND (
+      u.username ILIKE $1 OR
+      u.first_name ILIKE $1 OR
+      u.last_name ILIKE $1 OR
+      u.bio ILIKE $1 OR
+      t.name ILIKE $1
+    )
+  `;
+        userCountParams.push(searchTerm);
+      }
+
+      // visibility
+      if (userId) {
+        const userParamIdx = userCountParams.length + 1;
+        userCountQuery += `
+    AND (
+      u.is_public = TRUE
+      OR u.id = $${userParamIdx}
+    )
+  `;
         userCountParams.push(userId);
       } else {
         userCountQuery += ` AND u.is_public = TRUE`;
@@ -392,17 +502,44 @@ const searchController = {
         FROM users u
         LEFT JOIN user_tags ut ON u.id = ut.user_id
         LEFT JOIN tags t ON ut.tag_id = t.id
-        WHERE (
-            u.username ILIKE $1 OR
-            u.first_name ILIKE $1 OR
-            u.last_name ILIKE $1 OR
-            u.bio ILIKE $1 OR
-            t.name ILIKE $1
-        )
+        WHERE 1=1
+
       `;
 
-      const userParams = [searchTerm];
-      let userParamIndex = 2;
+      let userParams = [];
+      let userParamIndex = 1;
+
+      // search condition
+      if (useBoolean) {
+        const userTagConfig = {
+          tagColumn: "t.name",
+          existsTemplate:
+            "EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
+          notExistsTemplate:
+            "NOT EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
+        };
+        const userSearch = parseBooleanSearch(
+          query,
+          userColumns,
+          userParamIndex,
+          userTagConfig,
+        );
+        userQuery += ` AND ${userSearch.whereClause}`;
+        userParams.push(...userSearch.params);
+        userParamIndex = userSearch.nextParamIndex;
+      } else {
+        userQuery += `
+    AND (
+      u.username ILIKE $${userParamIndex} OR
+      u.first_name ILIKE $${userParamIndex} OR
+      u.last_name ILIKE $${userParamIndex} OR
+      u.bio ILIKE $${userParamIndex} OR
+      t.name ILIKE $${userParamIndex}
+    )
+  `;
+        userParams.push(searchTerm);
+        userParamIndex++;
+      }
 
       if (userId) {
         userQuery += `
@@ -460,6 +597,16 @@ const searchController = {
       userParams.push(limit, offset);
 
       // ========== EXECUTE ALL QUERIES ==========
+      console.log("=== DEBUG SQL ===");
+      console.log("teamCountQuery:", teamCountQuery);
+      console.log("teamCountParams:", teamCountParams);
+      console.log("teamQuery:", teamQuery);
+      console.log("teamParams:", teamParams);
+      console.log("userCountQuery:", userCountQuery);
+      console.log("userCountParams:", userCountParams);
+      console.log("userQuery:", userQuery);
+      console.log("userParams:", userParams);
+
       const [teamCountResult, teamResults, userCountResult, userResults] =
         await Promise.all([
           db.pool.query(teamCountQuery, teamCountParams),
@@ -890,6 +1037,16 @@ const searchController = {
       userParams.push(limit, offset);
 
       // ========== EXECUTE ALL QUERIES ==========
+      console.log("=== DEBUG SQL ===");
+      console.log("teamCountQuery:", teamCountQuery);
+      console.log("teamCountParams:", teamCountParams);
+      console.log("teamQuery:", teamQuery);
+      console.log("teamParams:", teamParams);
+      console.log("userCountQuery:", userCountQuery);
+      console.log("userCountParams:", userCountParams);
+      console.log("userQuery:", userQuery);
+      console.log("userParams:", userParams);
+
       const [teamCountResult, teamResults, userCountResult, userResults] =
         await Promise.all([
           db.pool.query(teamCountQuery, teamCountParams),
