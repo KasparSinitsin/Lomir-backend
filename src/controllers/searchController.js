@@ -117,7 +117,7 @@ const searchController = {
       const sort = validSortOptions.includes(sortBy) ? sortBy : "name";
 
       // Direction: 'asc' or 'desc'
-      const validDirections = ["asc", "desc"];
+      const validDirections = ["asc", "desc", "remote"];
       const direction = validDirections.includes(sortDir)
         ? sortDir.toUpperCase()
         : "ASC";
@@ -232,11 +232,17 @@ const searchController = {
         teamCountQuery += ` AND t.is_public = TRUE`;
       }
 
+      if (sort === "proximity" && direction === "REMOTE") {
+        teamCountQuery += ` AND t.is_remote = TRUE`;
+      } else if (sort === "proximity") {
+        teamCountQuery += ` AND t.is_remote IS NOT TRUE`;
+      }
+
       // ========== TEAM DATA QUERY ==========
       // Build distance calculation for proximity sort
       let teamDistanceSelect = "";
       let teamDistanceGroupBy = "";
-      if (sort === "proximity" && userLocation) {
+      if (sort === "proximity" && userLocation && direction !== "REMOTE") {
         if (userLocation.hasCoordinates) {
           // Use Haversine formula for coordinate-based distance
           teamDistanceSelect = `,
@@ -277,6 +283,7 @@ const searchController = {
           t.teamavatar_url as "teamavatarUrl",
           t.created_at,
           t.updated_at,
+          t.is_remote,
           COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
           CASE 
             WHEN t.max_members IS NULL THEN NULL
@@ -348,6 +355,13 @@ const searchController = {
         teamQuery += ` AND t.is_public = TRUE`;
       }
 
+      // Filter remote teams based on proximity sort mode
+      if (sort === "proximity" && direction === "REMOTE") {
+        teamQuery += ` AND t.is_remote = TRUE`;
+      } else if (sort === "proximity") {
+        teamQuery += ` AND t.is_remote IS NOT TRUE`;
+      }
+
       // Determine ORDER BY clause based on sort parameter and direction
       let teamOrderBy;
       switch (sort) {
@@ -368,12 +382,12 @@ const searchController = {
               : "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC";
           break;
         case "proximity":
-          if (userLocation) {
-            // Sort by distance, high values (no location) go last
+          if (direction === "REMOTE") {
+            teamOrderBy = "t.name ASC";
+          } else if (userLocation) {
             teamOrderBy =
               direction === "DESC" ? "distance_km DESC" : "distance_km ASC";
           } else {
-            // No user location, fall back to name
             teamOrderBy = "t.name ASC";
           }
           break;
@@ -385,7 +399,7 @@ const searchController = {
 
       teamQuery += `
         GROUP BY
-          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at${teamDistanceGroupBy}
+          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote${teamDistanceGroupBy}
         ORDER BY ${teamOrderBy}
         LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
       `;
@@ -449,7 +463,7 @@ const searchController = {
       // Build distance calculation for proximity sort
       let userDistanceSelect = "";
       let userDistanceGroupBy = "";
-      if (sort === "proximity" && userLocation) {
+      if (sort === "proximity" && userLocation && direction !== "REMOTE") {
         if (userLocation.hasCoordinates) {
           // Use Haversine formula for coordinate-based distance
           userDistanceSelect = `,
@@ -572,12 +586,12 @@ const searchController = {
           userOrderBy = "u.username ASC";
           break;
         case "proximity":
-          if (userLocation) {
-            // Sort by distance, high values (no location) go last
+          if (direction === "REMOTE") {
+            userOrderBy = "u.username ASC";
+          } else if (userLocation) {
             userOrderBy =
               direction === "DESC" ? "distance_km DESC" : "distance_km ASC";
           } else {
-            // No user location, fall back to name
             userOrderBy = "u.username ASC";
           }
           break;
@@ -732,7 +746,7 @@ const searchController = {
       const sort = validSortOptions.includes(sortBy) ? sortBy : "name";
 
       // Direction: 'asc' or 'desc'
-      const validDirections = ["asc", "desc"];
+      const validDirections = ["asc", "desc", "remote"];
       const direction = validDirections.includes(sortDir)
         ? sortDir.toUpperCase()
         : "ASC";
@@ -779,11 +793,17 @@ const searchController = {
         teamCountQuery += ` AND t.is_public = TRUE`;
       }
 
+      if (sort === "proximity" && direction === "REMOTE") {
+        teamCountQuery += ` AND t.is_remote = TRUE`;
+      } else if (sort === "proximity") {
+        teamCountQuery += ` AND t.is_remote IS NOT TRUE`;
+      }
+
       // ========== TEAM DATA QUERY ==========
       // Build distance calculation for proximity sort
       let teamDistanceSelect = "";
       let teamDistanceGroupBy = "";
-      if (sort === "proximity" && userLocation) {
+      if (sort === "proximity" && userLocation && direction !== "REMOTE") {
         if (userLocation.hasCoordinates) {
           // Use Haversine formula for coordinate-based distance
           teamDistanceSelect = `,
@@ -822,6 +842,7 @@ const searchController = {
           t.teamavatar_url as "teamavatarUrl",
           t.created_at,
           t.updated_at,
+          t.is_remote,
           COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
           CASE 
             WHEN t.max_members IS NULL THEN NULL
@@ -863,6 +884,13 @@ const searchController = {
         teamQuery += ` AND t.is_public = TRUE`;
       }
 
+      // Filter remote teams based on proximity sort mode
+      if (sort === "proximity" && direction === "REMOTE") {
+        teamQuery += ` AND t.is_remote = TRUE`;
+      } else if (sort === "proximity") {
+        teamQuery += ` AND t.is_remote IS NOT TRUE`;
+      }
+
       // Determine ORDER BY clause based on sort parameter and direction
       let teamOrderBy;
       switch (sort) {
@@ -883,7 +911,9 @@ const searchController = {
               : "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC";
           break;
         case "proximity":
-          if (userLocation) {
+          if (direction === "REMOTE") {
+            teamOrderBy = "t.name ASC";
+          } else if (userLocation) {
             teamOrderBy =
               direction === "DESC" ? "distance_km DESC" : "distance_km ASC";
           } else {
@@ -898,7 +928,7 @@ const searchController = {
 
       teamQuery += `
         GROUP BY
-          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at${teamDistanceGroupBy}
+          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote${teamDistanceGroupBy}
         ORDER BY ${teamOrderBy}
         LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
       `;
@@ -929,7 +959,7 @@ const searchController = {
       // Build distance calculation for proximity sort
       let userDistanceSelect = "";
       let userDistanceGroupBy = "";
-      if (sort === "proximity" && userLocation) {
+      if (sort === "proximity" && userLocation && direction !== "REMOTE") {
         if (userLocation.hasCoordinates) {
           // Use Haversine formula for coordinate-based distance
           userDistanceSelect = `,
@@ -1016,7 +1046,9 @@ const searchController = {
           userOrderBy = "u.username ASC";
           break;
         case "proximity":
-          if (userLocation) {
+          if (direction === "REMOTE") {
+            userOrderBy = "u.username ASC";
+          } else if (userLocation) {
             userOrderBy =
               direction === "DESC" ? "distance_km DESC" : "distance_km ASC";
           } else {
