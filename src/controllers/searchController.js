@@ -92,6 +92,33 @@ const searchController = {
   },
 
   /**
+   * Build SQL WHERE clause for filtering by maximum distance in km
+   * Only works with coordinate-based (Haversine) distance
+   *
+   * @param {Object} userLocation - User's location data
+   * @param {string} tableAlias - Table alias ('t' for teams, 'u' for users)
+   * @param {string} paramPlaceholder - SQL parameter placeholder (e.g. '$3')
+   * @returns {string|null} SQL fragment or null if not applicable
+   */
+  buildDistanceFilterSQL(userLocation, tableAlias, paramPlaceholder) {
+    if (!userLocation || !userLocation.hasCoordinates) return null;
+
+    return `
+      AND ${tableAlias}.latitude IS NOT NULL
+      AND ${tableAlias}.longitude IS NOT NULL
+      AND (
+        6371 * acos(
+          LEAST(1.0, GREATEST(-1.0,
+            cos(radians(${userLocation.latitude})) * cos(radians(${tableAlias}.latitude)) *
+            cos(radians(${tableAlias}.longitude) - radians(${userLocation.longitude})) +
+            sin(radians(${userLocation.latitude})) * sin(radians(${tableAlias}.latitude))
+          ))
+        )
+      ) <= ${paramPlaceholder}
+    `;
+  },
+
+  /**
    * Global search with pagination and sorting
    * Searches teams and users based on query string
    */
@@ -116,11 +143,18 @@ const searchController = {
       ];
       const sort = validSortOptions.includes(sortBy) ? sortBy : "name";
 
-      // Direction: 'asc' or 'desc'
+      // Direction: 'asc' or 'desc' or 'remote'
       const validDirections = ["asc", "desc", "remote"];
       const direction = validDirections.includes(sortDir)
         ? sortDir.toUpperCase()
         : "ASC";
+
+      // === DISTANCE FILTER PARAMETER ===
+      const maxDistance = req.query.maxDistance
+        ? parseFloat(req.query.maxDistance)
+        : null;
+      const hasValidMaxDistance =
+        maxDistance !== null && Number.isFinite(maxDistance) && maxDistance > 0;
 
       console.log(`=== SEARCH DEBUG ===`);
       console.log(`Search query: "${query}"`);
@@ -165,7 +199,6 @@ const searchController = {
 
       // === GET USER LOCATION (needed for proximity sorting + for UI metadata) ===
       let userLocation = null;
-
       if (userId) {
         userLocation = await searchController.getUserLocation(userId);
         console.log("SEARCH DEBUG: userLocation =", userLocation);
@@ -173,12 +206,12 @@ const searchController = {
 
       // ========== TEAM COUNT QUERY ==========
       let teamCountQuery = `
-  SELECT COUNT(DISTINCT t.id) as total
-  FROM teams t
-  LEFT JOIN team_tags tt ON t.id = tt.team_id
-  LEFT JOIN tags tag ON tt.tag_id = tag.id
-  WHERE t.archived_at IS NULL
-`;
+        SELECT COUNT(DISTINCT t.id) as total
+        FROM teams t
+        LEFT JOIN team_tags tt ON t.id = tt.team_id
+        LEFT JOIN tags tag ON tt.tag_id = tag.id
+        WHERE t.archived_at IS NULL
+      `;
 
       let teamCountParams = [];
 
@@ -190,27 +223,23 @@ const searchController = {
           notExistsTemplate:
             "NOT EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND t2.name ILIKE $PARAM)",
         };
+
         const teamSearch = parseBooleanSearch(
           query,
           teamColumns,
           1,
           teamTagConfig,
         );
-        console.log("DEBUG teamSearch:", JSON.stringify(teamSearch));
-        if (!teamSearch || !teamSearch.params) {
-          console.log("ERROR: teamSearch.params is undefined!");
-        }
-
         teamCountQuery += ` AND ${teamSearch.whereClause}`;
         teamCountParams.push(...teamSearch.params);
       } else {
         teamCountQuery += `
-    AND (
-      t.name ILIKE $1 OR
-      t.description ILIKE $1 OR
-      tag.name ILIKE $1
-    )
-  `;
+          AND (
+            t.name ILIKE $1 OR
+            t.description ILIKE $1 OR
+            tag.name ILIKE $1
+          )
+        `;
         teamCountParams.push(searchTerm);
       }
 
@@ -218,24 +247,42 @@ const searchController = {
       if (userId) {
         const userParamIdx = teamCountParams.length + 1;
         teamCountQuery += `
-    AND (
-      t.is_public = TRUE
-      OR t.owner_id = $${userParamIdx}
-      OR EXISTS (
-        SELECT 1 FROM team_members
-        WHERE team_id = t.id AND user_id = $${userParamIdx}
-      )
-    )
-  `;
+          AND (
+            t.is_public = TRUE
+            OR t.owner_id = $${userParamIdx}
+            OR EXISTS (
+              SELECT 1 FROM team_members
+              WHERE team_id = t.id AND user_id = $${userParamIdx}
+            )
+          )
+        `;
         teamCountParams.push(userId);
       } else {
         teamCountQuery += ` AND t.is_public = TRUE`;
       }
 
+      // Existing remote filter
       if (sort === "proximity" && direction === "REMOTE") {
         teamCountQuery += ` AND t.is_remote = TRUE`;
       } else if (sort === "proximity") {
         teamCountQuery += ` AND t.is_remote IS NOT TRUE`;
+      }
+
+      // ⬇️ DISTANCE FILTER (TEAM COUNT) ⬇️
+      if (
+        hasValidMaxDistance &&
+        sort === "proximity" &&
+        direction !== "REMOTE"
+      ) {
+        const distFilter = searchController.buildDistanceFilterSQL(
+          userLocation,
+          "t",
+          `$${teamCountParams.length + 1}`,
+        );
+        if (distFilter) {
+          teamCountQuery += distFilter;
+          teamCountParams.push(maxDistance);
+        }
       }
 
       // ========== TEAM DATA QUERY ==========
@@ -246,7 +293,7 @@ const searchController = {
         if (userLocation.hasCoordinates) {
           // Use Haversine formula for coordinate-based distance
           teamDistanceSelect = `,
-            CASE 
+            CASE
               WHEN t.latitude IS NULL OR t.longitude IS NULL THEN 999999
               ELSE (
                 6371 * acos(
@@ -260,12 +307,10 @@ const searchController = {
             END as distance_km`;
           teamDistanceGroupBy = ", t.latitude, t.longitude";
         } else if (userLocation.hasPostalCode) {
-          // Use postal code based distance
           teamDistanceSelect = `,
             ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "t")} as distance_km`;
           teamDistanceGroupBy = ", t.postal_code";
         } else if (userLocation.hasCity) {
-          // Use city based distance
           teamDistanceSelect = `,
             ${searchController.buildCityDistanceSQL(userLocation.city, "t")} as distance_km`;
           teamDistanceGroupBy = ", t.city";
@@ -285,16 +330,16 @@ const searchController = {
           t.updated_at,
           t.is_remote,
           COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
-          CASE 
+          CASE
             WHEN t.max_members IS NULL THEN NULL
             ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0)
           END as available_capacity,
           STRING_AGG(
-            DISTINCT CASE 
-              WHEN tag.id IS NOT NULL 
-              THEN json_build_object('id', tag.id, 'name', tag.name, 'category', tag.category)::text 
-              ELSE NULL 
-            END, 
+            DISTINCT CASE
+              WHEN tag.id IS NOT NULL
+              THEN json_build_object('id', tag.id, 'name', tag.name, 'category', tag.category)::text
+              ELSE NULL
+            END,
             ','
           ) as tags_json
           ${teamDistanceSelect}
@@ -303,7 +348,7 @@ const searchController = {
         LEFT JOIN team_tags tt ON t.id = tt.team_id
         LEFT JOIN tags tag ON tt.tag_id = tag.id
         WHERE t.archived_at IS NULL
-`;
+      `;
 
       let teamParams = [];
       let teamParamIndex = 1;
@@ -317,6 +362,7 @@ const searchController = {
           notExistsTemplate:
             "NOT EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND t2.name ILIKE $PARAM)",
         };
+
         const teamSearch = parseBooleanSearch(
           query,
           teamColumns,
@@ -328,16 +374,17 @@ const searchController = {
         teamParamIndex = teamSearch.nextParamIndex;
       } else {
         teamQuery += `
-    AND (
-      t.name ILIKE $${teamParamIndex} OR
-      t.description ILIKE $${teamParamIndex} OR
-      tag.name ILIKE $${teamParamIndex}
-    )
-  `;
+          AND (
+            t.name ILIKE $${teamParamIndex} OR
+            t.description ILIKE $${teamParamIndex} OR
+            tag.name ILIKE $${teamParamIndex}
+          )
+        `;
         teamParams.push(searchTerm);
         teamParamIndex++;
       }
 
+      // visibility
       if (userId) {
         teamQuery += `
           AND (
@@ -355,11 +402,29 @@ const searchController = {
         teamQuery += ` AND t.is_public = TRUE`;
       }
 
-      // Filter remote teams based on proximity sort mode
+      // Existing remote filter
       if (sort === "proximity" && direction === "REMOTE") {
         teamQuery += ` AND t.is_remote = TRUE`;
       } else if (sort === "proximity") {
         teamQuery += ` AND t.is_remote IS NOT TRUE`;
+      }
+
+      // ⬇️ DISTANCE FILTER (TEAM DATA) ⬇️
+      if (
+        hasValidMaxDistance &&
+        sort === "proximity" &&
+        direction !== "REMOTE"
+      ) {
+        const distFilter = searchController.buildDistanceFilterSQL(
+          userLocation,
+          "t",
+          `$${teamParamIndex}`,
+        );
+        if (distFilter) {
+          teamQuery += distFilter;
+          teamParams.push(maxDistance);
+          teamParamIndex++;
+        }
       }
 
       // Determine ORDER BY clause based on sort parameter and direction
@@ -407,12 +472,12 @@ const searchController = {
 
       // ========== USER COUNT QUERY ==========
       let userCountQuery = `
-  SELECT COUNT(DISTINCT u.id) as total
-  FROM users u
-  LEFT JOIN user_tags ut ON u.id = ut.user_id
-  LEFT JOIN tags t ON ut.tag_id = t.id
-  WHERE 1=1
-`;
+        SELECT COUNT(DISTINCT u.id) as total
+        FROM users u
+        LEFT JOIN user_tags ut ON u.id = ut.user_id
+        LEFT JOIN tags t ON ut.tag_id = t.id
+        WHERE 1=1
+      `;
 
       let userCountParams = [];
 
@@ -424,6 +489,7 @@ const searchController = {
           notExistsTemplate:
             "NOT EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
         };
+
         const userSearch = parseBooleanSearch(
           query,
           userColumns,
@@ -434,14 +500,14 @@ const searchController = {
         userCountParams.push(...userSearch.params);
       } else {
         userCountQuery += `
-    AND (
-      u.username ILIKE $1 OR
-      u.first_name ILIKE $1 OR
-      u.last_name ILIKE $1 OR
-      u.bio ILIKE $1 OR
-      t.name ILIKE $1
-    )
-  `;
+          AND (
+            u.username ILIKE $1 OR
+            u.first_name ILIKE $1 OR
+            u.last_name ILIKE $1 OR
+            u.bio ILIKE $1 OR
+            t.name ILIKE $1
+          )
+        `;
         userCountParams.push(searchTerm);
       }
 
@@ -449,14 +515,31 @@ const searchController = {
       if (userId) {
         const userParamIdx = userCountParams.length + 1;
         userCountQuery += `
-    AND (
-      u.is_public = TRUE
-      OR u.id = $${userParamIdx}
-    )
-  `;
+          AND (
+            u.is_public = TRUE
+            OR u.id = $${userParamIdx}
+          )
+        `;
         userCountParams.push(userId);
       } else {
         userCountQuery += ` AND u.is_public = TRUE`;
+      }
+
+      // ⬇️ DISTANCE FILTER (USER COUNT) ⬇️
+      if (
+        hasValidMaxDistance &&
+        sort === "proximity" &&
+        direction !== "REMOTE"
+      ) {
+        const distFilter = searchController.buildDistanceFilterSQL(
+          userLocation,
+          "u",
+          `$${userCountParams.length + 1}`,
+        );
+        if (distFilter) {
+          userCountQuery += distFilter;
+          userCountParams.push(maxDistance);
+        }
       }
 
       // ========== USER DATA QUERY ==========
@@ -465,9 +548,8 @@ const searchController = {
       let userDistanceGroupBy = "";
       if (sort === "proximity" && userLocation && direction !== "REMOTE") {
         if (userLocation.hasCoordinates) {
-          // Use Haversine formula for coordinate-based distance
           userDistanceSelect = `,
-            CASE 
+            CASE
               WHEN u.latitude IS NULL OR u.longitude IS NULL THEN 999999
               ELSE (
                 6371 * acos(
@@ -481,12 +563,10 @@ const searchController = {
             END as distance_km`;
           userDistanceGroupBy = ", u.latitude, u.longitude";
         } else if (userLocation.hasPostalCode) {
-          // Use postal code based distance
           userDistanceSelect = `,
             ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "u")} as distance_km`;
           // postal_code already in GROUP BY
         } else if (userLocation.hasCity) {
-          // Use city based distance
           userDistanceSelect = `,
             ${searchController.buildCityDistanceSQL(userLocation.city, "u")} as distance_km`;
           // city already in GROUP BY
@@ -517,7 +597,6 @@ const searchController = {
         LEFT JOIN user_tags ut ON u.id = ut.user_id
         LEFT JOIN tags t ON ut.tag_id = t.id
         WHERE 1=1
-
       `;
 
       let userParams = [];
@@ -532,6 +611,7 @@ const searchController = {
           notExistsTemplate:
             "NOT EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
         };
+
         const userSearch = parseBooleanSearch(
           query,
           userColumns,
@@ -543,18 +623,19 @@ const searchController = {
         userParamIndex = userSearch.nextParamIndex;
       } else {
         userQuery += `
-    AND (
-      u.username ILIKE $${userParamIndex} OR
-      u.first_name ILIKE $${userParamIndex} OR
-      u.last_name ILIKE $${userParamIndex} OR
-      u.bio ILIKE $${userParamIndex} OR
-      t.name ILIKE $${userParamIndex}
-    )
-  `;
+          AND (
+            u.username ILIKE $${userParamIndex} OR
+            u.first_name ILIKE $${userParamIndex} OR
+            u.last_name ILIKE $${userParamIndex} OR
+            u.bio ILIKE $${userParamIndex} OR
+            t.name ILIKE $${userParamIndex}
+          )
+        `;
         userParams.push(searchTerm);
         userParamIndex++;
       }
 
+      // visibility
       if (userId) {
         userQuery += `
           AND (
@@ -566,6 +647,24 @@ const searchController = {
         userParamIndex++;
       } else {
         userQuery += ` AND u.is_public = TRUE`;
+      }
+
+      // ⬇️ DISTANCE FILTER (USER DATA) ⬇️
+      if (
+        hasValidMaxDistance &&
+        sort === "proximity" &&
+        direction !== "REMOTE"
+      ) {
+        const distFilter = searchController.buildDistanceFilterSQL(
+          userLocation,
+          "u",
+          `$${userParamIndex}`,
+        );
+        if (distFilter) {
+          userQuery += distFilter;
+          userParams.push(maxDistance);
+          userParamIndex++;
+        }
       }
 
       // Determine ORDER BY clause for users based on sort parameter and direction
@@ -582,7 +681,6 @@ const searchController = {
             direction === "DESC" ? "u.created_at DESC" : "u.created_at ASC";
           break;
         case "capacity":
-          // Capacity doesn't apply to users, default to name
           userOrderBy = "u.username ASC";
           break;
         case "proximity":
@@ -705,8 +803,8 @@ const searchController = {
           sortDir: direction.toLowerCase(),
         },
         userLocation: userLocation
-          ? { hasLocation: true }
-          : { hasLocation: false },
+          ? { hasLocation: true, hasCoordinates: !!userLocation.hasCoordinates }
+          : { hasLocation: false, hasCoordinates: false },
       });
     } catch (error) {
       console.error("Search error:", error);
@@ -745,11 +843,18 @@ const searchController = {
       ];
       const sort = validSortOptions.includes(sortBy) ? sortBy : "name";
 
-      // Direction: 'asc' or 'desc'
+      // Direction: 'asc' or 'desc' or 'remote'
       const validDirections = ["asc", "desc", "remote"];
       const direction = validDirections.includes(sortDir)
         ? sortDir.toUpperCase()
         : "ASC";
+
+      // === DISTANCE FILTER PARAMETER ===
+      const maxDistance = req.query.maxDistance
+        ? parseFloat(req.query.maxDistance)
+        : null;
+      const hasValidMaxDistance =
+        maxDistance !== null && Number.isFinite(maxDistance) && maxDistance > 0;
 
       console.log(
         `getAllUsersAndTeams: userId=${userId}, authenticated=${authenticated}, page=${page}, limit=${limit}, sortBy=${sort}, sortDir=${direction}`,
@@ -760,7 +865,6 @@ const searchController = {
 
       if (userId) {
         userLocation = await searchController.getUserLocation(userId);
-
         console.log("GETALL DEBUG: userLocation =", userLocation);
       } else {
         console.log(
@@ -793,10 +897,28 @@ const searchController = {
         teamCountQuery += ` AND t.is_public = TRUE`;
       }
 
+      // Existing remote filter
       if (sort === "proximity" && direction === "REMOTE") {
         teamCountQuery += ` AND t.is_remote = TRUE`;
       } else if (sort === "proximity") {
         teamCountQuery += ` AND t.is_remote IS NOT TRUE`;
+      }
+
+      // ⬇️ DISTANCE FILTER (TEAM COUNT) ⬇️
+      if (
+        hasValidMaxDistance &&
+        sort === "proximity" &&
+        direction !== "REMOTE"
+      ) {
+        const distFilter = searchController.buildDistanceFilterSQL(
+          userLocation,
+          "t",
+          `$${teamCountParams.length + 1}`,
+        );
+        if (distFilter) {
+          teamCountQuery += distFilter;
+          teamCountParams.push(maxDistance);
+        }
       }
 
       // ========== TEAM DATA QUERY ==========
@@ -805,9 +927,8 @@ const searchController = {
       let teamDistanceGroupBy = "";
       if (sort === "proximity" && userLocation && direction !== "REMOTE") {
         if (userLocation.hasCoordinates) {
-          // Use Haversine formula for coordinate-based distance
           teamDistanceSelect = `,
-            CASE 
+            CASE
               WHEN t.latitude IS NULL OR t.longitude IS NULL THEN 999999
               ELSE (
                 6371 * acos(
@@ -821,12 +942,11 @@ const searchController = {
             END as distance_km`;
           teamDistanceGroupBy = ", t.latitude, t.longitude";
         } else if (userLocation.hasPostalCode) {
-          // Use postal code based distance
           teamDistanceSelect = `,
             ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "t")} as distance_km`;
           teamDistanceGroupBy = ", t.postal_code";
         } else if (userLocation.hasCity) {
-          // Use city based distance (teams don't have city, use postal_code only)
+          // (your code comment said teams don't have city)
           teamDistanceSelect = `, 999999 as distance_km`;
         }
       }
@@ -844,16 +964,16 @@ const searchController = {
           t.updated_at,
           t.is_remote,
           COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
-          CASE 
+          CASE
             WHEN t.max_members IS NULL THEN NULL
             ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0)
           END as available_capacity,
           STRING_AGG(
-            DISTINCT CASE 
-              WHEN tag.id IS NOT NULL 
-              THEN json_build_object('id', tag.id, 'name', tag.name, 'category', tag.category)::text 
-              ELSE NULL 
-            END, 
+            DISTINCT CASE
+              WHEN tag.id IS NOT NULL
+              THEN json_build_object('id', tag.id, 'name', tag.name, 'category', tag.category)::text
+              ELSE NULL
+            END,
             ','
           ) as tags_json
           ${teamDistanceSelect}
@@ -884,11 +1004,29 @@ const searchController = {
         teamQuery += ` AND t.is_public = TRUE`;
       }
 
-      // Filter remote teams based on proximity sort mode
+      // Existing remote filter
       if (sort === "proximity" && direction === "REMOTE") {
         teamQuery += ` AND t.is_remote = TRUE`;
       } else if (sort === "proximity") {
         teamQuery += ` AND t.is_remote IS NOT TRUE`;
+      }
+
+      // ⬇️ DISTANCE FILTER (TEAM DATA) ⬇️
+      if (
+        hasValidMaxDistance &&
+        sort === "proximity" &&
+        direction !== "REMOTE"
+      ) {
+        const distFilter = searchController.buildDistanceFilterSQL(
+          userLocation,
+          "t",
+          `$${teamParamIndex}`,
+        );
+        if (distFilter) {
+          teamQuery += distFilter;
+          teamParams.push(maxDistance);
+          teamParamIndex++;
+        }
       }
 
       // Determine ORDER BY clause based on sort parameter and direction
@@ -955,15 +1093,31 @@ const searchController = {
         userCountQuery += ` AND u.is_public = TRUE`;
       }
 
+      // ⬇️ DISTANCE FILTER (USER COUNT) ⬇️
+      if (
+        hasValidMaxDistance &&
+        sort === "proximity" &&
+        direction !== "REMOTE"
+      ) {
+        const distFilter = searchController.buildDistanceFilterSQL(
+          userLocation,
+          "u",
+          `$${userCountParams.length + 1}`,
+        );
+        if (distFilter) {
+          userCountQuery += distFilter;
+          userCountParams.push(maxDistance);
+        }
+      }
+
       // ========== USER DATA QUERY ==========
       // Build distance calculation for proximity sort
       let userDistanceSelect = "";
       let userDistanceGroupBy = "";
       if (sort === "proximity" && userLocation && direction !== "REMOTE") {
         if (userLocation.hasCoordinates) {
-          // Use Haversine formula for coordinate-based distance
           userDistanceSelect = `,
-            CASE 
+            CASE
               WHEN u.latitude IS NULL OR u.longitude IS NULL THEN 999999
               ELSE (
                 6371 * acos(
@@ -977,15 +1131,11 @@ const searchController = {
             END as distance_km`;
           userDistanceGroupBy = ", u.latitude, u.longitude";
         } else if (userLocation.hasPostalCode) {
-          // Use postal code based distance
           userDistanceSelect = `,
             ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "u")} as distance_km`;
-          // postal_code already in GROUP BY
         } else if (userLocation.hasCity) {
-          // Use city based distance
           userDistanceSelect = `,
             ${searchController.buildCityDistanceSQL(userLocation.city, "u")} as distance_km`;
-          // city already in GROUP BY
         }
       }
 
@@ -1003,11 +1153,7 @@ const searchController = {
           u.avatar_url,
           u.is_public,
           u.created_at,
-          u.updated_at,
-          (SELECT STRING_AGG(t.name, ', ')
-            FROM user_tags ut
-            JOIN tags t ON ut.tag_id = t.id
-            WHERE ut.user_id = u.id) as tags
+          u.updated_at
           ${userDistanceSelect}
         FROM users u
         WHERE 1=1
@@ -1027,6 +1173,24 @@ const searchController = {
         userParamIndex++;
       } else {
         userQuery += ` AND u.is_public = TRUE`;
+      }
+
+      // ⬇️ DISTANCE FILTER (USER DATA) ⬇️
+      if (
+        hasValidMaxDistance &&
+        sort === "proximity" &&
+        direction !== "REMOTE"
+      ) {
+        const distFilter = searchController.buildDistanceFilterSQL(
+          userLocation,
+          "u",
+          `$${userParamIndex}`,
+        );
+        if (distFilter) {
+          userQuery += distFilter;
+          userParams.push(maxDistance);
+          userParamIndex++;
+        }
       }
 
       // Determine ORDER BY clause for users based on sort parameter and direction
@@ -1163,8 +1327,8 @@ const searchController = {
           sortDir: direction.toLowerCase(),
         },
         userLocation: userLocation
-          ? { hasLocation: true }
-          : { hasLocation: false },
+          ? { hasLocation: true, hasCoordinates: !!userLocation.hasCoordinates }
+          : { hasLocation: false, hasCoordinates: false },
       });
     } catch (error) {
       console.error("Error fetching all users and teams:", error);
@@ -1187,7 +1351,7 @@ const searchController = {
       let searchQuery = `
         SELECT
           t.id,
-          t.name, 
+          t.name,
           t.description,
           t.is_public,
           t.max_members,
