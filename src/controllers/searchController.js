@@ -757,7 +757,7 @@ const searchController = {
 
         return {
           ...teamWithoutTagsJson,
-          is_public: team.is_public === true,
+          is_public: team.is_public === true || team.is_public === "true",
           tags: parsedTags,
           available_capacity:
             team.available_capacity !== null
@@ -772,7 +772,7 @@ const searchController = {
 
       const usersWithFixedVisibility = userResults.rows.map((user) => ({
         ...user,
-        is_public: user.is_public === true,
+        is_public: user.is_public === true || user.is_public === "true",
         distance_km:
           user.distance_km !== undefined && user.distance_km !== null
             ? parseFloat(user.distance_km.toFixed(1))
@@ -1281,7 +1281,7 @@ const searchController = {
 
         return {
           ...teamWithoutTagsJson,
-          is_public: team.is_public === true,
+          is_public: team.is_public === true || team.is_public === "true",
           tags: parsedTags,
           available_capacity:
             team.available_capacity !== null
@@ -1296,7 +1296,7 @@ const searchController = {
 
       const usersWithFixedVisibility = userResults.rows.map((user) => ({
         ...user,
-        is_public: user.is_public === true,
+        is_public: user.is_public === true || user.is_public === "true",
         distance_km:
           user.distance_km !== undefined && user.distance_km !== null
             ? parseFloat(user.distance_km.toFixed(1))

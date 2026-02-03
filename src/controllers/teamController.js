@@ -554,8 +554,8 @@ const getTeamById = async (req, res) => {
     team.members = membersResult.rows;
     team.tags = tagsResult.rows;
 
-    // Ensure boolean values
-    team.is_public = team.is_public === true;
+    // Ensure boolean values (handle string "true" from DB)
+    team.is_public = team.is_public === true || team.is_public === "true";
 
     console.log(`Team ${teamId} details:`, {
       id: team.id,
@@ -641,7 +641,7 @@ const getUserTeams = async (req, res) => {
     // Ensure boolean values for is_public
     const teamsWithFixedVisibility = teamsResult.rows.map((team) => ({
       ...team,
-      is_public: team.is_public === true,
+      is_public: team.is_public === true || team.is_public === "true",
     }));
 
     // === RETURN RESPONSE WITH PAGINATION METADATA ===
@@ -741,7 +741,7 @@ const getUserPendingApplications = async (req, res) => {
         description: row.description,
         teamavatar_url: row.teamavatar_url,
         max_members: row.max_members,
-        is_public: row.is_public === true,
+        is_public: row.is_public === true || row.is_public === "true",
         current_members_count: parseInt(row.current_members_count),
       },
       // Owner (receiver) info

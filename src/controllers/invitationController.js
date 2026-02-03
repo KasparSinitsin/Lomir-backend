@@ -24,7 +24,7 @@ const sendTeamInvitation = async (req, res) => {
     // Check if team exists and is not archived
     const teamCheck = await db.pool.query(
       `SELECT id, name, max_members FROM teams WHERE id = $1 AND archived_at IS NULL`,
-      [teamId]
+      [teamId],
     );
 
     if (teamCheck.rows.length === 0) {
@@ -40,7 +40,7 @@ const sendTeamInvitation = async (req, res) => {
     const inviterRoleCheck = await db.pool.query(
       `SELECT role FROM team_members 
        WHERE team_id = $1 AND user_id = $2 AND role IN ('owner', 'admin')`,
-      [teamId, inviterId]
+      [teamId, inviterId],
     );
 
     if (inviterRoleCheck.rows.length === 0) {
@@ -53,7 +53,7 @@ const sendTeamInvitation = async (req, res) => {
     // Check if invitee exists
     const inviteeCheck = await db.pool.query(
       `SELECT id, username FROM users WHERE id = $1`,
-      [finalInviteeId]
+      [finalInviteeId],
     );
 
     if (inviteeCheck.rows.length === 0) {
@@ -66,7 +66,7 @@ const sendTeamInvitation = async (req, res) => {
     // Check if invitee is already a team member
     const memberCheck = await db.pool.query(
       `SELECT id FROM team_members WHERE team_id = $1 AND user_id = $2`,
-      [teamId, finalInviteeId]
+      [teamId, finalInviteeId],
     );
 
     if (memberCheck.rows.length > 0) {
@@ -79,7 +79,7 @@ const sendTeamInvitation = async (req, res) => {
     // Check if team is full
     const memberCount = await db.pool.query(
       `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
-      [teamId]
+      [teamId],
     );
 
     if (
@@ -96,7 +96,7 @@ const sendTeamInvitation = async (req, res) => {
     const existingInvitation = await db.pool.query(
       `SELECT id FROM team_invitations 
        WHERE team_id = $1 AND invitee_id = $2 AND status = 'pending'`,
-      [teamId, finalInviteeId]
+      [teamId, finalInviteeId],
     );
 
     if (existingInvitation.rows.length > 0) {
@@ -110,14 +110,14 @@ const sendTeamInvitation = async (req, res) => {
     await db.pool.query(
       `DELETE FROM team_invitations 
    WHERE team_id = $1 AND invitee_id = $2 AND status != 'pending'`,
-      [teamId, finalInviteeId]
+      [teamId, finalInviteeId],
     );
 
     // Check if user has a pending application
     const existingApplication = await db.pool.query(
       `SELECT id FROM team_applications 
        WHERE team_id = $1 AND applicant_id = $2 AND status = 'pending'`,
-      [teamId, finalInviteeId]
+      [teamId, finalInviteeId],
     );
 
     if (existingApplication.rows.length > 0) {
@@ -132,7 +132,7 @@ const sendTeamInvitation = async (req, res) => {
       `INSERT INTO team_invitations (team_id, inviter_id, invitee_id, message, status, created_at)
        VALUES ($1, $2, $3, $4, 'pending', NOW())
        RETURNING id`,
-      [teamId, inviterId, finalInviteeId, message.trim()]
+      [teamId, inviterId, finalInviteeId, message.trim()],
     );
 
     // === CREATE NOTIFICATION FOR INVITEE ===
@@ -140,7 +140,7 @@ const sendTeamInvitation = async (req, res) => {
       // Get inviter's name
       const inviterResult = await db.pool.query(
         `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-        [inviterId]
+        [inviterId],
       );
       const inviter = inviterResult.rows[0];
       const inviterName =
@@ -170,7 +170,7 @@ const sendTeamInvitation = async (req, res) => {
     } catch (notificationError) {
       console.error(
         "Error creating invitation notification:",
-        notificationError
+        notificationError,
       );
       // Don't fail the invitation if notification fails
     }
@@ -220,7 +220,7 @@ const getUserReceivedInvitations = async (req, res) => {
          WHERE tm.team_id = t.id AND tm.user_id = $1
        )
        ORDER BY ti.created_at DESC`,
-      [userId]
+      [userId],
     );
 
     const invitations = invitationsResult.rows.map((row) => ({
@@ -234,7 +234,7 @@ const getUserReceivedInvitations = async (req, res) => {
         description: row.team_description,
         teamavatar_url: row.teamavatar_url,
         max_members: row.max_members,
-        is_public: row.is_public === true,
+        is_public: row.is_public === true || row.is_public === "true",
         current_members_count: parseInt(row.current_members_count),
       },
       inviter: {
@@ -272,7 +272,7 @@ const getTeamSentInvitations = async (req, res) => {
     const authCheck = await db.pool.query(
       `SELECT role FROM team_members 
        WHERE team_id = $1 AND user_id = $2 AND role IN ('owner', 'admin')`,
-      [teamId, userId]
+      [teamId, userId],
     );
 
     if (authCheck.rows.length === 0) {
@@ -297,7 +297,7 @@ const getTeamSentInvitations = async (req, res) => {
    JOIN users inv ON ti.inviter_id = inv.id
    WHERE ti.team_id = $1 AND ti.status = 'pending'
    ORDER BY ti.created_at DESC`,
-      [teamId]
+      [teamId],
     );
 
     const invitations = invitationsResult.rows.map((row) => ({
@@ -363,7 +363,7 @@ const respondToInvitation = async (req, res) => {
    JOIN users u ON ti.invitee_id = u.id
    WHERE ti.id = $1 AND ti.invitee_id = $2 AND ti.status = 'pending'
    AND t.archived_at IS NULL`,
-      [invitationId, userId]
+      [invitationId, userId],
     );
 
     if (invitationResult.rows.length === 0) {
@@ -383,7 +383,7 @@ const respondToInvitation = async (req, res) => {
         // Check if team is still not full
         const memberCount = await client.query(
           `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
-          [invitation.team_id]
+          [invitation.team_id],
         );
 
         if (
@@ -401,7 +401,7 @@ const respondToInvitation = async (req, res) => {
         await client.query(
           `INSERT INTO team_members (team_id, user_id, role, joined_at)
            VALUES ($1, $2, 'member', NOW())`,
-          [invitation.team_id, userId]
+          [invitation.team_id, userId],
         );
 
         // Update invitation status
@@ -409,7 +409,7 @@ const respondToInvitation = async (req, res) => {
           `UPDATE team_invitations 
            SET status = 'accepted', responded_at = NOW()
            WHERE id = $1`,
-          [invitationId]
+          [invitationId],
         );
 
         // If there's a response message, add it to the TEAM CHAT
@@ -428,7 +428,7 @@ const respondToInvitation = async (req, res) => {
           await client.query(
             `INSERT INTO messages (sender_id, team_id, content, sent_at)
            VALUES ($1, $2, $3, NOW())`,
-            [userId, invitation.team_id, formattedMessage]
+            [userId, invitation.team_id, formattedMessage],
           );
         }
 
@@ -467,7 +467,7 @@ const respondToInvitation = async (req, res) => {
           `UPDATE team_invitations 
            SET status = 'declined', responded_at = NOW()
            WHERE id = $1`,
-          [invitationId]
+          [invitationId],
         );
 
         // Get invitee's name and inviter's name
@@ -479,7 +479,7 @@ const respondToInvitation = async (req, res) => {
         // Get inviter's name
         const inviterResult = await client.query(
           `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-          [invitation.inviter_id]
+          [invitation.inviter_id],
         );
         const inviter = inviterResult.rows[0];
         const inviterName =
@@ -501,7 +501,7 @@ const respondToInvitation = async (req, res) => {
         await client.query(
           `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
            VALUES ($1, $2, $3, NOW())`,
-          [userId, invitation.inviter_id, declineSystemMessage]
+          [userId, invitation.inviter_id, declineSystemMessage],
         );
 
         // If there's a personal message, send it as a separate regular message
@@ -509,7 +509,7 @@ const respondToInvitation = async (req, res) => {
           await client.query(
             `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
              VALUES ($1, $2, $3, NOW())`,
-            [userId, invitation.inviter_id, response_message.trim()]
+            [userId, invitation.inviter_id, response_message.trim()],
           );
         }
 
@@ -539,7 +539,7 @@ const respondToInvitation = async (req, res) => {
         } catch (notificationError) {
           console.error(
             "Error creating invitation decline notification:",
-            notificationError
+            notificationError,
           );
         }
         // === END NOTIFICATION ===
@@ -588,7 +588,7 @@ const cancelInvitation = async (req, res) => {
        JOIN teams t ON ti.team_id = t.id
        JOIN users u ON ti.invitee_id = u.id
        WHERE ti.id = $1 AND ti.status = 'pending'`,
-      [invitationId]
+      [invitationId],
     );
 
     if (invitationResult.rows.length === 0) {
@@ -605,7 +605,7 @@ const cancelInvitation = async (req, res) => {
     const authCheck = await db.pool.query(
       `SELECT role FROM team_members 
        WHERE team_id = $1 AND user_id = $2 AND role IN ('owner', 'admin')`,
-      [teamId, userId]
+      [teamId, userId],
     );
 
     if (authCheck.rows.length === 0) {
@@ -618,7 +618,7 @@ const cancelInvitation = async (req, res) => {
     // Get canceller's name
     const cancellerResult = await db.pool.query(
       `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-      [userId]
+      [userId],
     );
     const canceller = cancellerResult.rows[0];
     const cancellerName =
@@ -637,7 +637,7 @@ const cancelInvitation = async (req, res) => {
       `UPDATE team_invitations 
        SET status = 'canceled', responded_at = NOW()
        WHERE id = $1`,
-      [invitationId]
+      [invitationId],
     );
 
     // System message format (parseable + clickable team/user)
@@ -650,7 +650,7 @@ const cancelInvitation = async (req, res) => {
     await db.pool.query(
       `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
    VALUES ($1, $2, $3, NOW())`,
-      [userId, invitation.invitee_id, cancelSystemMessage]
+      [userId, invitation.invitee_id, cancelSystemMessage],
     );
 
     // === CREATE NOTIFICATION FOR INVITEE ===
@@ -679,7 +679,7 @@ const cancelInvitation = async (req, res) => {
     } catch (notificationError) {
       console.error(
         "Error creating invitation cancel notification:",
-        notificationError
+        notificationError,
       );
     }
     // === END NOTIFICATION ===
@@ -737,7 +737,7 @@ const getTeamsWhereUserCanInvite = async (req, res) => {
       .filter(
         (team) =>
           team.max_members === null ||
-          parseInt(team.current_members_count) < team.max_members
+          parseInt(team.current_members_count) < team.max_members,
       )
       .map((team) => ({
         id: team.id,
