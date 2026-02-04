@@ -47,5 +47,9 @@ router.get("/:id/tags", userController.getUserTags);
 // Access: Private (Requires valid token)
 router.put("/:id/tags", auth.authenticateToken, userController.updateUserTags);
 
+// GET /api/users/:id/badges - Get badges for a specific user
+// Access: Public
+router.get("/:id/badges", userController.getUserBadges);
+
 // Export the router for use in app.js
 module.exports = router;

@@ -574,30 +574,45 @@ const searchController = {
       }
 
       let userQuery = `
-        SELECT
-          u.id,
-          u.username,
-          u.first_name,
-          u.last_name,
-          u.bio,
-          u.postal_code,
-          u.city,
-          u.country,
-          u.state,
-          u.avatar_url,
-          u.is_public,
-          u.created_at,
-          u.updated_at,
-          (SELECT STRING_AGG(t.name, ', ')
-            FROM user_tags ut
-            JOIN tags t ON ut.tag_id = t.id
-            WHERE ut.user_id = u.id) as tags
-          ${userDistanceSelect}
-        FROM users u
-        LEFT JOIN user_tags ut ON u.id = ut.user_id
-        LEFT JOIN tags t ON ut.tag_id = t.id
-        WHERE 1=1
-      `;
+  SELECT
+    u.id,
+    u.username,
+    u.first_name,
+    u.last_name,
+    u.bio,
+    u.postal_code,
+    u.city,
+    u.country,
+    u.state,
+    u.avatar_url,
+    u.is_public,
+    u.created_at,
+    u.updated_at,
+    (SELECT STRING_AGG(t.name, ', ')
+      FROM user_tags ut
+      JOIN tags t ON ut.tag_id = t.id
+      WHERE ut.user_id = u.id) as tags,
+    (SELECT COALESCE(
+      json_agg(
+        json_build_object(
+          'id', b.id,
+          'name', b.name,
+          'category', b.category,
+          'color', b.color
+        )
+        ORDER BY ub.awarded_at DESC
+      ),
+      '[]'::json
+    )
+    FROM user_badges ub
+    JOIN badges b ON ub.badge_id = b.id
+    WHERE ub.user_id = u.id) as badges
+    ${userDistanceSelect}
+  FROM users u
+  LEFT JOIN user_tags ut ON u.id = ut.user_id
+  LEFT JOIN tags t ON ut.tag_id = t.id
+  WHERE 1=1
+`;
 
       let userParams = [];
       let userParamIndex = 1;
