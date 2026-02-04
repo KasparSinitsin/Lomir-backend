@@ -65,35 +65,56 @@ const getUserById = async (req, res) => {
 
     // Fetch user with tags as a comma-separated string
     const result = await pool.query(
-      `
-      SELECT 
-        u.id,
-        u.username,
-        u.email,
-        u.first_name,
-        u.last_name,
-        u.bio,
-        u.postal_code,
-        u.city,
-        u.country,
-        u.state,
-        u.latitude,
-        u.longitude,
-        u.avatar_url,
-        u.is_public,
-        u.created_at,
-        u.updated_at,
-        (
-          SELECT STRING_AGG(t.name, ', ')
-          FROM user_tags ut
-          JOIN tags t ON ut.tag_id = t.id
-          WHERE ut.user_id = u.id
-        ) as tags
-      FROM users u
-      WHERE u.id = $1
-    `,
-      [userId],
-    );
+  `
+  SELECT 
+    u.id,
+    u.username,
+    u.email,
+    u.first_name,
+    u.last_name,
+    u.bio,
+    u.postal_code,
+    u.city,
+    u.country,
+    u.state,
+    u.latitude,
+    u.longitude,
+    u.avatar_url,
+    u.is_public,
+    u.created_at,
+    u.updated_at,
+    (
+      SELECT STRING_AGG(t.name, ', ')
+      FROM user_tags ut
+      JOIN tags t ON ut.tag_id = t.id
+      WHERE ut.user_id = u.id
+    ) as tags,
+    (
+      SELECT COALESCE(
+        json_agg(
+          json_build_object(
+            'id', b.id,
+            'name', b.name,
+            'description', b.description,
+            'category', b.category,
+            'color', b.color,
+            'awarded_at', ub.awarded_at,
+            'awarded_by_username', awarder.username
+          )
+          ORDER BY ub.awarded_at DESC
+        ),
+        '[]'::json
+      )
+      FROM user_badges ub
+      JOIN badges b ON ub.badge_id = b.id
+      LEFT JOIN users awarder ON ub.awarded_by = awarder.id
+      WHERE ub.user_id = u.id
+    ) as badges
+  FROM users u
+  WHERE u.id = $1
+`,
+  [userId],
+);
 
     if (result.rows.length === 0) {
       return res.status(404).json({
