@@ -1140,24 +1140,28 @@ const searchController = {
       }
 
       let userQuery = `
-        SELECT
-          u.id,
-          u.username,
-          u.first_name,
-          u.last_name,
-          u.bio,
-          u.postal_code,
-          u.city,
-          u.country,
-          u.state,
-          u.avatar_url,
-          u.is_public,
-          u.created_at,
-          u.updated_at
-          ${userDistanceSelect}
-        FROM users u
-        WHERE 1=1
-      `;
+  SELECT
+    u.id,
+    u.username,
+    u.first_name,
+    u.last_name,
+    u.bio,
+    u.postal_code,
+    u.city,
+    u.country,
+    u.state,
+    u.avatar_url,
+    u.is_public,
+    u.created_at,
+    u.updated_at,
+    (SELECT STRING_AGG(t.name, ', ')
+      FROM user_tags ut
+      JOIN tags t ON ut.tag_id = t.id
+      WHERE ut.user_id = u.id) as tags
+    ${userDistanceSelect}
+  FROM users u
+  WHERE 1=1
+`;
 
       let userParams = [];
       let userParamIndex = 1;
