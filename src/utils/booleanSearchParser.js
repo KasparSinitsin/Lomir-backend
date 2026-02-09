@@ -119,7 +119,7 @@ function classifyToken(token) {
 /**
  * Parse tokens into a structured query tree
  * @param {Array} tokens - Array of tokens
- * @returns {Object} Parsed query structure
+ * @returns {Array} Parsed query structure
  */
 function parseTokens(tokens) {
   const conditions = [];
@@ -156,20 +156,17 @@ function parseTokens(tokens) {
 
 /**
  * Build PostgreSQL WHERE clause conditions from parsed query
+ *
  * @param {Array} conditions - Parsed conditions
  * @param {Array} columns - Column names to search in
  * @param {number} startParamIndex - Starting parameter index for $1, $2, etc.
- * @returns {Object} { whereClause: string, params: array, nextParamIndex: number }
- */
-/**
- * Build PostgreSQL WHERE clause conditions from parsed query
- * @param {Array} conditions - Parsed conditions
- * @param {Array} columns - Column names to search in
- * @param {number} startParamIndex - Starting parameter index for $1, $2, etc.
- * @param {Object} tagConfig - Optional config for handling tag columns with EXISTS/NOT EXISTS
- *   - tagColumn: the column name for tags (e.g., 'tag.name' or 't.name')
- *   - existsTemplate: SQL template for EXISTS subquery with $PARAM placeholder
- *   - notExistsTemplate: SQL template for NOT EXISTS subquery with $PARAM placeholder
+ * @param {Object|null} tagConfig - Optional config for handling tag columns with EXISTS/NOT EXISTS
+ *   - tagColumn: string (e.g. 'tag.name' or 't.name')
+ *   - existsTemplate: SQL template with $PARAM placeholder
+ *   - notExistsTemplate: SQL template with $PARAM placeholder
+ *   - extraExistsTemplates: array of SQL templates with $PARAM placeholder
+ *   - extraNotExistsTemplates: array of SQL templates with $PARAM placeholder
+ *
  * @returns {Object} { whereClause: string, params: array, nextParamIndex: number }
  */
 function buildSQLConditions(
@@ -192,18 +189,17 @@ function buildSQLConditions(
   for (const condition of conditions) {
     const { term, isPhrase, negated, operator } = condition;
 
-    const pattern = isPhrase ? `%${term}%` : `%${term}%`;
+    const pattern = `%${term}%`; // phrase vs term currently same behavior
 
     // Split columns into regular vs tag column
     const tagColumn = hasTagConfig ? tagConfig.tagColumn : null;
-    const hasTagColumn = tagColumn ? columns.includes(tagColumn) : false;
+    const hasTagColumn =
+      !!tagColumn && Array.isArray(columns) && columns.includes(tagColumn);
 
     const regularColumns = hasTagColumn
       ? columns.filter((col) => col !== tagColumn)
       : columns.slice();
 
-    // Build regular columns condition
-    // NOTE: for negated, we still build the positive match then wrap with NOT
     const regularMatch =
       regularColumns.length > 0
         ? `(${regularColumns
@@ -211,9 +207,12 @@ function buildSQLConditions(
             .join(" OR ")})`
         : "";
 
-    // Build tag condition using EXISTS/NOT EXISTS templates when available
+    // Tag match + extras match
     let tagMatch = "";
-    if (hasTagColumn) {
+    let extraMatch = "";
+
+    if (hasTagColumn && tagConfig) {
+      // Main tag exists / not-exists
       if (!negated && tagConfig.existsTemplate) {
         tagMatch = tagConfig.existsTemplate.replace("$PARAM", `$${paramIndex}`);
       } else if (negated && tagConfig.notExistsTemplate) {
@@ -222,40 +221,54 @@ function buildSQLConditions(
           `$${paramIndex}`,
         );
       } else {
-        // Fallback (not ideal) to joined-column matching if templates missing
-        // This keeps behavior stable, but won't fix multi-tag AND unless existsTemplate is provided.
+        // Fallback to joined-column matching if templates missing
         tagMatch = `(${tagColumn} ILIKE $${paramIndex})`;
         if (negated) tagMatch = `NOT ${tagMatch}`;
       }
+
+      // Extras (e.g. badge-name exists)
+      const extras = !negated
+        ? tagConfig.extraExistsTemplates || []
+        : tagConfig.extraNotExistsTemplates || [];
+
+      if (extras.length > 0) {
+        const replaced = extras.map((tpl) =>
+          tpl.replace("$PARAM", `$${paramIndex}`),
+        );
+
+        // positive extras => OR, negative extras => AND
+        extraMatch = negated
+          ? `(${replaced.join(" AND ")})`
+          : `(${replaced.join(" OR ")})`;
+      }
     }
 
-    // Combine regular + tag conditions
-    // Positive: (regularMatch OR tagMatch)
-    // Negative: (NOT regularMatch) AND (NOT EXISTS tagMatch)  [already built via templates]
+    // Combine into a clause for this term
     let sql = "";
 
     if (!negated) {
-      if (regularMatch && tagMatch) {
-        sql = `(${regularMatch} OR ${tagMatch})`;
-      } else if (regularMatch) {
-        sql = regularMatch;
-      } else if (tagMatch) {
-        sql = `(${tagMatch})`;
-      } else {
+      const positives = [regularMatch, tagMatch, extraMatch].filter(Boolean);
+
+      if (positives.length === 0) {
         sql = "TRUE";
+      } else if (positives.length === 1) {
+        sql = positives[0].startsWith("(") ? positives[0] : `(${positives[0]})`;
+      } else {
+        sql = `(${positives.join(" OR ")})`;
       }
     } else {
-      // negated
-      const notRegular = regularMatch ? `(NOT ${regularMatch})` : "";
-      if (notRegular && tagMatch) {
-        // tagMatch is already NOT EXISTS(...) if template provided
-        sql = `(${notRegular} AND ${tagMatch})`;
-      } else if (notRegular) {
-        sql = notRegular;
-      } else if (tagMatch) {
-        sql = `(${tagMatch})`;
-      } else {
+      const negatives = [];
+
+      if (regularMatch) negatives.push(`(NOT ${regularMatch})`);
+      if (tagMatch) negatives.push(tagMatch); // already negated if template used
+      if (extraMatch) negatives.push(extraMatch); // already AND-grouped for negated
+
+      if (negatives.length === 0) {
         sql = "TRUE";
+      } else if (negatives.length === 1) {
+        sql = `(${negatives[0]})`;
+      } else {
+        sql = `(${negatives.join(" AND ")})`;
       }
     }
 
@@ -279,28 +292,16 @@ function buildSQLConditions(
 }
 
 /**
- * Main function: Parse a boolean search query and generate SQL conditions
- * @param {string} query - Raw search query string
- * @param {Array} columns - Column names to search in
- * @param {number} startParamIndex - Starting parameter index
- * @param {Object} tagConfig - Optional config for NOT EXISTS handling of tags
- * @returns {Object} { whereClause, params, nextParamIndex, parsedConditions }
- */
-
-/**
  * Build grouped clause respecting operator precedence (AND before OR)
- * @param {Array} parts - SQL parts with operators
- * @returns {string} Grouped SQL clause
+ * NOTE: currently this is a simple join and does not truly implement precedence.
  */
 function buildGroupedClause(parts) {
-  // Simple approach: join with operators as they appear
-  // For proper precedence, we'd need a more complex parser
   let result = "";
 
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
 
-    if (part === "AND" || part === "OR") {
+    if (part === OPERATORS.AND || part === OPERATORS.OR) {
       result += ` ${part} `;
     } else {
       result += part;
@@ -312,10 +313,6 @@ function buildGroupedClause(parts) {
 
 /**
  * Main function: Parse a boolean search query and generate SQL conditions
- * @param {string} query - Raw search query string
- * @param {Array} columns - Column names to search in
- * @param {number} startParamIndex - Starting parameter index
- * @returns {Object} { whereClause, params, nextParamIndex, parsedConditions }
  */
 function parseBooleanSearch(
   query,
@@ -349,24 +346,17 @@ function parseBooleanSearch(
 
 /**
  * Check if a query contains boolean operators
- * @param {string} query - Search query
- * @returns {boolean} True if query contains boolean operators
  */
 function hasBooleanOperators(query) {
   if (!query || !query.trim()) return false;
 
   const tokens = tokenize(query);
 
-  // If any boolean operator token exists, it's a boolean query
   if (tokens.some((t) => t.type === "OPERATOR")) return true;
-
-  // If any phrase token exists, treat it as boolean-capable query
-  // (because phrases need special parsing)
   if (tokens.some((t) => t.type === "PHRASE")) return true;
 
   return false;
 }
-
 
 function validateBooleanQuery(query) {
   const tokens = tokenize(query);
@@ -375,8 +365,7 @@ function validateBooleanQuery(query) {
     return { valid: false, message: "Search query is empty." };
   }
 
-  // If quotes are unmatched, tokenize() will treat remaining text as a PHRASE,
-  // but we still want to flag obvious mismatched quotes early.
+  // quick mismatched quotes check
   const doubleQuotes = (query.match(/"/g) || []).length;
   const singleQuotes = (query.match(/'/g) || []).length;
   if (doubleQuotes % 2 !== 0 || singleQuotes % 2 !== 0) {
@@ -405,14 +394,13 @@ function validateBooleanQuery(query) {
     };
   }
 
-  // Check adjacency rules
+  // adjacency rules
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     const prev = i > 0 ? tokens[i - 1] : null;
     const next = i < tokens.length - 1 ? tokens[i + 1] : null;
 
     if (isOp(t)) {
-      // NOT must be followed by a term/phrase (NOT NOT ok? You can choose; currently disallow)
       if (t.value === OPERATORS.NOT) {
         if (!next || !isTerm(next)) {
           return {
@@ -421,7 +409,6 @@ function validateBooleanQuery(query) {
           };
         }
       } else {
-        // AND/OR must have term on both sides
         if (!prev || !isTerm(prev) || !next || !isTerm(next)) {
           return {
             valid: false,

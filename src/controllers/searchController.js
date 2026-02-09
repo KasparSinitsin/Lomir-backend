@@ -133,7 +133,6 @@ const searchController = {
       const offset = (page - 1) * limit;
 
       // === SORTING PARAMETERS ===
-      // Options: 'recent' (updated_at), 'newest' (created_at), 'name' (alphabetical), 'capacity' (available spots), 'proximity' (distance)
       const validSortOptions = [
         "recent",
         "newest",
@@ -185,6 +184,9 @@ const searchController = {
 
       // searchable columns
       const teamColumns = ["t.name", "t.description", "tag.name", "t.city"];
+
+      // ✅ UPDATED: removed "__BADGE_NAME__" synthetic token
+      // badges are handled via userTagConfig.extraExistsTemplates in boolean mode
       const userColumns = [
         "u.username",
         "u.first_name",
@@ -237,6 +239,7 @@ const searchController = {
           AND (
             t.name ILIKE $1 OR
             t.description ILIKE $1 OR
+            t.city ILIKE $1 OR
             tag.name ILIKE $1
           )
         `;
@@ -268,7 +271,7 @@ const searchController = {
         teamCountQuery += ` AND t.is_remote IS NOT TRUE`;
       }
 
-      // ⬇️ DISTANCE FILTER (TEAM COUNT) ⬇️
+      // DISTANCE FILTER (TEAM COUNT)
       if (
         hasValidMaxDistance &&
         sort === "proximity" &&
@@ -377,6 +380,7 @@ const searchController = {
           AND (
             t.name ILIKE $${teamParamIndex} OR
             t.description ILIKE $${teamParamIndex} OR
+            t.city ILIKE $${teamParamIndex} OR
             tag.name ILIKE $${teamParamIndex}
           )
         `;
@@ -409,7 +413,7 @@ const searchController = {
         teamQuery += ` AND t.is_remote IS NOT TRUE`;
       }
 
-      // ⬇️ DISTANCE FILTER (TEAM DATA) ⬇️
+      // DISTANCE FILTER (TEAM DATA)
       if (
         hasValidMaxDistance &&
         sort === "proximity" &&
@@ -482,12 +486,19 @@ const searchController = {
       let userCountParams = [];
 
       if (useBoolean) {
+        // ✅ UPDATED: add extraExistsTemplates / extraNotExistsTemplates for badges
         const userTagConfig = {
           tagColumn: "t.name",
           existsTemplate:
             "EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
           notExistsTemplate:
             "NOT EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
+          extraExistsTemplates: [
+            "EXISTS (SELECT 1 FROM v_user_badges_with_totals ubt WHERE ubt.user_id = u.id AND ubt.badge_name ILIKE $PARAM)",
+          ],
+          extraNotExistsTemplates: [
+            "NOT EXISTS (SELECT 1 FROM v_user_badges_with_totals ubt WHERE ubt.user_id = u.id AND ubt.badge_name ILIKE $PARAM)",
+          ],
         };
 
         const userSearch = parseBooleanSearch(
@@ -505,7 +516,14 @@ const searchController = {
             u.first_name ILIKE $1 OR
             u.last_name ILIKE $1 OR
             u.bio ILIKE $1 OR
-            t.name ILIKE $1
+            u.city ILIKE $1 OR
+            t.name ILIKE $1 OR
+            EXISTS (
+              SELECT 1
+              FROM v_user_badges_with_totals ubt
+              WHERE ubt.user_id = u.id
+                AND ubt.badge_name ILIKE $1
+            )
           )
         `;
         userCountParams.push(searchTerm);
@@ -525,7 +543,7 @@ const searchController = {
         userCountQuery += ` AND u.is_public = TRUE`;
       }
 
-      // ⬇️ DISTANCE FILTER (USER COUNT) ⬇️
+      // DISTANCE FILTER (USER COUNT)
       if (
         hasValidMaxDistance &&
         sort === "proximity" &&
@@ -592,21 +610,28 @@ const searchController = {
       FROM user_tags ut
       JOIN tags t ON ut.tag_id = t.id
       WHERE ut.user_id = u.id) as tags,
-    (SELECT COALESCE(
+        (SELECT COALESCE(
       json_agg(
         json_build_object(
-          'id', b.id,
-          'name', b.name,
-          'category', b.category,
-          'color', b.color
+          'id', v.badge_id,
+          'name', v.badge_name,
+          'category', v.category,
+          'color', v.badge_color,
+          'cat_image_url', v.cat_image_url,
+          'total_credits', v.total_credits,
+          'category_total_credits', v.category_total_credits
         )
-        ORDER BY ub.awarded_at DESC
+        ORDER BY
+          v.category_total_credits DESC,
+          v.category ASC,
+          v.total_credits DESC,
+          v.badge_name ASC
       ),
       '[]'::json
     )
-    FROM user_badges ub
-    JOIN badges b ON ub.badge_id = b.id
-    WHERE ub.user_id = u.id) as badges
+    FROM v_user_badges_with_category_totals v
+    WHERE v.user_id = u.id) as badges
+
     ${userDistanceSelect}
   FROM users u
   LEFT JOIN user_tags ut ON u.id = ut.user_id
@@ -619,12 +644,19 @@ const searchController = {
 
       // search condition
       if (useBoolean) {
+        // ✅ UPDATED: add extraExistsTemplates / extraNotExistsTemplates for badges
         const userTagConfig = {
           tagColumn: "t.name",
           existsTemplate:
             "EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
           notExistsTemplate:
             "NOT EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
+          extraExistsTemplates: [
+            "EXISTS (SELECT 1 FROM v_user_badges_with_totals ubt WHERE ubt.user_id = u.id AND ubt.badge_name ILIKE $PARAM)",
+          ],
+          extraNotExistsTemplates: [
+            "NOT EXISTS (SELECT 1 FROM v_user_badges_with_totals ubt WHERE ubt.user_id = u.id AND ubt.badge_name ILIKE $PARAM)",
+          ],
         };
 
         const userSearch = parseBooleanSearch(
@@ -643,7 +675,14 @@ const searchController = {
             u.first_name ILIKE $${userParamIndex} OR
             u.last_name ILIKE $${userParamIndex} OR
             u.bio ILIKE $${userParamIndex} OR
-            t.name ILIKE $${userParamIndex}
+            u.city ILIKE $${userParamIndex} OR
+            t.name ILIKE $${userParamIndex} OR
+            EXISTS (
+              SELECT 1
+              FROM v_user_badges_with_totals ubt
+              WHERE ubt.user_id = u.id
+                AND ubt.badge_name ILIKE $${userParamIndex}
+            )
           )
         `;
         userParams.push(searchTerm);
@@ -664,7 +703,7 @@ const searchController = {
         userQuery += ` AND u.is_public = TRUE`;
       }
 
-      // ⬇️ DISTANCE FILTER (USER DATA) ⬇️
+      // DISTANCE FILTER (USER DATA)
       if (
         hasValidMaxDistance &&
         sort === "proximity" &&

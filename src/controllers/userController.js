@@ -65,7 +65,7 @@ const getUserById = async (req, res) => {
 
     // Fetch user with tags as a comma-separated string
     const result = await pool.query(
-  `
+      `
   SELECT 
     u.id,
     u.username,
@@ -83,38 +83,48 @@ const getUserById = async (req, res) => {
     u.is_public,
     u.created_at,
     u.updated_at,
+    COALESCE((
+      SELECT total_badge_credits
+      FROM v_user_total_badge_credits
+      WHERE user_id = u.id
+    ), 0) AS total_badge_credits,
+
     (
       SELECT STRING_AGG(t.name, ', ')
       FROM user_tags ut
       JOIN tags t ON ut.tag_id = t.id
       WHERE ut.user_id = u.id
     ) as tags,
-    (
+       (
       SELECT COALESCE(
         json_agg(
           json_build_object(
-            'id', b.id,
-            'name', b.name,
-            'description', b.description,
-            'category', b.category,
-            'color', b.color,
-            'awarded_at', ub.awarded_at,
-            'awarded_by_username', awarder.username
+            'id', v.badge_id,
+            'name', v.badge_name,
+            'category', v.category,
+            'color', v.badge_color,
+            'cat_image_url', v.cat_image_url,
+            'total_credits', v.total_credits,
+            'category_total_credits', v.category_total_credits,
+            'last_awarded_at', v.last_awarded_at
           )
-          ORDER BY ub.awarded_at DESC
+          ORDER BY
+            v.category_total_credits DESC,
+            v.category ASC,
+            v.total_credits DESC,
+            v.badge_name ASC
         ),
         '[]'::json
       )
-      FROM user_badges ub
-      JOIN badges b ON ub.badge_id = b.id
-      LEFT JOIN users awarder ON ub.awarded_by = awarder.id
-      WHERE ub.user_id = u.id
+      FROM v_user_badges_with_category_totals v
+      WHERE v.user_id = u.id
     ) as badges
+
   FROM users u
   WHERE u.id = $1
 `,
-  [userId],
-);
+      [userId],
+    );
 
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -650,24 +660,30 @@ const getUserBadges = async (req, res) => {
 
     const result = await pool.query(
       `
-      SELECT 
+           SELECT 
         b.id,
         b.name,
         b.description,
         b.category,
         b.image_url,
         b.color,
-        ub.awarded_at,
-        ub.awarded_by,
-        ub.team_id,
-        awarder.username as awarded_by_username,
-        t.name as team_name
-      FROM user_badges ub
-      JOIN badges b ON ub.badge_id = b.id
-      LEFT JOIN users awarder ON ub.awarded_by = awarder.id
-      LEFT JOIN teams t ON ub.team_id = t.id
-      WHERE ub.user_id = $1
-      ORDER BY ub.awarded_at DESC
+        b.cat_image_url,
+        ba.credits,
+        ba.created_at AS awarded_at,
+        ba.awarded_by_user_id AS awarded_by,
+        ba.team_id,
+        ba.reason,
+        ba.context_type,
+        ba.context_id,
+        awarder.username AS awarded_by_username,
+        t.name AS team_name
+      FROM badge_awards ba
+      JOIN badges b ON ba.badge_id = b.id
+      LEFT JOIN users awarder ON ba.awarded_by_user_id = awarder.id
+      LEFT JOIN teams t ON ba.team_id = t.id
+      WHERE ba.awarded_to_user_id = $1
+      ORDER BY ba.created_at DESC
+
     `,
       [userId],
     );
