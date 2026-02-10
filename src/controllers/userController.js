@@ -660,38 +660,45 @@ const getUserBadges = async (req, res) => {
 
     const result = await pool.query(
       `
-           SELECT 
-        b.id,
-        b.name,
-        b.description,
-        b.category,
-        b.image_url,
-        b.color,
-        b.cat_image_url,
+      SELECT
+        ba.id AS award_id,
+
+        -- badge fields
+        b.id AS badge_id,
+        b.name AS badge_name,
+        b.description AS badge_description,
+        b.category AS badge_category,
+        b.image_url AS badge_image_url,
+        b.color AS badge_color,
+        b.cat_image_url AS badge_category_image_url,
+
+        -- award fields
         ba.credits,
         ba.created_at AS awarded_at,
-        ba.awarded_by_user_id AS awarded_by,
-        ba.team_id,
         ba.reason,
         ba.context_type,
         ba.context_id,
+        ba.team_id,
+        t.name AS team_name,
+
+        -- awarder fields
+        ba.awarded_by_user_id AS awarded_by_user_id,
         awarder.username AS awarded_by_username,
-        t.name AS team_name
+        awarder.first_name AS awarded_by_first_name,
+        awarder.last_name AS awarded_by_last_name,
+        awarder.avatar_url AS awarded_by_avatar_url
+
       FROM badge_awards ba
       JOIN badges b ON ba.badge_id = b.id
       LEFT JOIN users awarder ON ba.awarded_by_user_id = awarder.id
       LEFT JOIN teams t ON ba.team_id = t.id
       WHERE ba.awarded_to_user_id = $1
-      ORDER BY ba.created_at DESC
-
-    `,
+      ORDER BY ba.created_at DESC, ba.id DESC
+      `,
       [userId],
     );
 
-    res.status(200).json({
-      success: true,
-      data: result.rows,
-    });
+    res.status(200).json({ success: true, data: result.rows });
   } catch (error) {
     console.error("Error fetching user badges:", error);
     res.status(500).json({
