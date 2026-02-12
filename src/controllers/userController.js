@@ -193,6 +193,7 @@ const updateUser = async (req, res) => {
     const {
       first_name,
       last_name,
+      username,
       email,
       bio,
       postal_code,
@@ -216,6 +217,24 @@ const updateUser = async (req, res) => {
     if (last_name !== undefined) {
       updateFields.push(`last_name = $${paramPosition}`);
       queryParams.push(last_name);
+      paramPosition++;
+    }
+    if (username !== undefined) {
+      // Check if username is already taken by another user
+      const usernameCheck = await pool.query(
+        "SELECT id FROM users WHERE username = $1 AND id != $2",
+        [username, userId],
+      );
+
+      if (usernameCheck.rows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Username already in use by another account",
+        });
+      }
+
+      updateFields.push(`username = $${paramPosition}`);
+      queryParams.push(username);
       paramPosition++;
     }
     if (email !== undefined) {
