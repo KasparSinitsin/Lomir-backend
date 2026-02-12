@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 
 const authController = require("../controllers/authController");
-const { authenticateToken } = require("../middlewares/auth");
+const auth = require("../middlewares/auth");
 const upload = require("../middlewares/uploadMiddleware");
 const db = require("../config/database");
 
@@ -12,30 +12,18 @@ router.post("/register", upload.single("avatar"), authController.register);
 // Login existing user
 router.post("/login", authController.login);
 
-// Email verification routes (NEW)
-router.get("/verify-email/:token", authController.verifyEmail);
+// Email verification routes (query-param based: /verify-email?token=...)
+router.get("/verify-email", authController.verifyEmail);
 router.post("/resend-verification", authController.resendVerification);
 
 // Get current user (requires token)
-router.get("/me", authenticateToken, authController.getCurrentUser);
+router.get("/me", auth.authenticateToken, authController.getCurrentUser);
 
 // Password reset routes
 router.post("/forgot-password", authController.forgotPassword);
 router.post("/reset-password", authController.resetPassword);
 
-// Test endpoint to view latest users
-router.get("/test-users", async (req, res) => {
-  try {
-    const result = await db.query(
-      "SELECT * FROM users ORDER BY id DESC LIMIT 10",
-    );
-    res.json(result.rows);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Database connection test
+// --- Optional debug endpoints (keep only in dev) ---
 router.get("/db-test-connection", async (req, res) => {
   try {
     const timeResult = await db.query("SELECT NOW() as current_time");
@@ -55,29 +43,6 @@ router.get("/db-test-connection", async (req, res) => {
   }
 });
 
-// Get database and table info
-router.get("/db-info", async (req, res) => {
-  try {
-    const dbInfo = await db.query(
-      "SELECT current_database() as database, current_schema() as schema",
-    );
-    const tableList = await db.query(`
-      SELECT table_name, table_schema
-      FROM information_schema.tables
-      WHERE table_schema = 'public'
-      ORDER BY table_name
-    `);
-
-    res.json({
-      connection: dbInfo.rows[0],
-      tables: tableList.rows,
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get the 10 latest registered users
 router.get("/check-latest-users", async (req, res) => {
   try {
     const result = await db.query(`

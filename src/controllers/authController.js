@@ -153,6 +153,32 @@ const authController = {
       });
     } catch (error) {
       console.error("Registration error:", error);
+
+      // Handle unique constraint errors nicely (race-condition safe)
+      if (error?.code === "23505") {
+        const constraint = String(error.constraint || "");
+
+        if (constraint === "users_username_unique_ci") {
+          return res.status(400).json({
+            success: false,
+            message: "User with this username already exists",
+          });
+        }
+
+        if (constraint === "users_email_unique_ci") {
+          return res.status(400).json({
+            success: false,
+            message: "User with this email already exists",
+          });
+        }
+
+        return res.status(400).json({
+          success: false,
+          message: "Duplicate value violates a unique constraint",
+        });
+      }
+
+      // default: real server error
       res.status(500).json({
         success: false,
         message: "Error registering user",
@@ -241,7 +267,9 @@ const authController = {
 
       // Find user by email
       const result = await db.query(
-        `SELECT id, username, email, email_verified FROM users WHERE email = $1`,
+        `SELECT id, username, email, email_verified 
+   FROM users 
+   WHERE LOWER(email) = LOWER($1)`,
         [email],
       );
 
@@ -447,7 +475,9 @@ const authController = {
       }
 
       const result = await db.query(
-        `SELECT id, username, email FROM users WHERE email = $1`,
+        `SELECT id, username, email 
+   FROM users 
+   WHERE LOWER(email) = LOWER($1)`,
         [email],
       );
 
