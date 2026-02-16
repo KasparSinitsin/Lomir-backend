@@ -113,6 +113,22 @@ const authController = {
       // Create the user (email_verified defaults to FALSE)
       const user = await userModel.createUser(value);
 
+      // --- Save Focus Areas (tags) into user_tags ---
+      const tagIds = (value.tags || [])
+        .map((t) => Number(t?.tag_id))
+        .filter((n) => Number.isFinite(n));
+
+      if (tagIds.length > 0) {
+        await db.query(
+          `
+          INSERT INTO user_tags (user_id, tag_id)
+          SELECT $1, UNNEST($2::int[])
+          ON CONFLICT DO NOTHING
+          `,
+          [user.id, tagIds],
+        );
+      }
+
       // Generate verification token
       const verificationToken = crypto.randomBytes(32).toString("hex");
       const tokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
