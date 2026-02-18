@@ -1386,42 +1386,40 @@ const updateTeam = async (req, res) => {
       }
 
       // Update tags if provided
-      if (value.tags && value.tags.length > 0) {
-        const tagIdsToCheck = value.tags.map((tag) => tag.tag_id);
-        const tagsExistResult = await client.query(`
-          SELECT id FROM tags WHERE id IN (${tagIdsToCheck.join(",")})
-        `);
-        const existingTagIds = tagsExistResult.rows.map((row) => row.id);
+      if (Array.isArray(value.tags)) {
+        // Validate tag IDs only if there are any
+        if (value.tags.length > 0) {
+          const tagIdsToCheck = value.tags.map((tag) => tag.tag_id);
+          const tagsExistResult = await client.query(`
+      SELECT id FROM tags WHERE id IN (${tagIdsToCheck.join(",")})
+    `);
+          const existingTagIds = tagsExistResult.rows.map((row) => row.id);
 
-        if (existingTagIds.length !== tagIdsToCheck.length) {
-          await client.query("ROLLBACK");
-          return res.status(400).json({
-            success: false,
-            message: "Invalid input data",
-            errors: ["One or more of the provided tag IDs do not exist."],
-          });
+          if (existingTagIds.length !== tagIdsToCheck.length) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({
+              success: false,
+              message: "Invalid input data",
+              errors: ["One or more of the provided tag IDs do not exist."],
+            });
+          }
         }
 
-        // Remove existing tags
-        await client.query(
-          `
-          DELETE FROM team_tags WHERE team_id = $1
-        `,
-          [teamId],
-        );
+        // Always delete existing tags first (covers the "remove all" case)
+        await client.query(`DELETE FROM team_tags WHERE team_id = $1`, [
+          teamId,
+        ]);
 
-        // Add new tags
-        const tagInserts = value.tags.map((tag) =>
-          client.query(
-            `
-            INSERT INTO team_tags (team_id, tag_id)
-            VALUES ($1, $2)
-          `,
-            [teamId, tag.tag_id],
-          ),
-        );
-
-        await Promise.all(tagInserts);
+        // Insert new tags only if there are any
+        if (value.tags.length > 0) {
+          const tagInserts = value.tags.map((tag) =>
+            client.query(
+              `INSERT INTO team_tags (team_id, tag_id) VALUES ($1, $2)`,
+              [teamId, tag.tag_id],
+            ),
+          );
+          await Promise.all(tagInserts);
+        }
       }
 
       await client.query("COMMIT");
