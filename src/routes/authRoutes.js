@@ -23,6 +23,16 @@ router.get("/me", auth.authenticateToken, authController.getCurrentUser);
 router.post("/forgot-password", authController.forgotPassword);
 router.post("/reset-password", authController.resetPassword);
 
+// Change password (authenticated)
+router.put(
+  "/change-password",
+  auth.authenticateToken,
+  authController.changePassword,
+);
+
+// Change email (authenticated)
+router.put("/change-email", auth.authenticateToken, authController.changeEmail);
+
 // --- Optional debug endpoints (keep only in dev) ---
 router.get("/db-test-connection", async (req, res) => {
   try {
