@@ -610,6 +610,149 @@ const authController = {
       });
     }
   },
+
+  /**
+   * Change password (authenticated user, requires current password)
+   */
+  async changePassword(req, res) {
+    try {
+      const userId = req.user.id;
+      const { current_password: currentPassword, new_password: newPassword } =
+        req.body;
+
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({
+          success: false,
+          message: "Current password and new password are required",
+        });
+      }
+
+      if (newPassword.length < 6) {
+        return res.status(400).json({
+          success: false,
+          message: "New password must be at least 6 characters",
+        });
+      }
+
+      const result = await db.query(
+        "SELECT id, password_hash FROM users WHERE id = $1",
+        [userId],
+      );
+
+      if (result.rows.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, message: "User not found" });
+      }
+
+      const isValid = await userModel.verifyPassword(
+        currentPassword,
+        result.rows[0].password_hash,
+      );
+
+      if (!isValid) {
+        return res.status(401).json({
+          success: false,
+          message: "Current password is incorrect",
+        });
+      }
+
+      const hashedPassword = await userModel.hashPassword(newPassword);
+
+      await db.query(
+        "UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2",
+        [hashedPassword, userId],
+      );
+
+      res
+        .status(200)
+        .json({ success: true, message: "Password changed successfully" });
+    } catch (error) {
+      console.error("Change password error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error changing password",
+        error: error.message,
+      });
+    }
+  },
+
+  /**
+   * Change email (authenticated user, requires current password)
+   */
+  async changeEmail(req, res) {
+    try {
+      const userId = req.user.id;
+      const { new_email: newEmail, current_password: currentPassword } =
+        req.body;
+
+      if (!newEmail || !currentPassword) {
+        return res.status(400).json({
+          success: false,
+          message: "New email and current password are required",
+        });
+      }
+
+      if (!/\S+@\S+\.\S+/.test(newEmail)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid email address",
+        });
+      }
+
+      const result = await db.query(
+        "SELECT id, password_hash, email FROM users WHERE id = $1",
+        [userId],
+      );
+
+      if (result.rows.length === 0) {
+        return res
+          .status(404)
+          .json({ success: false, message: "User not found" });
+      }
+
+      const isValid = await userModel.verifyPassword(
+        currentPassword,
+        result.rows[0].password_hash,
+      );
+
+      if (!isValid) {
+        return res.status(401).json({
+          success: false,
+          message: "Current password is incorrect",
+        });
+      }
+
+      // Check if email is already taken
+      const emailCheck = await db.query(
+        "SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND id != $2",
+        [newEmail, userId],
+      );
+
+      if (emailCheck.rows.length > 0) {
+        return res.status(409).json({
+          success: false,
+          message: "This email address is already in use",
+        });
+      }
+
+      await db.query(
+        "UPDATE users SET email = $1, updated_at = NOW() WHERE id = $2",
+        [newEmail, userId],
+      );
+
+      res
+        .status(200)
+        .json({ success: true, message: "Email changed successfully" });
+    } catch (error) {
+      console.error("Change email error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error changing email",
+        error: error.message,
+      });
+    }
+  },
 };
 
 module.exports = authController;
