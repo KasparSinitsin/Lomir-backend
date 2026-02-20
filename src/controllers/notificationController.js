@@ -4,7 +4,7 @@ const db = require("../config/database");
 // HELPER: Generate navigation URL based on notification type
 // ============================================================================
 const getNavigationUrl = (notification) => {
-  const { type, team_id, reference_id, actor_id } = notification;
+  const { type, team_id, reference_id, actor_id, title } = notification;
 
   switch (type) {
     // === NAVIGATES TO MY TEAMS PAGE ===
@@ -62,6 +62,13 @@ const getNavigationUrl = (notification) => {
       // Navigate to the archived team chat
       return `/chat/${team_id}?type=team&highlightUser=${actor_id}`;
 
+    case "badge_awarded": {
+      // Navigate to own profile, scroll to badges, highlight the awarded badge
+      // title format: "New Badge: Quick Learner"
+      const badgeName = title ? title.replace("New Badge: ", "") : "";
+      return `/profile?scrollTo=badges&highlightBadge=${encodeURIComponent(badgeName)}`;
+    }
+
     default:
       return "/teams/my-teams";
   }
@@ -94,7 +101,7 @@ const createNotification = async ({
         referenceId,
         teamId,
         actorId,
-      ]
+      ],
     );
     return result.rows[0];
   } catch (error) {
@@ -120,7 +127,7 @@ const notifyTeamMembers = async ({
     // Get all team members except the excluded user
     const membersResult = await db.query(
       `SELECT user_id FROM team_members WHERE team_id = $1 AND user_id != $2`,
-      [teamId, excludeUserId]
+      [teamId, excludeUserId],
     );
 
     const notifications = [];
@@ -162,7 +169,7 @@ const notifyTeamAdmins = async ({
     const adminsResult = await db.query(
       `SELECT user_id FROM team_members 
        WHERE team_id = $1 AND role IN ('owner', 'admin')`,
-      [teamId]
+      [teamId],
     );
 
     const notifications = [];
@@ -199,17 +206,17 @@ const getUnreadCount = async (req, res) => {
       `SELECT COUNT(*) as count 
        FROM notifications 
        WHERE user_id = $1 AND read_at IS NULL`,
-      [userId]
+      [userId],
     );
 
     // Get the first unread notification (most recent)
     const firstUnreadResult = await db.query(
-      `SELECT id, type, team_id, reference_id, actor_id, created_at
-       FROM notifications 
-       WHERE user_id = $1 AND read_at IS NULL
+      `SELECT id, type, team_id, reference_id, actor_id, title, created_at
+FROM notifications
+WHERE user_id = $1 AND read_at IS NULL
        ORDER BY created_at DESC
        LIMIT 1`,
-      [userId]
+      [userId],
     );
 
     const unreadCount = parseInt(countResult.rows[0].count) || 0;
@@ -294,6 +301,7 @@ const getNotifications = async (req, res) => {
         team_id: notification.teamId,
         reference_id: notification.referenceId,
         actor_id: notification.actorId,
+        title: notification.title,
       }),
     }));
 
@@ -324,7 +332,7 @@ const markAsRead = async (req, res) => {
        SET read_at = NOW() 
        WHERE id = $1 AND user_id = $2 AND read_at IS NULL
        RETURNING *`,
-      [notificationId, userId]
+      [notificationId, userId],
     );
 
     if (result.rows.length === 0) {
@@ -360,7 +368,7 @@ const markAllAsRead = async (req, res) => {
        SET read_at = NOW() 
        WHERE user_id = $1 AND read_at IS NULL
        RETURNING id`,
-      [userId]
+      [userId],
     );
 
     res.status(200).json({
@@ -391,7 +399,7 @@ const deleteNotification = async (req, res) => {
       `DELETE FROM notifications 
        WHERE id = $1 AND user_id = $2
        RETURNING id`,
-      [notificationId, userId]
+      [notificationId, userId],
     );
 
     if (result.rows.length === 0) {
