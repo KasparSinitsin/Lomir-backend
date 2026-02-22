@@ -698,6 +698,8 @@ const getUserBadges = async (req, res) => {
         ba.context_type,
         ba.context_id,
         ba.team_id,
+        tag.name AS tag_name,
+        tag.category AS tag_category,
         t.name AS team_name,
 
         -- awarder fields
@@ -711,6 +713,7 @@ const getUserBadges = async (req, res) => {
       JOIN badges b ON ba.badge_id = b.id
       LEFT JOIN users awarder ON ba.awarded_by_user_id = awarder.id
       LEFT JOIN teams t ON ba.team_id = t.id
+      LEFT JOIN tags tag ON ba.tag_id = tag.id
       WHERE ba.awarded_to_user_id = $1
       ORDER BY ba.created_at DESC, ba.id DESC
       `,
