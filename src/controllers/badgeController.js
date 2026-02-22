@@ -74,7 +74,8 @@ const VALID_CONTEXT_TYPES = ["personal", "team", "project"];
  *     reason: string (optional),
  *     context_type: string ("personal" | "team" | "project"),
  *     context_id: number (optional),
- *     team_id: number (optional, required when context_type is "team")
+ *     team_id: number (optional, required when context_type is "team"),
+ *     tag_id: number (optional, links award to a focus area/tag)
  *   }
  */
 const awardBadge = async (req, res) => {
@@ -95,6 +96,7 @@ const awardBadge = async (req, res) => {
       context_type,
       context_id,
       team_id,
+      tag_id,
     } = req.body;
 
     // ── Basic validation ──
@@ -181,10 +183,25 @@ const awardBadge = async (req, res) => {
         [team_id],
       );
       if (teamCheck.rows.length === 0) {
-        console.warn(
-          "⚠️ team_id provided but team not found, setting to null",
-        );
+        console.warn("⚠️ team_id provided but team not found, setting to null");
       }
+    }
+
+    // ── Validate tag_id if provided ──
+    let resolvedTagId = null;
+    if (tag_id) {
+      const tagCheck = await pool.query(
+        "SELECT id, name, category FROM tags WHERE id = $1",
+        [tag_id],
+      );
+      if (tagCheck.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Tag not found",
+        });
+      }
+      resolvedTagId = tagCheck.rows[0].id;
+      console.log("🏅 Tag validated:", tagCheck.rows[0].name);
     }
 
     // Verify badge exists
@@ -218,8 +235,8 @@ const awardBadge = async (req, res) => {
 
     const insertResult = await client.query(
       `INSERT INTO badge_awards
-         (awarded_to_user_id, badge_id, awarded_by_user_id, credits, reason, context_type, context_id, team_id, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+         (awarded_to_user_id, badge_id, awarded_by_user_id, credits, reason, context_type, context_id, team_id, tag_id, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
        RETURNING *`,
       [
         awarded_to_user_id,
@@ -229,14 +246,12 @@ const awardBadge = async (req, res) => {
         reason || null,
         resolvedContextType,
         context_id || null,
-        resolvedContextType === "team" ? team_id : (team_id || null),
+        resolvedContextType === "team" ? team_id : team_id || null,
+        resolvedTagId,
       ],
     );
 
-    console.log(
-      "🏅 badge_awards INSERT success! ID:",
-      insertResult.rows[0].id,
-    );
+    console.log("🏅 badge_awards INSERT success! ID:", insertResult.rows[0].id);
 
     // ── Non-critical: Update user_badges summary table (SAVEPOINT) ──
     try {
@@ -261,8 +276,7 @@ const awardBadge = async (req, res) => {
       await client.query("SAVEPOINT notification_sp");
 
       const badgeName = badgeCheck.rows[0].name;
-      const awarderName =
-        req.user.first_name || req.user.username || "Someone";
+      const awarderName = req.user.first_name || req.user.username || "Someone";
 
       await client.query(
         `INSERT INTO notifications (user_id, type, title, message, reference_type, reference_id, team_id, actor_id)
@@ -399,6 +413,9 @@ const getUserBadges = async (req, res) => {
         ba.context_id,
         ba.team_id,
         t.name AS team_name,
+        ba.tag_id,
+        tag.name AS tag_name,
+        tag.category AS tag_category,
         ba.awarded_by_user_id,
         awarder.username AS awarded_by_username,
         awarder.first_name AS awarded_by_first_name,
@@ -408,6 +425,7 @@ const getUserBadges = async (req, res) => {
       JOIN badges b ON ba.badge_id = b.id
       LEFT JOIN users awarder ON ba.awarded_by_user_id = awarder.id
       LEFT JOIN teams t ON ba.team_id = t.id
+      LEFT JOIN tags tag ON ba.tag_id = tag.id
       WHERE ba.awarded_to_user_id = $1
       ORDER BY ba.created_at DESC, ba.id DESC
       `,
