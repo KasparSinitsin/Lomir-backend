@@ -56,6 +56,11 @@ const refreshBadgeViews = async (clientOrPool) => {
   }
 };
 
+// ============================================================================
+// Allowed context types for badge awards
+// ============================================================================
+const VALID_CONTEXT_TYPES = ["personal", "team", "project"];
+
 /**
  * @description Award a badge to a user
  * @route POST /api/badges/award
@@ -67,9 +72,9 @@ const refreshBadgeViews = async (clientOrPool) => {
  *     badge_id: number,
  *     credits: number (1, 2, or 3),
  *     reason: string (optional),
- *     context_type: string (optional, e.g. "team", "project", "profile"),
+ *     context_type: string ("personal" | "team" | "project"),
  *     context_id: number (optional),
- *     team_id: number (optional)
+ *     team_id: number (optional, required when context_type is "team")
  *   }
  */
 const awardBadge = async (req, res) => {
@@ -92,7 +97,7 @@ const awardBadge = async (req, res) => {
       team_id,
     } = req.body;
 
-    // ── Validation ──
+    // ── Basic validation ──
     if (!awarded_to_user_id) {
       return res.status(400).json({
         success: false,
@@ -122,8 +127,68 @@ const awardBadge = async (req, res) => {
       });
     }
 
+    // ── Validate context_type ──
+    const resolvedContextType = context_type || "personal";
+    if (!VALID_CONTEXT_TYPES.includes(resolvedContextType)) {
+      return res.status(400).json({
+        success: false,
+        message: `context_type must be one of: ${VALID_CONTEXT_TYPES.join(", ")}`,
+      });
+    }
+
+    // ── Validate team_id when context is "team" ──
+    if (resolvedContextType === "team") {
+      if (!team_id) {
+        return res.status(400).json({
+          success: false,
+          message: "team_id is required when context_type is 'team'",
+        });
+      }
+
+      // Verify team exists and is not archived
+      const teamCheck = await pool.query(
+        "SELECT id, name FROM teams WHERE id = $1 AND archived_at IS NULL",
+        [team_id],
+      );
+      if (teamCheck.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Team not found or archived",
+        });
+      }
+
+      // Verify both awarder and awardee are members of the team
+      const memberCheck = await pool.query(
+        `SELECT user_id FROM team_members
+         WHERE team_id = $1 AND user_id IN ($2, $3)`,
+        [team_id, awardedByUserId, awarded_to_user_id],
+      );
+      if (memberCheck.rows.length < 2) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Both awarder and awardee must be members of the selected team",
+        });
+      }
+
+      console.log("🏅 Team context validated:", teamCheck.rows[0].name);
+    }
+
+    // ── If team_id is provided with non-team context, still validate it exists ──
+    if (team_id && resolvedContextType !== "team") {
+      const teamCheck = await pool.query(
+        "SELECT id FROM teams WHERE id = $1 AND archived_at IS NULL",
+        [team_id],
+      );
+      if (teamCheck.rows.length === 0) {
+        console.warn(
+          "⚠️ team_id provided but team not found, setting to null",
+        );
+      }
+    }
+
     // Verify badge exists
-    const badgeCheck = await client.query(
+    const badgeCheck = await pool.query(
       "SELECT id, name, category FROM badges WHERE id = $1",
       [badge_id],
     );
@@ -136,7 +201,7 @@ const awardBadge = async (req, res) => {
     console.log("🏅 Badge found:", badgeCheck.rows[0].name);
 
     // Verify target user exists
-    const userCheck = await client.query(
+    const userCheck = await pool.query(
       "SELECT id, first_name, last_name, username FROM users WHERE id = $1",
       [awarded_to_user_id],
     );
@@ -162,15 +227,18 @@ const awardBadge = async (req, res) => {
         awardedByUserId,
         Number(credits),
         reason || null,
-        context_type || "profile",
+        resolvedContextType,
         context_id || null,
-        team_id || null,
+        resolvedContextType === "team" ? team_id : (team_id || null),
       ],
     );
 
-    console.log("🏅 badge_awards INSERT success! ID:", insertResult.rows[0].id);
+    console.log(
+      "🏅 badge_awards INSERT success! ID:",
+      insertResult.rows[0].id,
+    );
 
-    // ── user_badges update (non-critical, wrapped in SAVEPOINT) ──
+    // ── Non-critical: Update user_badges summary table (SAVEPOINT) ──
     try {
       await client.query("SAVEPOINT user_badges_sp");
       await client.query(
@@ -181,7 +249,6 @@ const awardBadge = async (req, res) => {
       await client.query("RELEASE SAVEPOINT user_badges_sp");
       console.log("🏅 user_badges INSERT OK");
     } catch (ubError) {
-      // Roll back only this savepoint — main transaction stays intact
       await client.query("ROLLBACK TO SAVEPOINT user_badges_sp");
       console.warn(
         "⚠️ user_badges INSERT failed (non-critical):",
@@ -189,58 +256,47 @@ const awardBadge = async (req, res) => {
       );
     }
 
-    // ── Notification (non-critical, wrapped in SAVEPOINT) ──
+    // ── Non-critical: Create notification (SAVEPOINT) ──
     try {
       await client.query("SAVEPOINT notification_sp");
 
-      const badge = badgeCheck.rows[0];
-      const awarderResult = await client.query(
-        "SELECT first_name, last_name, username FROM users WHERE id = $1",
-        [awardedByUserId],
-      );
-      const awarder = awarderResult.rows[0];
-      const awarderName = awarder
-        ? `${awarder.first_name || ""} ${awarder.last_name || ""}`.trim() ||
-          awarder.username
-        : "Someone";
+      const badgeName = badgeCheck.rows[0].name;
+      const awarderName =
+        req.user.first_name || req.user.username || "Someone";
 
       await client.query(
-        `INSERT INTO notifications (user_id, type, title, message, reference_type, reference_id, actor_id, team_id, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+        `INSERT INTO notifications (user_id, type, title, message, reference_type, reference_id, team_id, actor_id)
+         VALUES ($1, 'badge_awarded', $2, $3, 'badge', $4, $5, $6)`,
         [
           awarded_to_user_id,
-          "badge_awarded",
-          `New Badge: ${badge.name}`,
-          `${awarderName} awarded you the ${badge.name} badge (+${credits} ct.)${reason ? `: "${reason}"` : ""}`,
-          "badge_award",
-          insertResult.rows[0].id,
-          awardedByUserId,
+          `New Badge: ${badgeName}`,
+          `${awarderName} awarded you the "${badgeName}" badge (${credits} credit${credits > 1 ? "s" : ""})`,
+          badge_id,
           team_id || null,
+          awardedByUserId,
         ],
       );
       await client.query("RELEASE SAVEPOINT notification_sp");
-      console.log("🏅 Notification created for user", awarded_to_user_id);
+      console.log("🏅 Notification created");
     } catch (notifError) {
       await client.query("ROLLBACK TO SAVEPOINT notification_sp");
       console.warn(
-        "⚠️ Notification failed (non-critical):",
+        "⚠️ Notification creation failed (non-critical):",
         notifError.message,
       );
     }
 
-    // ── COMMIT the transaction ──
+    // ── Commit main transaction ──
     await client.query("COMMIT");
     console.log(
       "🏅 ====== TRANSACTION COMMITTED ====== Award ID:",
       insertResult.rows[0].id,
     );
 
-    // ── Refresh materialized views (outside transaction, use pool not client) ──
-    try {
-      await refreshBadgeViews(pool);
-    } catch (refreshError) {
-      console.warn("⚠️ View refresh warning:", refreshError.message);
-    }
+    // Refresh materialized views (post-commit, non-blocking)
+    refreshBadgeViews(pool).catch((err) =>
+      console.warn("⚠️ View refresh failed:", err.message),
+    );
 
     console.log("🏅 ====== AWARD BADGE COMPLETE ======");
 
@@ -259,6 +315,60 @@ const awardBadge = async (req, res) => {
     });
   } finally {
     client.release();
+  }
+};
+
+/**
+ * @description Get teams shared between the authenticated user and another user
+ * @route GET /api/badges/shared-teams/:userId
+ * @access Private (requires authentication)
+ *
+ * Returns active (non-archived) teams where both users are members.
+ * Used by the BadgeAwardModal to populate the team context dropdown.
+ */
+const getSharedTeams = async (req, res) => {
+  try {
+    const currentUserId = req.user.id;
+    const targetUserId = parseInt(req.params.userId);
+
+    if (!targetUserId || isNaN(targetUserId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid userId is required",
+      });
+    }
+
+    const result = await pool.query(
+      `SELECT
+         t.id,
+         t.name,
+         t.teamavatar_url,
+         t.is_remote,
+         t.city,
+         t.country
+       FROM teams t
+       JOIN team_members tm1 ON t.id = tm1.team_id AND tm1.user_id = $1
+       JOIN team_members tm2 ON t.id = tm2.team_id AND tm2.user_id = $2
+       WHERE t.archived_at IS NULL
+       ORDER BY t.name ASC`,
+      [currentUserId, targetUserId],
+    );
+
+    console.log(
+      `🏅 Shared teams between user ${currentUserId} and ${targetUserId}: ${result.rows.length}`,
+    );
+
+    res.status(200).json({
+      success: true,
+      data: result.rows,
+    });
+  } catch (error) {
+    console.error("Error fetching shared teams:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching shared teams",
+      error: error.message,
+    });
   }
 };
 
@@ -319,4 +429,5 @@ module.exports = {
   getAllBadges,
   awardBadge,
   getUserBadges,
+  getSharedTeams,
 };
