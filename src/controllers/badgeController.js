@@ -183,7 +183,9 @@ const awardBadge = async (req, res) => {
         [team_id],
       );
       if (teamCheck.rows.length === 0) {
-        console.warn("⚠️ team_id provided but team not found, setting to null");
+        console.warn(
+          "⚠️ team_id provided but team not found, setting to null",
+        );
       }
     }
 
@@ -246,12 +248,15 @@ const awardBadge = async (req, res) => {
         reason || null,
         resolvedContextType,
         context_id || null,
-        resolvedContextType === "team" ? team_id : team_id || null,
+        resolvedContextType === "team" ? team_id : (team_id || null),
         resolvedTagId,
       ],
     );
 
-    console.log("🏅 badge_awards INSERT success! ID:", insertResult.rows[0].id);
+    console.log(
+      "🏅 badge_awards INSERT success! ID:",
+      insertResult.rows[0].id,
+    );
 
     // ── Non-critical: Update user_badges summary table (SAVEPOINT) ──
     try {
@@ -271,12 +276,62 @@ const awardBadge = async (req, res) => {
       );
     }
 
+    // ── Non-critical: Update tag badge_credits + dominant_badge_category (SAVEPOINT) ──
+    if (resolvedTagId) {
+      try {
+        await client.query("SAVEPOINT tag_credit_sp");
+
+        // Upsert: add tag to user_tags if not exists, then increment badge_credits
+        await client.query(
+          `INSERT INTO user_tags (user_id, tag_id, badge_credits)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (user_id, tag_id) DO UPDATE
+           SET badge_credits = user_tags.badge_credits + $3`,
+          [awarded_to_user_id, resolvedTagId, Number(credits)],
+        );
+
+        // Update dominant_badge_category from the aggregation view
+        const dominantResult = await client.query(
+          `SELECT badge_category
+           FROM v_user_tag_dominant_category
+           WHERE user_id = $1 AND tag_id = $2`,
+          [awarded_to_user_id, resolvedTagId],
+        );
+
+        if (dominantResult.rows.length > 0) {
+          await client.query(
+            `UPDATE user_tags
+             SET dominant_badge_category = $1
+             WHERE user_id = $2 AND tag_id = $3`,
+            [
+              dominantResult.rows[0].badge_category,
+              awarded_to_user_id,
+              resolvedTagId,
+            ],
+          );
+          console.log(
+            "🏅 Tag credit updated. Dominant category:",
+            dominantResult.rows[0].badge_category,
+          );
+        }
+
+        await client.query("RELEASE SAVEPOINT tag_credit_sp");
+      } catch (tagError) {
+        await client.query("ROLLBACK TO SAVEPOINT tag_credit_sp");
+        console.warn(
+          "⚠️ Tag credit update failed (non-critical):",
+          tagError.message,
+        );
+      }
+    }
+
     // ── Non-critical: Create notification (SAVEPOINT) ──
     try {
       await client.query("SAVEPOINT notification_sp");
 
       const badgeName = badgeCheck.rows[0].name;
-      const awarderName = req.user.first_name || req.user.username || "Someone";
+      const awarderName =
+        req.user.first_name || req.user.username || "Someone";
 
       await client.query(
         `INSERT INTO notifications (user_id, type, title, message, reference_type, reference_id, team_id, actor_id)
