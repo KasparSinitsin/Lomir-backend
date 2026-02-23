@@ -565,7 +565,9 @@ const getUserTags = async (req, res) => {
         t.name,
         t.category,
         ut.experience_level,
-        ut.interest_level
+        ut.interest_level,
+        ut.badge_credits,
+        ut.dominant_badge_category
       FROM user_tags ut
       JOIN tags t ON ut.tag_id = t.id
       WHERE ut.user_id = $1
@@ -609,6 +611,35 @@ const updateUserTags = async (req, res) => {
 
     await client.query("BEGIN");
 
+    // Calculate badge credits from badge_awards (source of truth)
+    // This works for both preserved AND re-added tags
+    const badgeCreditData = await client.query(
+      `SELECT
+         tag_id,
+         SUM(credits) AS badge_credits
+       FROM badge_awards
+       WHERE awarded_to_user_id = $1 AND tag_id IS NOT NULL
+       GROUP BY tag_id`,
+      [userId],
+    );
+    const creditMap = {};
+    for (const row of badgeCreditData.rows) {
+      creditMap[row.tag_id] = { badge_credits: Number(row.badge_credits) };
+    }
+
+    // Get dominant badge category per tag
+    const dominantData = await client.query(
+      `SELECT tag_id, badge_category
+       FROM v_user_tag_dominant_category
+       WHERE user_id = $1`,
+      [userId],
+    );
+    for (const row of dominantData.rows) {
+      if (creditMap[row.tag_id]) {
+        creditMap[row.tag_id].dominant_badge_category = row.badge_category;
+      }
+    }
+
     // Delete existing tags for this user
     await client.query("DELETE FROM user_tags WHERE user_id = $1", [userId]);
 
@@ -617,14 +648,16 @@ const updateUserTags = async (req, res) => {
       const tagInserts = tags.map((tag) =>
         client.query(
           `
-          INSERT INTO user_tags (user_id, tag_id, experience_level, interest_level)
-          VALUES ($1, $2, $3, $4)
+          INSERT INTO user_tags (user_id, tag_id, experience_level, interest_level, badge_credits, dominant_badge_category)
+          VALUES ($1, $2, $3, $4, $5, $6)
         `,
           [
             userId,
             tag.tag_id || tag.id,
             tag.experience_level || 2,
             tag.interest_level || 3,
+            creditMap[tag.tag_id || tag.id]?.badge_credits || 0,
+            creditMap[tag.tag_id || tag.id]?.dominant_badge_category || null,
           ],
         ),
       );
@@ -642,7 +675,9 @@ const updateUserTags = async (req, res) => {
         t.name,
         t.category,
         ut.experience_level,
-        ut.interest_level
+        ut.interest_level,
+        ut.badge_credits,
+        ut.dominant_badge_category
       FROM user_tags ut
       JOIN tags t ON ut.tag_id = t.id
       WHERE ut.user_id = $1
