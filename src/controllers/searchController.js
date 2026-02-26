@@ -613,14 +613,19 @@ const searchController = {
         (SELECT COALESCE(
       json_agg(
         json_build_object(
-          'id', v.badge_id,
-          'name', v.badge_name,
-          'category', v.category,
-          'color', v.badge_color,
-          'cat_image_url', v.cat_image_url,
-          'total_credits', v.total_credits,
-          'category_total_credits', v.category_total_credits
-        )
+            'id', v.badge_id,
+            'name', v.badge_name,
+            'category', v.category,
+            'color', v.badge_color,
+            'cat_image_url', v.cat_image_url,
+            'total_credits', v.total_credits,
+            'award_count', v.award_count,
+            'awarder_count', v.awarder_count,
+            'category_total_credits', v.category_total_credits,
+            'category_award_count', v.category_award_count,
+            'category_awarder_count', v.category_awarder_count,
+            'last_awarded_at', v.last_awarded_at
+          )
         ORDER BY
           v.category_total_credits DESC,
           v.category ASC,

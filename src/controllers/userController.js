@@ -105,7 +105,11 @@ const getUserById = async (req, res) => {
             'color', v.badge_color,
             'cat_image_url', v.cat_image_url,
             'total_credits', v.total_credits,
+            'award_count', v.award_count,
+            'awarder_count', v.awarder_count,
             'category_total_credits', v.category_total_credits,
+            'category_award_count', v.category_award_count,
+            'category_awarder_count', v.category_awarder_count,
             'last_awarded_at', v.last_awarded_at
           )
           ORDER BY
@@ -561,17 +565,19 @@ const getUserTags = async (req, res) => {
     const result = await pool.query(
       `
       SELECT 
-        t.id,
-        t.name,
-        t.category,
-        t.supercategory,
-        ut.experience_level,
-        ut.interest_level,
-        ut.badge_credits,
-        ut.dominant_badge_category
-      FROM user_tags ut
-      JOIN tags t ON ut.tag_id = t.id
-      WHERE ut.user_id = $1
+  t.id,
+  t.name,
+  t.category,
+  t.supercategory,
+  ut.experience_level,
+  ut.interest_level,
+  ut.badge_credits,
+  ut.dominant_badge_category,
+  (SELECT COUNT(*) FROM badge_awards ba WHERE ba.tag_id = t.id AND ba.awarded_to_user_id = ut.user_id) AS linked_badge_count,
+  (SELECT COUNT(DISTINCT ba.awarded_by_user_id) FROM badge_awards ba WHERE ba.tag_id = t.id AND ba.awarded_to_user_id = ut.user_id) AS awarder_count
+FROM user_tags ut
+JOIN tags t ON ut.tag_id = t.id
+WHERE ut.user_id = $1
     `,
       [userId],
     );
@@ -671,18 +677,20 @@ const updateUserTags = async (req, res) => {
     // Fetch the updated tags
     const result = await pool.query(
       `
-      SELECT 
-        t.id,
-        t.name,
-        t.category,
-        t.supercategory,
-        ut.experience_level,
-        ut.interest_level,
-        ut.badge_credits,
-        ut.dominant_badge_category
-      FROM user_tags ut
-      JOIN tags t ON ut.tag_id = t.id
-      WHERE ut.user_id = $1
+     SELECT 
+  t.id,
+  t.name,
+  t.category,
+  t.supercategory,
+  ut.experience_level,
+  ut.interest_level,
+  ut.badge_credits,
+  ut.dominant_badge_category,
+  (SELECT COUNT(*) FROM badge_awards ba WHERE ba.tag_id = t.id AND ba.awarded_to_user_id = ut.user_id) AS linked_badge_count,
+  (SELECT COUNT(DISTINCT ba.awarded_by_user_id) FROM badge_awards ba WHERE ba.tag_id = t.id AND ba.awarded_to_user_id = ut.user_id) AS awarder_count
+FROM user_tags ut
+JOIN tags t ON ut.tag_id = t.id
+WHERE ut.user_id = $1
     `,
       [userId],
     );
