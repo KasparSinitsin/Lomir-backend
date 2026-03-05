@@ -486,7 +486,7 @@ const searchController = {
       let userCountParams = [];
 
       if (useBoolean) {
-        // ✅ UPDATED: add extraExistsTemplates / extraNotExistsTemplates for badges
+        // Add extraExistsTemplates / extraNotExistsTemplates for badges
         const userTagConfig = {
           tagColumn: "t.name",
           existsTemplate:
@@ -606,10 +606,22 @@ const searchController = {
     u.is_public,
     u.created_at,
     u.updated_at,
-    (SELECT STRING_AGG(t.name, ', ')
-      FROM user_tags ut
-      JOIN tags t ON ut.tag_id = t.id
-      WHERE ut.user_id = u.id) as tags,
+    (SELECT COALESCE(
+      json_agg(
+        json_build_object(
+          'id', t.id,
+          'name', t.name,
+          'supercategory', t.supercategory,
+          'badge_credits', COALESCE(ut.badge_credits, 0),
+          'dominant_badge_category', ut.dominant_badge_category
+        )
+        ORDER BY COALESCE(ut.badge_credits, 0) DESC, t.name ASC
+      ),
+      '[]'::json
+    )
+    FROM user_tags ut
+    JOIN tags t ON ut.tag_id = t.id
+    WHERE ut.user_id = u.id) as tags,
         (SELECT COALESCE(
       json_agg(
         json_build_object(
@@ -636,7 +648,6 @@ const searchController = {
     )
     FROM v_user_badges_with_category_totals v
     WHERE v.user_id = u.id) as badges
-
     ${userDistanceSelect}
   FROM users u
   LEFT JOIN user_tags ut ON u.id = ut.user_id
@@ -649,7 +660,7 @@ const searchController = {
 
       // search condition
       if (useBoolean) {
-        // ✅ UPDATED: add extraExistsTemplates / extraNotExistsTemplates for badges
+        // Add extraExistsTemplates / extraNotExistsTemplates for badges
         const userTagConfig = {
           tagColumn: "t.name",
           existsTemplate:
@@ -1213,10 +1224,48 @@ const searchController = {
     u.is_public,
     u.created_at,
     u.updated_at,
-    (SELECT STRING_AGG(t.name, ', ')
-      FROM user_tags ut
-      JOIN tags t ON ut.tag_id = t.id
-      WHERE ut.user_id = u.id) as tags
+    (SELECT COALESCE(
+      json_agg(
+        json_build_object(
+          'id', t.id,
+          'name', t.name,
+          'supercategory', t.supercategory,
+          'badge_credits', COALESCE(ut.badge_credits, 0),
+          'dominant_badge_category', ut.dominant_badge_category
+        )
+        ORDER BY COALESCE(ut.badge_credits, 0) DESC, t.name ASC
+      ),
+      '[]'::json
+    )
+    FROM user_tags ut
+    JOIN tags t ON ut.tag_id = t.id
+    WHERE ut.user_id = u.id) as tags,
+        (SELECT COALESCE(
+      json_agg(
+        json_build_object(
+            'id', v.badge_id,
+            'name', v.badge_name,
+            'category', v.category,
+            'color', v.badge_color,
+            'cat_image_url', v.cat_image_url,
+            'total_credits', v.total_credits,
+            'award_count', v.award_count,
+            'awarder_count', v.awarder_count,
+            'category_total_credits', v.category_total_credits,
+            'category_award_count', v.category_award_count,
+            'category_awarder_count', v.category_awarder_count,
+            'last_awarded_at', v.last_awarded_at
+          )
+        ORDER BY
+          v.category_total_credits DESC,
+          v.category ASC,
+          v.total_credits DESC,
+          v.badge_name ASC
+      ),
+      '[]'::json
+    )
+    FROM v_user_badges_with_category_totals v
+    WHERE v.user_id = u.id) as badges
     ${userDistanceSelect}
   FROM users u
   WHERE 1=1
@@ -1238,7 +1287,7 @@ const searchController = {
         userQuery += ` AND u.is_public = TRUE`;
       }
 
-      // ⬇️ DISTANCE FILTER (USER DATA) ⬇️
+      // DISTANCE FILTER (USER DATA) ⬇️
       if (
         hasValidMaxDistance &&
         sort === "proximity" &&
