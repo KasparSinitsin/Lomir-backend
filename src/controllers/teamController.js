@@ -538,17 +538,43 @@ const getTeamById = async (req, res) => {
       [teamId],
     );
 
-    // Get team tags
-    const tagsResult = await db.pool.query(
+    // Get team tags — enriched with aggregated badge credits from team members
+ const tagsResult = await db.pool.query(
       `
-      SELECT tt.tag_id, t.name, t.category, t.supercategory
+      SELECT
+        tt.tag_id,
+        t.name,
+        t.category,
+        t.supercategory,
+        COALESCE(SUM(ba.credits), 0)::int AS badge_credits,
+        COUNT(ba.id)::int AS linked_badge_count,
+        COUNT(DISTINCT ba.awarded_to_user_id)::int AS awardee_count,
+        (
+          SELECT b2.category
+          FROM badge_awards ba2
+          JOIN badges b2 ON ba2.badge_id = b2.id
+          WHERE ba2.tag_id = t.id
+            AND ba2.awarded_to_user_id IN (
+              SELECT user_id FROM team_members WHERE team_id = $1
+            )
+          GROUP BY b2.category
+          ORDER BY SUM(ba2.credits) DESC
+          LIMIT 1
+        ) AS dominant_badge_category
       FROM team_tags tt
       JOIN tags t ON tt.tag_id = t.id
+      LEFT JOIN badge_awards ba
+        ON ba.tag_id = t.id
+        AND ba.awarded_to_user_id IN (
+          SELECT user_id FROM team_members WHERE team_id = $1
+        )
       WHERE tt.team_id = $1
+      GROUP BY tt.tag_id, t.id, t.name, t.category, t.supercategory
       ORDER BY t.supercategory, t.category, t.name
       `,
       [teamId],
     );
+
 
     // Construct response with proper member count
     team.members = membersResult.rows;
@@ -2813,10 +2839,89 @@ const updateMemberRole = async (req, res) => {
   }
 };
 
+/**
+ * @description Get all badge awards for team members, filtered to team focus areas
+ * @route GET /api/teams/:id/badge-awards
+ * @access Public
+ *
+ * Returns badge_awards rows in the same shape as GET /api/badges/user/:userId
+ * but for ALL members of the team, restricted to tags that are team focus areas.
+ * Includes an extra awarded_to_* set of fields so the frontend can show
+ * which member received each award.
+ */
+const getTeamBadgeAwards = async (req, res) => {
+  try {
+    const teamId = req.params.id;
+
+    const result = await db.pool.query(
+      `
+      SELECT
+        ba.id AS award_id,
+        b.id AS badge_id,
+        b.name AS badge_name,
+        b.description AS badge_description,
+        b.category AS badge_category,
+        b.image_url AS badge_image_url,
+        b.color AS badge_color,
+        b.cat_image_url AS badge_category_image_url,
+        ba.credits,
+        ba.created_at AS awarded_at,
+        ba.reason,
+        ba.context_type,
+        ba.context_id,
+        ba.team_id,
+        t_ctx.name AS team_name,
+        ba.tag_id,
+        tag.name AS tag_name,
+        tag.category AS tag_category,
+        ba.awarded_by_user_id,
+        awarder.username AS awarded_by_username,
+        awarder.first_name AS awarded_by_first_name,
+        awarder.last_name AS awarded_by_last_name,
+        awarder.avatar_url AS awarded_by_avatar_url,
+        -- Extra: who RECEIVED the badge (needed for team context)
+        ba.awarded_to_user_id,
+        recipient.username AS awarded_to_username,
+        recipient.first_name AS awarded_to_first_name,
+        recipient.last_name AS awarded_to_last_name,
+        recipient.avatar_url AS awarded_to_avatar_url
+      FROM badge_awards ba
+      JOIN badges b ON ba.badge_id = b.id
+      JOIN team_members tm ON ba.awarded_to_user_id = tm.user_id AND tm.team_id = $1
+      JOIN team_tags tt ON ba.tag_id = tt.tag_id AND tt.team_id = $1
+      LEFT JOIN users awarder ON ba.awarded_by_user_id = awarder.id
+      LEFT JOIN users recipient ON ba.awarded_to_user_id = recipient.id
+      LEFT JOIN teams t_ctx ON ba.team_id = t_ctx.id
+      LEFT JOIN tags tag ON ba.tag_id = tag.id
+      WHERE ba.tag_id IS NOT NULL
+      ORDER BY ba.created_at DESC, ba.id DESC
+      `,
+      [teamId],
+    );
+
+    console.log(
+      `🏅 Team ${teamId} focus-area badge awards: ${result.rows.length} rows`,
+    );
+
+    res.status(200).json({
+      success: true,
+      data: result.rows,
+    });
+  } catch (error) {
+    console.error("Error fetching team badge awards:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching team badge awards",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   createTeam,
   getAllTeams,
   getTeamById,
+  getTeamBadgeAwards,
   getUserTeams,
   getUserRoleInTeam,
   updateTeam,
