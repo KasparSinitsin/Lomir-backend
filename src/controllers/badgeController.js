@@ -471,7 +471,7 @@ const getUserBadges = async (req, res) => {
         ba.custom_team_name,
         ba.project_name,
         ba.team_id,
-        t.name AS team_name,
+        COALESCE(t.name, ba.custom_team_name) AS team_name,
         ba.tag_id,
         tag.name AS tag_name,
         tag.category AS tag_category,

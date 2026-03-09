@@ -2870,7 +2870,7 @@ const getTeamBadgeAwards = async (req, res) => {
         ba.context_id,
         ba.custom_team_name,
         ba.team_id,
-        t_ctx.name AS team_name,
+        COALESCE(t_ctx.name, ba.custom_team_name) AS team_name,
         ba.tag_id,
         tag.name AS tag_name,
         tag.category AS tag_category,

@@ -743,9 +743,11 @@ const getUserBadges = async (req, res) => {
         ba.context_type,
         ba.context_id,
         ba.team_id,
+        ba.custom_team_name,
+        ba.project_name,
         tag.name AS tag_name,
         tag.category AS tag_category,
-        t.name AS team_name,
+        COALESCE(t.name, ba.custom_team_name) AS team_name,
 
         -- awarder fields
         ba.awarded_by_user_id AS awarded_by_user_id,
