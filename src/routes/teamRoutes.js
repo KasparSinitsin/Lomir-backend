@@ -4,6 +4,7 @@ const teamController = require("../controllers/teamController");
 const auth = require("../middlewares/auth");
 const db = require("../config/database");
 const invitationController = require("../controllers/invitationController");
+const vacantRoleController = require("../controllers/vacantRoleController");
 
 // Debugging middleware to log incoming requests
 router.use((req, res, next) => {
@@ -41,6 +42,49 @@ router.delete(
   auth.authenticateToken,
   teamController.deleteTeamAvatar,
 );
+
+// ==================== VACANT ROLE ROUTES ====================
+
+// Get all vacant roles for a team (public)
+router.get(
+  "/:teamId/vacant-roles",
+  vacantRoleController.getVacantRoles
+);
+
+// Get a single vacant role by ID (public)
+router.get(
+  "/:teamId/vacant-roles/:roleId",
+  vacantRoleController.getVacantRoleById
+);
+
+// Create a new vacant role (owner/admin only)
+router.post(
+  "/:teamId/vacant-roles",
+  auth.authenticateToken,
+  vacantRoleController.createVacantRole
+);
+
+// Update a vacant role (owner/admin only)
+router.put(
+  "/:teamId/vacant-roles/:roleId",
+  auth.authenticateToken,
+  vacantRoleController.updateVacantRole
+);
+
+// Delete a vacant role (owner/admin only)
+router.delete(
+  "/:teamId/vacant-roles/:roleId",
+  auth.authenticateToken,
+  vacantRoleController.deleteVacantRole
+);
+
+// Update vacant role status (owner/admin only)
+router.put(
+  "/:teamId/vacant-roles/:roleId/status",
+  auth.authenticateToken,
+  vacantRoleController.updateVacantRoleStatus
+);
+
 
 // ==================== INVITATION ROUTES ====================
 // Get teams where current user can invite others
