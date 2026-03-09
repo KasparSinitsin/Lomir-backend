@@ -539,7 +539,7 @@ const getTeamById = async (req, res) => {
     );
 
     // Get team tags — enriched with aggregated badge credits from team members
- const tagsResult = await db.pool.query(
+    const tagsResult = await db.pool.query(
       `
       SELECT
         tt.tag_id,
@@ -574,7 +574,6 @@ const getTeamById = async (req, res) => {
       `,
       [teamId],
     );
-
 
     // Construct response with proper member count
     team.members = membersResult.rows;
@@ -2869,6 +2868,7 @@ const getTeamBadgeAwards = async (req, res) => {
         ba.reason,
         ba.context_type,
         ba.context_id,
+        ba.custom_team_name,
         ba.team_id,
         t_ctx.name AS team_name,
         ba.tag_id,
