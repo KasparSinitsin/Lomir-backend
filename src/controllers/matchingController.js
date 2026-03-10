@@ -45,6 +45,7 @@ const getMatchingRoles = async (req, res) => {
     // Optional query params
     const limit = parseInt(req.query.limit) || 20;
     const minScore = parseFloat(req.query.min_score) || 0;
+    const teamId = req.query.team_id ? parseInt(req.query.team_id) : null;
 
     // ----------------------------------------------------------
     // 1. Fetch user profile data (tags, badges, location)
@@ -69,43 +70,64 @@ const getMatchingRoles = async (req, res) => {
       `SELECT tag_id FROM user_tags WHERE user_id = $1`,
       [userId],
     );
-    const userTagIds = new Set(userTagsResult.rows.map((r) => r.tag_id));
+    const userTagIds = new Set(
+      userTagsResult.rows.map((r) => Number(r.tag_id)),
+    );
 
     // User's earned badge IDs (distinct)
     const userBadgesResult = await db.pool.query(
       `SELECT DISTINCT badge_id FROM badge_awards WHERE awarded_to_user_id = $1`,
       [userId],
     );
-    const userBadgeIds = new Set(userBadgesResult.rows.map((r) => r.badge_id));
+    const userBadgeIds = new Set(
+      userBadgesResult.rows.map((r) => Number(r.badge_id)),
+    );
 
     // ----------------------------------------------------------
-    // 2. Fetch all open vacant roles (with their tags + badges)
-    //    Exclude roles from teams the user is already a member of
+    // 2. Fetch open vacant roles (with their tags + badges)
+    //    When team_id is specified, scope to that team only
+    //    and skip the "not a member" exclusion (user is viewing that team).
+    //    Otherwise, exclude roles from teams the user is already in.
     // ----------------------------------------------------------
-    const rolesResult = await db.pool.query(
-      `SELECT vr.*,
-              t.name AS team_name,
-              t.description AS team_description,
-              t.teamavatar_url,
-              t.is_public AS team_is_public,
-              t.is_remote AS team_is_remote,
-              (SELECT COUNT(*) FROM team_members WHERE team_id = vr.team_id) AS team_member_count,
-              t.max_members AS team_max_members
-       FROM team_vacant_roles vr
-       JOIN teams t ON vr.team_id = t.id
-       WHERE vr.status = 'open'
-         AND t.archived_at IS NULL
-         AND (t.is_public = TRUE OR EXISTS (
-           SELECT 1 FROM team_members
-           WHERE team_id = vr.team_id AND user_id = $1
-         ))
-         AND NOT EXISTS (
-           SELECT 1 FROM team_members
-           WHERE team_id = vr.team_id AND user_id = $1
-         )
-       ORDER BY vr.created_at DESC`,
-      [userId],
-    );
+    const rolesQuery = teamId
+      ? `SELECT vr.*,
+                t.name AS team_name,
+                t.description AS team_description,
+                t.teamavatar_url,
+                t.is_public AS team_is_public,
+                t.is_remote AS team_is_remote,
+                (SELECT COUNT(*) FROM team_members WHERE team_id = vr.team_id) AS team_member_count,
+                t.max_members AS team_max_members
+         FROM team_vacant_roles vr
+         JOIN teams t ON vr.team_id = t.id
+         WHERE vr.status = 'open'
+           AND t.archived_at IS NULL
+           AND vr.team_id = $1
+         ORDER BY vr.created_at DESC`
+      : `SELECT vr.*,
+                t.name AS team_name,
+                t.description AS team_description,
+                t.teamavatar_url,
+                t.is_public AS team_is_public,
+                t.is_remote AS team_is_remote,
+                (SELECT COUNT(*) FROM team_members WHERE team_id = vr.team_id) AS team_member_count,
+                t.max_members AS team_max_members
+         FROM team_vacant_roles vr
+         JOIN teams t ON vr.team_id = t.id
+         WHERE vr.status = 'open'
+           AND t.archived_at IS NULL
+           AND (t.is_public = TRUE OR EXISTS (
+             SELECT 1 FROM team_members
+             WHERE team_id = vr.team_id AND user_id = $1
+           ))
+           AND NOT EXISTS (
+             SELECT 1 FROM team_members
+             WHERE team_id = vr.team_id AND user_id = $1
+           )
+         ORDER BY vr.created_at DESC`;
+
+    const rolesParams = teamId ? [teamId] : [userId];
+    const rolesResult = await db.pool.query(rolesQuery, rolesParams);
 
     const roles = rolesResult.rows;
 
@@ -140,12 +162,12 @@ const getMatchingRoles = async (req, res) => {
 
     for (const r of roleTagsResult.rows) {
       if (!roleTagMap[r.role_id]) roleTagMap[r.role_id] = [];
-      roleTagMap[r.role_id].push(r.tag_id);
+      roleTagMap[r.role_id].push(Number(r.tag_id));
     }
 
     for (const r of roleBadgesResult.rows) {
       if (!roleBadgeMap[r.role_id]) roleBadgeMap[r.role_id] = [];
-      roleBadgeMap[r.role_id].push(r.badge_id);
+      roleBadgeMap[r.role_id].push(Number(r.badge_id));
     }
 
     // Also fetch full tag/badge details for the response
@@ -351,13 +373,13 @@ const getMatchingCandidates = async (req, res) => {
       `SELECT tag_id FROM team_vacant_role_tags WHERE role_id = $1`,
       [roleId],
     );
-    const roleTagIds = roleTagsResult.rows.map((r) => r.tag_id);
+    const roleTagIds = roleTagsResult.rows.map((r) => Number(r.tag_id));
 
     const roleBadgesResult = await db.pool.query(
       `SELECT badge_id FROM team_vacant_role_badges WHERE role_id = $1`,
       [roleId],
     );
-    const roleBadgeIds = roleBadgesResult.rows.map((r) => r.badge_id);
+    const roleBadgeIds = roleBadgesResult.rows.map((r) => Number(r.badge_id));
 
     // Fetch candidate users (public profiles, not already in team)
     const usersResult = await db.pool.query(
@@ -408,12 +430,12 @@ const getMatchingCandidates = async (req, res) => {
 
     for (const r of userTagsResult.rows) {
       if (!userTagMap[r.user_id]) userTagMap[r.user_id] = new Set();
-      userTagMap[r.user_id].add(r.tag_id);
+      const roleBadgeIds = roleBadgesResult.rows.map((r) => Number(r.badge_id));
     }
 
     for (const r of userBadgesResult.rows) {
       if (!userBadgeMap[r.user_id]) userBadgeMap[r.user_id] = new Set();
-      userBadgeMap[r.user_id].add(r.badge_id);
+      userBadgeMap[r.user_id].add(Number(r.badge_id));
     }
 
     // Score each user
