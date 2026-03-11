@@ -46,45 +46,41 @@ router.delete(
 // ==================== VACANT ROLE ROUTES ====================
 
 // Get all vacant roles for a team (public)
-router.get(
-  "/:teamId/vacant-roles",
-  vacantRoleController.getVacantRoles
-);
+router.get("/:teamId/vacant-roles", vacantRoleController.getVacantRoles);
 
 // Get a single vacant role by ID (public)
 router.get(
   "/:teamId/vacant-roles/:roleId",
-  vacantRoleController.getVacantRoleById
+  vacantRoleController.getVacantRoleById,
 );
 
 // Create a new vacant role (owner/admin only)
 router.post(
   "/:teamId/vacant-roles",
   auth.authenticateToken,
-  vacantRoleController.createVacantRole
+  vacantRoleController.createVacantRole,
 );
 
 // Update a vacant role (owner/admin only)
 router.put(
   "/:teamId/vacant-roles/:roleId",
   auth.authenticateToken,
-  vacantRoleController.updateVacantRole
+  vacantRoleController.updateVacantRole,
 );
 
 // Delete a vacant role (owner/admin only)
 router.delete(
   "/:teamId/vacant-roles/:roleId",
   auth.authenticateToken,
-  vacantRoleController.deleteVacantRole
+  vacantRoleController.deleteVacantRole,
 );
 
 // Update vacant role status (owner/admin only)
 router.put(
   "/:teamId/vacant-roles/:roleId/status",
   auth.authenticateToken,
-  vacantRoleController.updateVacantRoleStatus
+  vacantRoleController.updateVacantRoleStatus,
 );
-
 
 // ==================== INVITATION ROUTES ====================
 // Get teams where current user can invite others

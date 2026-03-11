@@ -1,4 +1,5 @@
 const db = require("../config/database");
+const { geocodeAddress } = require("../utils/geocodingUtil");
 
 // ============================================================
 // Helper: Check if user is owner or admin of a team
@@ -195,8 +196,6 @@ const createVacantRole = async (req, res) => {
       city,
       country,
       state,
-      latitude,
-      longitude,
       max_distance_km,
       is_remote,
       tag_ids, // array of tag IDs
@@ -211,20 +210,48 @@ const createVacantRole = async (req, res) => {
       });
     }
 
+    // Normalize location: if remote, clear location fields
+    const isRemote = is_remote === true || is_remote === "true";
+    const finalPostalCode = isRemote ? null : postal_code || null;
+    const finalCity = isRemote ? null : city || null;
+    const finalCountry = isRemote ? null : country || null;
+    let finalState = isRemote ? null : state || null;
+    let finalLatitude = null;
+    let finalLongitude = null;
+    const finalMaxDistance = isRemote ? null : max_distance_km || null;
+
+    // ── Geocode if not remote and we have enough location data ──
+    if (!isRemote && (finalPostalCode || finalCity) && finalCountry) {
+      console.log(
+        `Geocoding vacant role location: "${finalPostalCode || ""} ${finalCity || ""}, ${finalCountry}"`,
+      );
+      const coordinates = await geocodeAddress({
+        postal_code: finalPostalCode,
+        city: finalCity,
+        country: finalCountry,
+      });
+
+      if (coordinates) {
+        finalLatitude = coordinates.latitude;
+        finalLongitude = coordinates.longitude;
+        // Use geocoded state if we don't already have one
+        if (!finalState && coordinates.state) {
+          finalState = coordinates.state;
+        }
+        console.log(
+          `✅ Geocoded vacant role: lat=${finalLatitude}, lng=${finalLongitude}, state=${finalState}`,
+        );
+      } else {
+        console.log("⚠️ Geocoding returned no results for vacant role");
+      }
+    } else if (isRemote) {
+      console.log("Skipping geocoding for remote role");
+    }
+
     const client = await db.pool.connect();
 
     try {
       await client.query("BEGIN");
-
-      // Normalize location: if remote, clear location fields
-      const isRemote = is_remote === true || is_remote === "true";
-      const finalPostalCode = isRemote ? null : postal_code || null;
-      const finalCity = isRemote ? null : city || null;
-      const finalCountry = isRemote ? null : country || null;
-      const finalState = isRemote ? null : state || null;
-      const finalLatitude = isRemote ? null : latitude || null;
-      const finalLongitude = isRemote ? null : longitude || null;
-      const finalMaxDistance = isRemote ? null : max_distance_km || null;
 
       // Insert the role
       const roleResult = await client.query(
@@ -388,7 +415,7 @@ const updateVacantRole = async (req, res) => {
 
     // Verify role exists and belongs to this team
     const existingRole = await db.pool.query(
-      `SELECT id FROM team_vacant_roles WHERE id = $1 AND team_id = $2`,
+      `SELECT * FROM team_vacant_roles WHERE id = $1 AND team_id = $2`,
       [roleId, teamId],
     );
 
@@ -406,28 +433,53 @@ const updateVacantRole = async (req, res) => {
       city,
       country,
       state,
-      latitude,
-      longitude,
       max_distance_km,
       is_remote,
       tag_ids,
       badge_ids,
     } = req.body;
 
+    // Normalize location
+    const isRemote = is_remote === true || is_remote === "true";
+    const finalPostalCode = isRemote ? null : postal_code || null;
+    const finalCity = isRemote ? null : city || null;
+    const finalCountry = isRemote ? null : country || null;
+    let finalState = isRemote ? null : state || null;
+    let finalLatitude = null;
+    let finalLongitude = null;
+    const finalMaxDistance = isRemote ? null : max_distance_km || null;
+
+    // ── Geocode if not remote and we have enough location data ──
+    if (!isRemote && (finalPostalCode || finalCity) && finalCountry) {
+      console.log(
+        `Geocoding vacant role location (update): "${finalPostalCode || ""} ${finalCity || ""}, ${finalCountry}"`,
+      );
+      const coordinates = await geocodeAddress({
+        postal_code: finalPostalCode,
+        city: finalCity,
+        country: finalCountry,
+      });
+
+      if (coordinates) {
+        finalLatitude = coordinates.latitude;
+        finalLongitude = coordinates.longitude;
+        if (!finalState && coordinates.state) {
+          finalState = coordinates.state;
+        }
+        console.log(
+          `✅ Geocoded vacant role (update): lat=${finalLatitude}, lng=${finalLongitude}, state=${finalState}`,
+        );
+      } else {
+        console.log("⚠️ Geocoding returned no results for vacant role update");
+      }
+    } else if (isRemote) {
+      console.log("Skipping geocoding for remote role (update)");
+    }
+
     const client = await db.pool.connect();
 
     try {
       await client.query("BEGIN");
-
-      // Normalize location
-      const isRemote = is_remote === true || is_remote === "true";
-      const finalPostalCode = isRemote ? null : postal_code || null;
-      const finalCity = isRemote ? null : city || null;
-      const finalCountry = isRemote ? null : country || null;
-      const finalState = isRemote ? null : state || null;
-      const finalLatitude = isRemote ? null : latitude || null;
-      const finalLongitude = isRemote ? null : longitude || null;
-      const finalMaxDistance = isRemote ? null : max_distance_km || null;
 
       // Update the role
       const roleResult = await client.query(
