@@ -11,6 +11,13 @@ const db = require("../config/database");
  * Each dimension produces a 0–1 score. The final match_score is a
  * weighted average (configurable). Roles are returned sorted by score
  * descending.
+ *
+ * Distance scoring rules:
+ *   - Remote role → 1.0 for everyone
+ *   - Within the role's max_distance_km radius → 1.0 (100%)
+ *   - Up to 20 km beyond the radius → 0.25 (25%)
+ *   - Farther than 20 km beyond the radius → 0.0 (0%)
+ *   - No location data on either side → 0.5 (neutral)
  */
 
 // Scoring weights (must sum to 1.0)
@@ -19,6 +26,12 @@ const WEIGHTS = {
   badges: 0.3,
   distance: 0.3,
 };
+
+// How far beyond the radius a user can still get a partial score (km)
+const LOCATION_GRACE_KM = 20;
+
+// The partial score awarded when a user is within the grace zone
+const LOCATION_GRACE_SCORE = 0.25;
 
 // ============================================================
 // Haversine helper — distance in km between two lat/lng points
@@ -32,6 +45,55 @@ const haversineKm = (lat1, lon1, lat2, lon2) => {
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+// ============================================================
+// Distance scoring helper (shared by both endpoints)
+// ============================================================
+/**
+ * Compute the distance score for a user/candidate relative to a role.
+ *
+ * @param {Object} opts
+ * @param {boolean} opts.isRemote       — true if the role is remote
+ * @param {number|null} opts.userLat    — user's latitude
+ * @param {number|null} opts.userLng    — user's longitude
+ * @param {number|null} opts.roleLat    — role's latitude
+ * @param {number|null} opts.roleLng    — role's longitude
+ * @param {number|null} opts.maxDistKm  — role's max_distance_km
+ * @returns {{ score: number, distanceKm: number|null }}
+ */
+const computeDistanceScore = ({
+  isRemote,
+  userLat,
+  userLng,
+  roleLat,
+  roleLng,
+  maxDistKm,
+}) => {
+  // Remote role — perfect score for everyone
+  if (isRemote) {
+    return { score: 1.0, distanceKm: null };
+  }
+
+  // Both sides need coordinates
+  if (userLat && userLng && roleLat && roleLng) {
+    const distanceKm = haversineKm(userLat, userLng, roleLat, roleLng);
+    const maxDist = maxDistKm || 50; // default radius if none set
+
+    if (distanceKm <= maxDist) {
+      // Within the radius → 100%
+      return { score: 1.0, distanceKm };
+    } else if (distanceKm <= maxDist + LOCATION_GRACE_KM) {
+      // Up to 20 km beyond the radius → 25%
+      return { score: LOCATION_GRACE_SCORE, distanceKm };
+    } else {
+      // Farther away → 0%
+      return { score: 0.0, distanceKm };
+    }
+  }
+
+  // No location data on one or both sides → neutral
+  return { score: 0.5, distanceKm: null };
 };
 
 // ============================================================
@@ -227,40 +289,15 @@ const getMatchingRoles = async (req, res) => {
         badgeScore = 0.5;
       }
 
-      // --- Distance score ---
-      let distanceScore = 0;
-      let distanceKm = null;
-
-      if (role.is_remote) {
-        // Remote role — perfect distance score for everyone
-        distanceScore = 1.0;
-      } else if (
-        user.latitude &&
-        user.longitude &&
-        role.latitude &&
-        role.longitude
-      ) {
-        distanceKm = haversineKm(
-          user.latitude,
-          user.longitude,
-          role.latitude,
-          role.longitude,
-        );
-
-        const maxDist = role.max_distance_km || 50;
-
-        if (distanceKm <= maxDist) {
-          // Within range: score 1.0 (at 0 km) down to 0.5 (at max km)
-          distanceScore = 1.0 - (distanceKm / maxDist) * 0.5;
-        } else {
-          // Beyond range: rapid decay from 0.5 down to 0
-          const overBy = distanceKm - maxDist;
-          distanceScore = Math.max(0, 0.5 - overBy / (maxDist * 2));
-        }
-      } else {
-        // No location data — neutral
-        distanceScore = 0.5;
-      }
+      // --- Distance score (new rules) ---
+      const { score: distanceScore, distanceKm } = computeDistanceScore({
+        isRemote: role.is_remote,
+        userLat: user.latitude,
+        userLng: user.longitude,
+        roleLat: role.latitude,
+        roleLng: role.longitude,
+        maxDistKm: role.max_distance_km,
+      });
 
       // --- Weighted final score ---
       const matchScore =
@@ -430,7 +467,8 @@ const getMatchingCandidates = async (req, res) => {
 
     for (const r of userTagsResult.rows) {
       if (!userTagMap[r.user_id]) userTagMap[r.user_id] = new Set();
-      const roleBadgeIds = roleBadgesResult.rows.map((r) => Number(r.badge_id));
+      // FIX: was previously a stray re-declaration of roleBadgeIds
+      userTagMap[r.user_id].add(Number(r.tag_id));
     }
 
     for (const r of userBadgesResult.rows) {
@@ -439,9 +477,6 @@ const getMatchingCandidates = async (req, res) => {
     }
 
     // Score each user
-    const roleTagSet = new Set(roleTagIds);
-    const roleBadgeSet = new Set(roleBadgeIds);
-
     const scoredUsers = users.map((candidate) => {
       const candidateTags = userTagMap[candidate.id] || new Set();
       const candidateBadges = userBadgeMap[candidate.id] || new Set();
@@ -464,35 +499,15 @@ const getMatchingCandidates = async (req, res) => {
         badgeScore = 0.5;
       }
 
-      // Distance score
-      let distanceScore = 0;
-      let distanceKm = null;
-
-      if (role.is_remote) {
-        distanceScore = 1.0;
-      } else if (
-        candidate.latitude &&
-        candidate.longitude &&
-        role.latitude &&
-        role.longitude
-      ) {
-        distanceKm = haversineKm(
-          candidate.latitude,
-          candidate.longitude,
-          role.latitude,
-          role.longitude,
-        );
-
-        const maxDist = role.max_distance_km || 50;
-        if (distanceKm <= maxDist) {
-          distanceScore = 1.0 - (distanceKm / maxDist) * 0.5;
-        } else {
-          const overBy = distanceKm - maxDist;
-          distanceScore = Math.max(0, 0.5 - overBy / (maxDist * 2));
-        }
-      } else {
-        distanceScore = 0.5;
-      }
+      // Distance score (new rules)
+      const { score: distanceScore, distanceKm } = computeDistanceScore({
+        isRemote: role.is_remote,
+        userLat: candidate.latitude,
+        userLng: candidate.longitude,
+        roleLat: role.latitude,
+        roleLng: role.longitude,
+        maxDistKm: role.max_distance_km,
+      });
 
       const matchScore =
         WEIGHTS.tags * tagScore +
