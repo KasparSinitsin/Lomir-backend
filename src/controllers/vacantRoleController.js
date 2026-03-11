@@ -1,6 +1,44 @@
 const db = require("../config/database");
 const { geocodeAddress } = require("../utils/geocodingUtil");
 
+const fetchRoleTags = async (clientOrPool, roleId) => {
+  const result = await clientOrPool.query(
+    `SELECT
+       t.id AS id,
+       t.id AS tag_id,
+       t.name,
+       t.category,
+       t.supercategory
+     FROM team_vacant_role_tags vrt
+     JOIN tags t ON vrt.tag_id = t.id
+     WHERE vrt.role_id = $1
+     ORDER BY t.supercategory, t.category, t.name`,
+    [roleId],
+  );
+
+  return result.rows;
+};
+
+const fetchRoleBadges = async (clientOrPool, roleId) => {
+  const result = await clientOrPool.query(
+    `SELECT
+       b.id AS id,
+       b.id AS badge_id,
+       b.name,
+       b.category,
+       b.color,
+       b.image_url,
+       b.cat_image_url
+     FROM team_vacant_role_badges vrb
+     JOIN badges b ON vrb.badge_id = b.id
+     WHERE vrb.role_id = $1
+     ORDER BY b.category, b.name`,
+    [roleId],
+  );
+
+  return result.rows;
+};
+
 // ============================================================
 // Helper: Check if user is owner or admin of a team
 // ============================================================
@@ -54,20 +92,34 @@ const getVacantRoles = async (req, res) => {
     const roleIds = roles.map((r) => r.id);
 
     const tagsResult = await db.pool.query(
-      `SELECT vrt.role_id, t.id AS tag_id, t.name, t.category, t.supercategory
-       FROM team_vacant_role_tags vrt
-       JOIN tags t ON vrt.tag_id = t.id
-       WHERE vrt.role_id = ANY($1)
-       ORDER BY t.supercategory, t.category, t.name`,
+      `SELECT
+      vrt.role_id,
+      t.id AS id,
+      t.id AS tag_id,
+      t.name,
+      t.category,
+      t.supercategory
+   FROM team_vacant_role_tags vrt
+   JOIN tags t ON vrt.tag_id = t.id
+   WHERE vrt.role_id = ANY($1)
+   ORDER BY t.supercategory, t.category, t.name`,
       [roleIds],
     );
 
     const badgesResult = await db.pool.query(
-      `SELECT vrb.role_id, b.id AS badge_id, b.name, b.category, b.color, b.image_url, b.cat_image_url
-       FROM team_vacant_role_badges vrb
-       JOIN badges b ON vrb.badge_id = b.id
-       WHERE vrb.role_id = ANY($1)
-       ORDER BY b.category, b.name`,
+      `SELECT
+      vrb.role_id,
+      b.id AS id,
+      b.id AS badge_id,
+      b.name,
+      b.category,
+      b.color,
+      b.image_url,
+      b.cat_image_url
+   FROM team_vacant_role_badges vrb
+   JOIN badges b ON vrb.badge_id = b.id
+   WHERE vrb.role_id = ANY($1)
+   ORDER BY b.category, b.name`,
       [roleIds],
     );
 
@@ -86,11 +138,18 @@ const getVacantRoles = async (req, res) => {
     }
 
     // Attach to each role
-    const enrichedRoles = roles.map((role) => ({
-      ...role,
-      tags: tagsByRole[role.id] || [],
-      badges: badgesByRole[role.id] || [],
-    }));
+    const enrichedRoles = roles.map((role) => {
+      const tags = tagsByRole[role.id] || [];
+      const badges = badgesByRole[role.id] || [];
+
+      return {
+        ...role,
+        tags,
+        badges,
+        desiredTags: tags,
+        desiredBadges: badges,
+      };
+    });
 
     res.status(200).json({
       success: true,
@@ -134,28 +193,13 @@ const getVacantRoleById = async (req, res) => {
 
     const role = roleResult.rows[0];
 
-    // Fetch tags
-    const tagsResult = await db.pool.query(
-      `SELECT t.id AS tag_id, t.name, t.category, t.supercategory
-       FROM team_vacant_role_tags vrt
-       JOIN tags t ON vrt.tag_id = t.id
-       WHERE vrt.role_id = $1
-       ORDER BY t.supercategory, t.category, t.name`,
-      [roleId],
-    );
+    const tags = await fetchRoleTags(db.pool, roleId);
+    const badges = await fetchRoleBadges(db.pool, roleId);
 
-    // Fetch badges
-    const badgesResult = await db.pool.query(
-      `SELECT b.id AS badge_id, b.name, b.category, b.color, b.image_url, b.cat_image_url
-       FROM team_vacant_role_badges vrb
-       JOIN badges b ON vrb.badge_id = b.id
-       WHERE vrb.role_id = $1
-       ORDER BY b.category, b.name`,
-      [roleId],
-    );
-
-    role.tags = tagsResult.rows;
-    role.badges = badgesResult.rows;
+    role.tags = tags;
+    role.badges = badges;
+    role.desiredTags = tags;
+    role.desiredBadges = badges;
 
     res.status(200).json({
       success: true,
@@ -280,9 +324,7 @@ const createVacantRole = async (req, res) => {
       const roleId = roleResult.rows[0].id;
 
       // Insert tags if provided
-      const tags = [];
       if (tag_ids && tag_ids.length > 0) {
-        // Validate that all tag IDs exist
         const tagCheck = await client.query(
           `SELECT id FROM tags WHERE id = ANY($1)`,
           [tag_ids],
@@ -301,26 +343,14 @@ const createVacantRole = async (req, res) => {
         for (const tagId of tag_ids) {
           await client.query(
             `INSERT INTO team_vacant_role_tags (role_id, tag_id)
-             VALUES ($1, $2)`,
+       VALUES ($1, $2)`,
             [roleId, tagId],
           );
         }
-
-        // Fetch the full tag data for the response
-        const tagsResult = await client.query(
-          `SELECT t.id AS tag_id, t.name, t.category, t.supercategory
-           FROM team_vacant_role_tags vrt
-           JOIN tags t ON vrt.tag_id = t.id
-           WHERE vrt.role_id = $1`,
-          [roleId],
-        );
-        tags.push(...tagsResult.rows);
       }
 
       // Insert badges if provided
-      const badges = [];
       if (badge_ids && badge_ids.length > 0) {
-        // Validate that all badge IDs exist
         const badgeCheck = await client.query(
           `SELECT id FROM badges WHERE id = ANY($1)`,
           [badge_ids],
@@ -341,21 +371,14 @@ const createVacantRole = async (req, res) => {
         for (const badgeId of badge_ids) {
           await client.query(
             `INSERT INTO team_vacant_role_badges (role_id, badge_id)
-             VALUES ($1, $2)`,
+       VALUES ($1, $2)`,
             [roleId, badgeId],
           );
         }
-
-        // Fetch the full badge data for the response
-        const badgesResult = await client.query(
-          `SELECT b.id AS badge_id, b.name, b.category, b.color, b.image_url, b.cat_image_url
-           FROM team_vacant_role_badges vrb
-           JOIN badges b ON vrb.badge_id = b.id
-           WHERE vrb.role_id = $1`,
-          [roleId],
-        );
-        badges.push(...badgesResult.rows);
       }
+
+      const tags = await fetchRoleTags(client, roleId);
+      const badges = await fetchRoleBadges(client, roleId);
 
       await client.query("COMMIT");
 
@@ -363,8 +386,9 @@ const createVacantRole = async (req, res) => {
         ...roleResult.rows[0],
         tags,
         badges,
+        desiredTags: tags,
+        desiredBadges: badges,
       };
-
       console.log(
         `✅ Vacant role "${role_name}" created for team ${teamId} by user ${userId}`,
       );
@@ -584,27 +608,16 @@ const updateVacantRole = async (req, res) => {
       await client.query("COMMIT");
 
       // Fetch the full updated role with tags and badges
-      const tagsResult = await db.pool.query(
-        `SELECT t.id AS tag_id, t.name, t.category, t.supercategory
-         FROM team_vacant_role_tags vrt
-         JOIN tags t ON vrt.tag_id = t.id
-         WHERE vrt.role_id = $1`,
-        [roleId],
-      );
+  const tags = await fetchRoleTags(db.pool, roleId);
+const badges = await fetchRoleBadges(db.pool, roleId);
 
-      const badgesResult = await db.pool.query(
-        `SELECT b.id AS badge_id, b.name, b.category, b.color, b.image_url, b.cat_image_url
-         FROM team_vacant_role_badges vrb
-         JOIN badges b ON vrb.badge_id = b.id
-         WHERE vrb.role_id = $1`,
-        [roleId],
-      );
-
-      const updatedRole = {
-        ...roleResult.rows[0],
-        tags: tagsResult.rows,
-        badges: badgesResult.rows,
-      };
+const updatedRole = {
+  ...roleResult.rows[0],
+  tags,
+  badges,
+  desiredTags: tags,
+  desiredBadges: badges,
+};
 
       console.log(`✅ Vacant role ${roleId} updated for team ${teamId}`);
 
