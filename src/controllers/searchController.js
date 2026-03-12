@@ -4,6 +4,7 @@ const {
   hasBooleanOperators,
   validateBooleanQuery,
 } = require("../utils/booleanSearchParser");
+const { computeTeamMatchScores } = require("../utils/matchingScorer");
 
 const searchController = {
   /**
@@ -143,7 +144,14 @@ const searchController = {
       const sort = validSortOptions.includes(sortBy) ? sortBy : "name";
 
       // Direction: 'asc' or 'desc' or 'remote'
-      const validDirections = ["asc", "desc", "remote"];
+      const validDirections = [
+        "asc",
+        "desc",
+        "remote",
+        "spots",
+        "roles",
+        "match",
+      ];
       const direction = validDirections.includes(sortDir)
         ? sortDir.toUpperCase()
         : "ASC";
@@ -185,7 +193,6 @@ const searchController = {
       // searchable columns
       const teamColumns = ["t.name", "t.description", "tag.name", "t.city"];
 
-      // ✅ UPDATED: removed "__BADGE_NAME__" synthetic token
       // badges are handled via userTagConfig.extraExistsTemplates in boolean mode
       const userColumns = [
         "u.username",
@@ -288,6 +295,14 @@ const searchController = {
         }
       }
 
+      // Filter to only teams with open vacant roles for roles/match capacity sort
+      if (
+        sort === "capacity" &&
+        (direction === "ROLES" || direction === "MATCH")
+      ) {
+        teamCountQuery += ` AND EXISTS (SELECT 1 FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open')`;
+      }
+
       // ========== TEAM DATA QUERY ==========
       // Build distance calculation for proximity sort
       let teamDistanceSelect = "";
@@ -337,6 +352,7 @@ const searchController = {
             WHEN t.max_members IS NULL THEN NULL
             ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0)
           END as available_capacity,
+          (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count,
           STRING_AGG(
             DISTINCT CASE
               WHEN tag.id IS NOT NULL
@@ -431,6 +447,14 @@ const searchController = {
         }
       }
 
+      // Filter to only teams with open vacant roles for roles/match capacity sort
+      if (
+        sort === "capacity" &&
+        (direction === "ROLES" || direction === "MATCH")
+      ) {
+        teamQuery += ` AND EXISTS (SELECT 1 FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open')`;
+      }
+
       // Determine ORDER BY clause based on sort parameter and direction
       let teamOrderBy;
       switch (sort) {
@@ -445,10 +469,19 @@ const searchController = {
             direction === "DESC" ? "t.created_at DESC" : "t.created_at ASC";
           break;
         case "capacity":
-          teamOrderBy =
-            direction === "DESC"
-              ? "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC"
-              : "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC";
+          if (direction === "ROLES") {
+            teamOrderBy = "open_role_count DESC, t.name ASC";
+          } else if (direction === "MATCH") {
+            // Match sorting is done in JS after the query — use default SQL order
+            teamOrderBy = "t.name ASC";
+          } else if (direction === "SPOTS" || direction === "DESC") {
+            teamOrderBy =
+              "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC";
+          } else {
+            // ASC = Almost Full
+            teamOrderBy =
+              "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC";
+          }
           break;
         case "proximity":
           if (direction === "REMOTE") {
@@ -837,6 +870,10 @@ const searchController = {
             team.distance_km !== undefined && team.distance_km !== null
               ? parseFloat(team.distance_km.toFixed(1))
               : null,
+          open_role_count:
+            team.open_role_count !== null && team.open_role_count !== undefined
+              ? parseInt(team.open_role_count)
+              : 0,
         };
       });
 
@@ -849,13 +886,39 @@ const searchController = {
             : null,
       }));
 
+      // ========== MATCH SORT POST-PROCESSING ==========
+      // When sorting by capacity/match, compute match scores and re-sort in JS
+      let finalTeams = teamsWithFixedVisibility;
+
+      if (sort === "capacity" && direction === "MATCH" && userId) {
+        try {
+          const teamMatchScores = await computeTeamMatchScores(db, userId);
+
+          // Enrich teams with match scores
+          finalTeams = teamsWithFixedVisibility.map((team) => {
+            const matchInfo = teamMatchScores.get(team.id);
+            return {
+              ...team,
+              best_match_score: matchInfo ? matchInfo.bestScore : 0,
+              best_match_role_id: matchInfo ? matchInfo.bestRoleId : null,
+            };
+          });
+
+          // Sort by best match score descending
+          finalTeams.sort((a, b) => b.best_match_score - a.best_match_score);
+        } catch (matchErr) {
+          console.error("Error computing match scores for search:", matchErr);
+          // Fall through with unsorted teams — don't break the response
+        }
+      }
+
       // ========== RETURN RESPONSE WITH PAGINATION METADATA ==========
       const maxItems = Math.max(totalTeams, totalUsers);
 
       res.status(200).json({
         success: true,
         data: {
-          teams: teamsWithFixedVisibility,
+          teams: finalTeams,
           users: usersWithFixedVisibility,
         },
         pagination: {
@@ -914,7 +977,14 @@ const searchController = {
       const sort = validSortOptions.includes(sortBy) ? sortBy : "name";
 
       // Direction: 'asc' or 'desc' or 'remote'
-      const validDirections = ["asc", "desc", "remote"];
+      const validDirections = [
+        "asc",
+        "desc",
+        "remote",
+        "spots",
+        "roles",
+        "match",
+      ];
       const direction = validDirections.includes(sortDir)
         ? sortDir.toUpperCase()
         : "ASC";
@@ -974,7 +1044,7 @@ const searchController = {
         teamCountQuery += ` AND t.is_remote IS NOT TRUE`;
       }
 
-      // ⬇️ DISTANCE FILTER (TEAM COUNT) ⬇️
+      // DISTANCE FILTER (TEAM COUNT)
       if (
         hasValidMaxDistance &&
         sort === "proximity" &&
@@ -989,6 +1059,14 @@ const searchController = {
           teamCountQuery += distFilter;
           teamCountParams.push(maxDistance);
         }
+      }
+
+      // Filter to only teams with open vacant roles for roles/match capacity sort
+      if (
+        sort === "capacity" &&
+        (direction === "ROLES" || direction === "MATCH")
+      ) {
+        teamCountQuery += ` AND EXISTS (SELECT 1 FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open')`;
       }
 
       // ========== TEAM DATA QUERY ==========
@@ -1038,6 +1116,7 @@ const searchController = {
             WHEN t.max_members IS NULL THEN NULL
             ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0)
           END as available_capacity,
+          (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count,
           STRING_AGG(
             DISTINCT CASE
               WHEN tag.id IS NOT NULL
@@ -1081,7 +1160,7 @@ const searchController = {
         teamQuery += ` AND t.is_remote IS NOT TRUE`;
       }
 
-      // ⬇️ DISTANCE FILTER (TEAM DATA) ⬇️
+      // DISTANCE FILTER (TEAM DATA)
       if (
         hasValidMaxDistance &&
         sort === "proximity" &&
@@ -1099,6 +1178,14 @@ const searchController = {
         }
       }
 
+      // Filter to only teams with open vacant roles for roles/match capacity sort
+      if (
+        sort === "capacity" &&
+        (direction === "ROLES" || direction === "MATCH")
+      ) {
+        teamQuery += ` AND EXISTS (SELECT 1 FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open')`;
+      }
+
       // Determine ORDER BY clause based on sort parameter and direction
       let teamOrderBy;
       switch (sort) {
@@ -1113,10 +1200,19 @@ const searchController = {
             direction === "DESC" ? "t.created_at DESC" : "t.created_at ASC";
           break;
         case "capacity":
-          teamOrderBy =
-            direction === "DESC"
-              ? "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC"
-              : "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC";
+          if (direction === "ROLES") {
+            teamOrderBy = "open_role_count DESC, t.name ASC";
+          } else if (direction === "MATCH") {
+            // Match sorting is done in JS after the query — use default SQL order
+            teamOrderBy = "t.name ASC";
+          } else if (direction === "SPOTS" || direction === "DESC") {
+            teamOrderBy =
+              "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC";
+          } else {
+            // ASC = Almost Full
+            teamOrderBy =
+              "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC";
+          }
           break;
         case "proximity":
           if (direction === "REMOTE") {
@@ -1163,7 +1259,7 @@ const searchController = {
         userCountQuery += ` AND u.is_public = TRUE`;
       }
 
-      // ⬇️ DISTANCE FILTER (USER COUNT) ⬇️
+      // DISTANCE FILTER (USER COUNT)
       if (
         hasValidMaxDistance &&
         sort === "proximity" &&
@@ -1287,7 +1383,7 @@ const searchController = {
         userQuery += ` AND u.is_public = TRUE`;
       }
 
-      // DISTANCE FILTER (USER DATA) ⬇️
+      // DISTANCE FILTER (USER DATA)
       if (
         hasValidMaxDistance &&
         sort === "proximity" &&
@@ -1403,6 +1499,10 @@ const searchController = {
             team.distance_km !== undefined && team.distance_km !== null
               ? parseFloat(team.distance_km.toFixed(1))
               : null,
+          open_role_count:
+            team.open_role_count !== null && team.open_role_count !== undefined
+              ? parseInt(team.open_role_count)
+              : 0,
         };
       });
 
