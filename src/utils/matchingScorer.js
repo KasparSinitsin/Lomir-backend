@@ -1,15 +1,23 @@
 /**
  * matchingScorer.js
  *
- * Shared scoring logic extracted from matchingController.
- * Used by both the dedicated matching endpoints AND the search controller
- * (for "Best Match" capacity sorting).
+ * Shared scoring logic for the matching system.
+ * Used by:
+ *   - matchingController.js (dedicated matching endpoints for vacant roles)
+ *   - searchController.js   (Best Match sort on search page)
  *
  * Usage:
- *   const { computeDistanceScore, scoreUserAgainstRole, WEIGHTS } = require("../utils/matchingScorer");
+ *   const {
+ *     computeDistanceScore,
+ *     scoreUserAgainstRole,
+ *     computeTeamMatchScores,       // best vacant-role match per team
+ *     computeTeamTagOverlap,        // tag overlap between user and teams
+ *     computeUserProfileOverlap,    // tag+badge overlap between users
+ *     WEIGHTS,
+ *   } = require("../utils/matchingScorer");
  */
 
-// Scoring weights
+// Scoring weights for vacant-role matching
 const WEIGHTS = { tags: 0.4, badges: 0.3, distance: 0.3 };
 
 /**
@@ -27,16 +35,7 @@ function haversineKm(lat1, lng1, lat2, lng2) {
 }
 
 /**
- * Compute distance score component.
- *
- * Rules:
- *  - Remote role → 1.0 for everyone
- *  - Missing coords on either side → neutral 0.5
- *  - Within max_distance_km → 1.0
- *  - Up to 20 km beyond → 0.25
- *  - Farther → 0.0
- *
- * @returns {{ score: number, distanceKm: number|null }}
+ * Compute distance score component for vacant-role matching.
  */
 function computeDistanceScore({
   isRemote,
@@ -69,16 +68,6 @@ function computeDistanceScore({
 
 /**
  * Score a single user against a single vacant role.
- *
- * @param {Object} params
- * @param {Set<number>} params.userTagIds   — Set of tag IDs the user has
- * @param {Set<number>} params.userBadgeIds — Set of badge IDs the user has
- * @param {number|null}  params.userLat
- * @param {number|null}  params.userLng
- * @param {number[]}     params.roleTagIds  — tag IDs the role wants
- * @param {number[]}     params.roleBadgeIds — badge IDs the role wants
- * @param {Object}       params.role        — role row (needs is_remote, latitude, longitude, max_distance_km)
- * @returns {{ matchScore: number, tagScore: number, badgeScore: number, distanceScore: number, distanceKm: number|null }}
  */
 function scoreUserAgainstRole({
   userTagIds,
@@ -89,25 +78,22 @@ function scoreUserAgainstRole({
   roleBadgeIds,
   role,
 }) {
-  // Tag score
   let tagScore;
   if (roleTagIds.length > 0) {
     const matching = roleTagIds.filter((id) => userTagIds.has(id));
     tagScore = matching.length / roleTagIds.length;
   } else {
-    tagScore = 0.5; // neutral
+    tagScore = 0.5;
   }
 
-  // Badge score
   let badgeScore;
   if (roleBadgeIds.length > 0) {
     const matching = roleBadgeIds.filter((id) => userBadgeIds.has(id));
     badgeScore = matching.length / roleBadgeIds.length;
   } else {
-    badgeScore = 0.5; // neutral
+    badgeScore = 0.5;
   }
 
-  // Distance score
   const { score: distanceScore, distanceKm } = computeDistanceScore({
     isRemote: role.is_remote,
     userLat,
@@ -132,19 +118,16 @@ function scoreUserAgainstRole({
 }
 
 /**
- * Compute the best match score per team for a given user.
+ * Compute the best vacant-role match score per team for a given user.
+ * Used for "Open Roles Only" filter in Best Match search.
  *
- * Fetches all open vacant roles, scores them against the user,
- * and returns a Map<teamId, { bestScore, bestRoleId, roleCount }>.
- *
- * @param {Object} db        — database module with db.pool
- * @param {number} userId    — authenticated user ID
- * @returns {Promise<Map<number, { bestScore: number, bestRoleId: number, roleCount: number }>>}
+ * @param {Object} db
+ * @param {number} userId
+ * @returns {Promise<Map<number, { bestScore, bestRoleId, roleCount }>>}
  */
 async function computeTeamMatchScores(db, userId) {
   const result = new Map();
 
-  // 1. Get user's tags and badges
   const [userTagsRes, userBadgesRes] = await Promise.all([
     db.pool.query(`SELECT tag_id FROM user_tags WHERE user_id = $1`, [userId]),
     db.pool.query(
@@ -158,7 +141,6 @@ async function computeTeamMatchScores(db, userId) {
     userBadgesRes.rows.map((r) => Number(r.badge_id)),
   );
 
-  // Get user location
   const userRes = await db.pool.query(
     `SELECT latitude, longitude FROM users WHERE id = $1`,
     [userId],
@@ -166,7 +148,6 @@ async function computeTeamMatchScores(db, userId) {
   const user = userRes.rows[0];
   if (!user) return result;
 
-  // 2. Get all open vacant roles (excluding teams user is already in)
   const rolesRes = await db.pool.query(
     `SELECT vr.id, vr.team_id, vr.is_remote, vr.latitude, vr.longitude, vr.max_distance_km
      FROM team_vacant_roles vr
@@ -184,7 +165,6 @@ async function computeTeamMatchScores(db, userId) {
 
   const roleIds = rolesRes.rows.map((r) => r.id);
 
-  // 3. Batch-fetch role tags and badges
   const [roleTagsRes, roleBadgesRes] = await Promise.all([
     db.pool.query(
       `SELECT role_id, tag_id FROM team_vacant_role_tags WHERE role_id = ANY($1)`,
@@ -209,7 +189,6 @@ async function computeTeamMatchScores(db, userId) {
     roleBadgeMap[r.role_id].push(Number(r.badge_id));
   }
 
-  // 4. Score each role and track best per team
   for (const role of rolesRes.rows) {
     const scores = scoreUserAgainstRole({
       userTagIds,
@@ -236,10 +215,189 @@ async function computeTeamMatchScores(db, userId) {
   return result;
 }
 
+// ============================================================
+// NEW: Profile-based overlap scoring (for Best Match sort)
+// ============================================================
+
+/**
+ * Compute tag overlap scores between a user and all teams.
+ *
+ * Score = (number of shared tags between user and team) / (total unique tags across both)
+ * This is the Jaccard similarity coefficient.
+ *
+ * @param {Object} db
+ * @param {number} userId
+ * @param {number[]} teamIds — team IDs to score (from the current result page)
+ * @returns {Promise<Map<number, { overlapScore, sharedCount, userTagCount, teamTagCount }>>}
+ */
+async function computeTeamTagOverlap(db, userId, teamIds) {
+  const result = new Map();
+  if (!teamIds || teamIds.length === 0) return result;
+
+  // Get user's tags
+  const userTagsRes = await db.pool.query(
+    `SELECT tag_id FROM user_tags WHERE user_id = $1`,
+    [userId],
+  );
+  const userTagIds = new Set(userTagsRes.rows.map((r) => Number(r.tag_id)));
+
+  if (userTagIds.size === 0) return result;
+
+  // Get tags for all teams in batch
+  const teamTagsRes = await db.pool.query(
+    `SELECT team_id, tag_id FROM team_tags WHERE team_id = ANY($1)`,
+    [teamIds],
+  );
+
+  // Group by team
+  const teamTagMap = {};
+  for (const r of teamTagsRes.rows) {
+    if (!teamTagMap[r.team_id]) teamTagMap[r.team_id] = new Set();
+    teamTagMap[r.team_id].add(Number(r.tag_id));
+  }
+
+  // Score each team
+  for (const teamId of teamIds) {
+    const teamTags = teamTagMap[teamId] || new Set();
+
+    if (teamTags.size === 0) {
+      result.set(teamId, {
+        overlapScore: 0,
+        sharedCount: 0,
+        userTagCount: userTagIds.size,
+        teamTagCount: 0,
+      });
+      continue;
+    }
+
+    // Count shared tags
+    let sharedCount = 0;
+    for (const tagId of teamTags) {
+      if (userTagIds.has(tagId)) sharedCount++;
+    }
+
+    // Jaccard similarity: shared / union
+    const unionSize = new Set([...userTagIds, ...teamTags]).size;
+    const overlapScore = unionSize > 0 ? sharedCount / unionSize : 0;
+
+    result.set(teamId, {
+      overlapScore: Math.round(overlapScore * 100) / 100,
+      sharedCount,
+      userTagCount: userTagIds.size,
+      teamTagCount: teamTags.size,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Compute profile overlap scores between a user and other users.
+ *
+ * Score = weighted average of tag overlap (60%) and badge overlap (40%).
+ * Each overlap uses Jaccard similarity.
+ *
+ * @param {Object} db
+ * @param {number} userId — the authenticated user
+ * @param {number[]} otherUserIds — user IDs to score
+ * @returns {Promise<Map<number, { overlapScore, tagOverlap, badgeOverlap, sharedTagCount, sharedBadgeCount }>>}
+ */
+async function computeUserProfileOverlap(db, userId, otherUserIds) {
+  const result = new Map();
+  if (!otherUserIds || otherUserIds.length === 0) return result;
+
+  // Filter out self
+  const filteredIds = otherUserIds.filter((id) => id !== userId);
+  if (filteredIds.length === 0) return result;
+
+  // Get current user's tags and badges
+  const [userTagsRes, userBadgesRes] = await Promise.all([
+    db.pool.query(`SELECT tag_id FROM user_tags WHERE user_id = $1`, [userId]),
+    db.pool.query(
+      `SELECT DISTINCT badge_id FROM user_badges WHERE user_id = $1`,
+      [userId],
+    ),
+  ]);
+
+  const userTagIds = new Set(userTagsRes.rows.map((r) => Number(r.tag_id)));
+  const userBadgeIds = new Set(
+    userBadgesRes.rows.map((r) => Number(r.badge_id)),
+  );
+
+  // Get tags and badges for all other users in batch
+  const [otherTagsRes, otherBadgesRes] = await Promise.all([
+    db.pool.query(
+      `SELECT user_id, tag_id FROM user_tags WHERE user_id = ANY($1)`,
+      [filteredIds],
+    ),
+    db.pool.query(
+      `SELECT DISTINCT user_id, badge_id FROM user_badges WHERE user_id = ANY($1)`,
+      [filteredIds],
+    ),
+  ]);
+
+  // Group by user
+  const otherTagMap = {};
+  const otherBadgeMap = {};
+
+  for (const r of otherTagsRes.rows) {
+    if (!otherTagMap[r.user_id]) otherTagMap[r.user_id] = new Set();
+    otherTagMap[r.user_id].add(Number(r.tag_id));
+  }
+
+  for (const r of otherBadgesRes.rows) {
+    if (!otherBadgeMap[r.user_id]) otherBadgeMap[r.user_id] = new Set();
+    otherBadgeMap[r.user_id].add(Number(r.badge_id));
+  }
+
+  // Score each user
+  for (const otherId of filteredIds) {
+    const otherTags = otherTagMap[otherId] || new Set();
+    const otherBadges = otherBadgeMap[otherId] || new Set();
+
+    // Tag overlap (Jaccard)
+    let tagOverlap = 0;
+    let sharedTagCount = 0;
+    if (userTagIds.size > 0 || otherTags.size > 0) {
+      for (const tagId of otherTags) {
+        if (userTagIds.has(tagId)) sharedTagCount++;
+      }
+      const tagUnion = new Set([...userTagIds, ...otherTags]).size;
+      tagOverlap = tagUnion > 0 ? sharedTagCount / tagUnion : 0;
+    }
+
+    // Badge overlap (Jaccard)
+    let badgeOverlap = 0;
+    let sharedBadgeCount = 0;
+    if (userBadgeIds.size > 0 || otherBadges.size > 0) {
+      for (const badgeId of otherBadges) {
+        if (userBadgeIds.has(badgeId)) sharedBadgeCount++;
+      }
+      const badgeUnion = new Set([...userBadgeIds, ...otherBadges]).size;
+      badgeOverlap = badgeUnion > 0 ? sharedBadgeCount / badgeUnion : 0;
+    }
+
+    // Weighted score: tags 60%, badges 40%
+    const overlapScore = 0.6 * tagOverlap + 0.4 * badgeOverlap;
+
+    result.set(otherId, {
+      overlapScore: Math.round(overlapScore * 100) / 100,
+      tagOverlap: Math.round(tagOverlap * 100) / 100,
+      badgeOverlap: Math.round(badgeOverlap * 100) / 100,
+      sharedTagCount,
+      sharedBadgeCount,
+    });
+  }
+
+  return result;
+}
+
 module.exports = {
   WEIGHTS,
   haversineKm,
   computeDistanceScore,
   scoreUserAgainstRole,
   computeTeamMatchScores,
+  computeTeamTagOverlap,
+  computeUserProfileOverlap,
 };
