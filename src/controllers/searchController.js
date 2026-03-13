@@ -4,7 +4,11 @@ const {
   hasBooleanOperators,
   validateBooleanQuery,
 } = require("../utils/booleanSearchParser");
-const { computeTeamMatchScores } = require("../utils/matchingScorer");
+const {
+  computeTeamMatchScores,
+  computeTeamTagOverlap,
+  computeUserProfileOverlap,
+} = require("../utils/matchingScorer");
 
 const searchController = {
   /**
@@ -32,7 +36,6 @@ const searchController = {
         ? parseFloat(user.longitude)
         : null;
 
-    // coords are valid only if both parse into finite numbers
     const hasCoordinates = Number.isFinite(lat) && Number.isFinite(lng);
 
     const hasPostalCode =
@@ -95,11 +98,6 @@ const searchController = {
   /**
    * Build SQL WHERE clause for filtering by maximum distance in km
    * Only works with coordinate-based (Haversine) distance
-   *
-   * @param {Object} userLocation - User's location data
-   * @param {string} tableAlias - Table alias ('t' for teams, 'u' for users)
-   * @param {string} paramPlaceholder - SQL parameter placeholder (e.g. '$3')
-   * @returns {string|null} SQL fragment or null if not applicable
    */
   buildDistanceFilterSQL(userLocation, tableAlias, paramPlaceholder) {
     if (!userLocation || !userLocation.hasCoordinates) return null;
@@ -125,49 +123,45 @@ const searchController = {
    */
   async globalSearch(req, res) {
     try {
-      const { query, authenticated, sortBy, sortDir } = req.query;
+      const { query, sortBy, sortDir } = req.query;
       const userId = req.user?.id;
 
-      // === PAGINATION PARAMETERS ===
-      const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 20;
+      const page = parseInt(req.query.page, 10) || 1;
+      const limit = parseInt(req.query.limit, 10) || 20;
       const offset = (page - 1) * limit;
 
-      // === SORTING PARAMETERS ===
       const validSortOptions = [
         "recent",
         "newest",
         "name",
         "capacity",
         "proximity",
+        "match",
       ];
       const sort = validSortOptions.includes(sortBy) ? sortBy : "name";
 
-      // Direction: 'asc' or 'desc' or 'remote'
-      const validDirections = [
-        "asc",
-        "desc",
-        "remote",
-        "spots",
-        "roles",
-        "match",
-      ];
+      const validDirections = ["asc", "desc", "remote"];
       const direction = validDirections.includes(sortDir)
         ? sortDir.toUpperCase()
         : "ASC";
 
-      // === DISTANCE FILTER PARAMETER ===
+      const isMatchSort = sort === "match" && !!userId;
+
       const maxDistance = req.query.maxDistance
         ? parseFloat(req.query.maxDistance)
         : null;
       const hasValidMaxDistance =
         maxDistance !== null && Number.isFinite(maxDistance) && maxDistance > 0;
 
+      const capacityMode = req.query.capacityMode === "roles" ? "roles" : "spots";
+
       console.log(`=== SEARCH DEBUG ===`);
       console.log(`Search query: "${query}"`);
       console.log(`User ID from JWT: ${userId}`);
       console.log(`Pagination: page=${page}, limit=${limit}, offset=${offset}`);
-      console.log(`Sort by: ${sort}, direction: ${direction}`);
+      console.log(
+        `Sort by: ${sort}, direction: ${direction}, capacityMode: ${capacityMode}`,
+      );
 
       if (!query || query.trim().length < 2) {
         return res.status(400).json({
@@ -176,7 +170,6 @@ const searchController = {
         });
       }
 
-      // boolean search?
       const useBoolean = hasBooleanOperators(query);
 
       if (useBoolean) {
@@ -190,10 +183,8 @@ const searchController = {
         }
       }
 
-      // searchable columns
       const teamColumns = ["t.name", "t.description", "tag.name", "t.city"];
 
-      // badges are handled via userTagConfig.extraExistsTemplates in boolean mode
       const userColumns = [
         "u.username",
         "u.first_name",
@@ -203,10 +194,8 @@ const searchController = {
         "u.city",
       ];
 
-      // normal ILIKE fallback term
       const searchTerm = `%${query.trim()}%`;
 
-      // === GET USER LOCATION (needed for proximity sorting + for UI metadata) ===
       let userLocation = null;
       if (userId) {
         userLocation = await searchController.getUserLocation(userId);
@@ -253,7 +242,6 @@ const searchController = {
         teamCountParams.push(searchTerm);
       }
 
-      // visibility
       if (userId) {
         const userParamIdx = teamCountParams.length + 1;
         teamCountQuery += `
@@ -271,14 +259,12 @@ const searchController = {
         teamCountQuery += ` AND t.is_public = TRUE`;
       }
 
-      // Existing remote filter
       if (sort === "proximity" && direction === "REMOTE") {
         teamCountQuery += ` AND t.is_remote = TRUE`;
       } else if (sort === "proximity") {
         teamCountQuery += ` AND t.is_remote IS NOT TRUE`;
       }
 
-      // DISTANCE FILTER (TEAM COUNT)
       if (
         hasValidMaxDistance &&
         sort === "proximity" &&
@@ -295,21 +281,11 @@ const searchController = {
         }
       }
 
-      // Filter to only teams with open vacant roles for roles/match capacity sort
-      if (
-        sort === "capacity" &&
-        (direction === "ROLES" || direction === "MATCH")
-      ) {
-        teamCountQuery += ` AND EXISTS (SELECT 1 FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open')`;
-      }
-
       // ========== TEAM DATA QUERY ==========
-      // Build distance calculation for proximity sort
       let teamDistanceSelect = "";
       let teamDistanceGroupBy = "";
       if (sort === "proximity" && userLocation && direction !== "REMOTE") {
         if (userLocation.hasCoordinates) {
-          // Use Haversine formula for coordinate-based distance
           teamDistanceSelect = `,
             CASE
               WHEN t.latitude IS NULL OR t.longitude IS NULL THEN 999999
@@ -372,7 +348,6 @@ const searchController = {
       let teamParams = [];
       let teamParamIndex = 1;
 
-      // search condition
       if (useBoolean) {
         const teamTagConfig = {
           tagColumn: "tag.name",
@@ -404,7 +379,6 @@ const searchController = {
         teamParamIndex++;
       }
 
-      // visibility
       if (userId) {
         teamQuery += `
           AND (
@@ -422,14 +396,12 @@ const searchController = {
         teamQuery += ` AND t.is_public = TRUE`;
       }
 
-      // Existing remote filter
       if (sort === "proximity" && direction === "REMOTE") {
         teamQuery += ` AND t.is_remote = TRUE`;
       } else if (sort === "proximity") {
         teamQuery += ` AND t.is_remote IS NOT TRUE`;
       }
 
-      // DISTANCE FILTER (TEAM DATA)
       if (
         hasValidMaxDistance &&
         sort === "proximity" &&
@@ -447,15 +419,6 @@ const searchController = {
         }
       }
 
-      // Filter to only teams with open vacant roles for roles/match capacity sort
-      if (
-        sort === "capacity" &&
-        (direction === "ROLES" || direction === "MATCH")
-      ) {
-        teamQuery += ` AND EXISTS (SELECT 1 FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open')`;
-      }
-
-      // Determine ORDER BY clause based on sort parameter and direction
       let teamOrderBy;
       switch (sort) {
         case "recent":
@@ -469,19 +432,20 @@ const searchController = {
             direction === "DESC" ? "t.created_at DESC" : "t.created_at ASC";
           break;
         case "capacity":
-          if (direction === "ROLES") {
-            teamOrderBy = "open_role_count DESC, t.name ASC";
-          } else if (direction === "MATCH") {
-            // Match sorting is done in JS after the query — use default SQL order
-            teamOrderBy = "t.name ASC";
-          } else if (direction === "SPOTS" || direction === "DESC") {
+          if (capacityMode === "roles") {
             teamOrderBy =
-              "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC";
+              direction === "ASC"
+                ? "open_role_count ASC, t.name ASC"
+                : "open_role_count DESC, t.name ASC";
           } else {
-            // ASC = Almost Full
             teamOrderBy =
-              "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC";
+              direction === "ASC"
+                ? "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC"
+                : "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC";
           }
+          break;
+        case "match":
+          teamOrderBy = "t.name ASC";
           break;
         case "proximity":
           if (direction === "REMOTE") {
@@ -503,9 +467,14 @@ const searchController = {
         GROUP BY
           t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote${teamDistanceGroupBy}
         ORDER BY ${teamOrderBy}
-        LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
       `;
-      teamParams.push(limit, offset);
+
+      if (!isMatchSort) {
+        teamQuery += `
+          LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
+        `;
+        teamParams.push(limit, offset);
+      }
 
       // ========== USER COUNT QUERY ==========
       let userCountQuery = `
@@ -519,7 +488,6 @@ const searchController = {
       let userCountParams = [];
 
       if (useBoolean) {
-        // Add extraExistsTemplates / extraNotExistsTemplates for badges
         const userTagConfig = {
           tagColumn: "t.name",
           existsTemplate:
@@ -562,7 +530,6 @@ const searchController = {
         userCountParams.push(searchTerm);
       }
 
-      // visibility
       if (userId) {
         const userParamIdx = userCountParams.length + 1;
         userCountQuery += `
@@ -576,7 +543,6 @@ const searchController = {
         userCountQuery += ` AND u.is_public = TRUE`;
       }
 
-      // DISTANCE FILTER (USER COUNT)
       if (
         hasValidMaxDistance &&
         sort === "proximity" &&
@@ -594,7 +560,6 @@ const searchController = {
       }
 
       // ========== USER DATA QUERY ==========
-      // Build distance calculation for proximity sort
       let userDistanceSelect = "";
       let userDistanceGroupBy = "";
       if (sort === "proximity" && userLocation && direction !== "REMOTE") {
@@ -616,84 +581,80 @@ const searchController = {
         } else if (userLocation.hasPostalCode) {
           userDistanceSelect = `,
             ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "u")} as distance_km`;
-          // postal_code already in GROUP BY
         } else if (userLocation.hasCity) {
           userDistanceSelect = `,
             ${searchController.buildCityDistanceSQL(userLocation.city, "u")} as distance_km`;
-          // city already in GROUP BY
         }
       }
 
       let userQuery = `
-  SELECT
-    u.id,
-    u.username,
-    u.first_name,
-    u.last_name,
-    u.bio,
-    u.postal_code,
-    u.city,
-    u.country,
-    u.state,
-    u.avatar_url,
-    u.is_public,
-    u.created_at,
-    u.updated_at,
-    (SELECT COALESCE(
-      json_agg(
-        json_build_object(
-          'id', t.id,
-          'name', t.name,
-          'supercategory', t.supercategory,
-          'badge_credits', COALESCE(ut.badge_credits, 0),
-          'dominant_badge_category', ut.dominant_badge_category
-        )
-        ORDER BY COALESCE(ut.badge_credits, 0) DESC, t.name ASC
-      ),
-      '[]'::json
-    )
-    FROM user_tags ut
-    JOIN tags t ON ut.tag_id = t.id
-    WHERE ut.user_id = u.id) as tags,
-        (SELECT COALESCE(
-      json_agg(
-        json_build_object(
-            'id', v.badge_id,
-            'name', v.badge_name,
-            'category', v.category,
-            'color', v.badge_color,
-            'cat_image_url', v.cat_image_url,
-            'total_credits', v.total_credits,
-            'award_count', v.award_count,
-            'awarder_count', v.awarder_count,
-            'category_total_credits', v.category_total_credits,
-            'category_award_count', v.category_award_count,
-            'category_awarder_count', v.category_awarder_count,
-            'last_awarded_at', v.last_awarded_at
+        SELECT
+          u.id,
+          u.username,
+          u.first_name,
+          u.last_name,
+          u.bio,
+          u.postal_code,
+          u.city,
+          u.country,
+          u.state,
+          u.avatar_url,
+          u.is_public,
+          u.created_at,
+          u.updated_at,
+          (SELECT COALESCE(
+            json_agg(
+              json_build_object(
+                'id', t.id,
+                'name', t.name,
+                'supercategory', t.supercategory,
+                'badge_credits', COALESCE(ut.badge_credits, 0),
+                'dominant_badge_category', ut.dominant_badge_category
+              )
+              ORDER BY COALESCE(ut.badge_credits, 0) DESC, t.name ASC
+            ),
+            '[]'::json
           )
-        ORDER BY
-          v.category_total_credits DESC,
-          v.category ASC,
-          v.total_credits DESC,
-          v.badge_name ASC
-      ),
-      '[]'::json
-    )
-    FROM v_user_badges_with_category_totals v
-    WHERE v.user_id = u.id) as badges
-    ${userDistanceSelect}
-  FROM users u
-  LEFT JOIN user_tags ut ON u.id = ut.user_id
-  LEFT JOIN tags t ON ut.tag_id = t.id
-  WHERE 1=1
-`;
+          FROM user_tags ut
+          JOIN tags t ON ut.tag_id = t.id
+          WHERE ut.user_id = u.id) as tags,
+          (SELECT COALESCE(
+            json_agg(
+              json_build_object(
+                'id', v.badge_id,
+                'name', v.badge_name,
+                'category', v.category,
+                'color', v.badge_color,
+                'cat_image_url', v.cat_image_url,
+                'total_credits', v.total_credits,
+                'award_count', v.award_count,
+                'awarder_count', v.awarder_count,
+                'category_total_credits', v.category_total_credits,
+                'category_award_count', v.category_award_count,
+                'category_awarder_count', v.category_awarder_count,
+                'last_awarded_at', v.last_awarded_at
+              )
+              ORDER BY
+                v.category_total_credits DESC,
+                v.category ASC,
+                v.total_credits DESC,
+                v.badge_name ASC
+            ),
+            '[]'::json
+          )
+          FROM v_user_badges_with_category_totals v
+          WHERE v.user_id = u.id) as badges
+          ${userDistanceSelect}
+        FROM users u
+        LEFT JOIN user_tags ut ON u.id = ut.user_id
+        LEFT JOIN tags t ON ut.tag_id = t.id
+        WHERE 1=1
+      `;
 
       let userParams = [];
       let userParamIndex = 1;
 
-      // search condition
       if (useBoolean) {
-        // Add extraExistsTemplates / extraNotExistsTemplates for badges
         const userTagConfig = {
           tagColumn: "t.name",
           existsTemplate:
@@ -738,7 +699,6 @@ const searchController = {
         userParamIndex++;
       }
 
-      // visibility
       if (userId) {
         userQuery += `
           AND (
@@ -752,7 +712,6 @@ const searchController = {
         userQuery += ` AND u.is_public = TRUE`;
       }
 
-      // DISTANCE FILTER (USER DATA)
       if (
         hasValidMaxDistance &&
         sort === "proximity" &&
@@ -770,7 +729,6 @@ const searchController = {
         }
       }
 
-      // Determine ORDER BY clause for users based on sort parameter and direction
       let userOrderBy;
       switch (sort) {
         case "recent":
@@ -784,6 +742,9 @@ const searchController = {
             direction === "DESC" ? "u.created_at DESC" : "u.created_at ASC";
           break;
         case "capacity":
+          userOrderBy = "u.username ASC";
+          break;
+        case "match":
           userOrderBy = "u.username ASC";
           break;
         case "proximity":
@@ -807,9 +768,14 @@ const searchController = {
         GROUP BY
           u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.country, u.state, u.avatar_url, u.is_public, u.created_at, u.updated_at${userDistanceGroupBy}
         ORDER BY ${userOrderBy}
-        LIMIT $${userParamIndex} OFFSET $${userParamIndex + 1}
       `;
-      userParams.push(limit, offset);
+
+      if (!isMatchSort) {
+        userQuery += `
+          LIMIT $${userParamIndex} OFFSET $${userParamIndex + 1}
+        `;
+        userParams.push(limit, offset);
+      }
 
       // ========== EXECUTE ALL QUERIES ==========
       console.log("=== DEBUG SQL ===");
@@ -830,10 +796,9 @@ const searchController = {
           db.pool.query(userQuery, userParams),
         ]);
 
-      const totalTeams = parseInt(teamCountResult.rows[0].total);
-      const totalUsers = parseInt(userCountResult.rows[0].total);
+      const totalTeams = parseInt(teamCountResult.rows[0].total, 10);
+      const totalUsers = parseInt(userCountResult.rows[0].total, 10);
 
-      // Process team results to parse the tags JSON
       const teamsWithFixedVisibility = teamResults.rows.map((team) => {
         let parsedTags = [];
 
@@ -864,15 +829,15 @@ const searchController = {
           tags: parsedTags,
           available_capacity:
             team.available_capacity !== null
-              ? parseInt(team.available_capacity)
+              ? parseInt(team.available_capacity, 10)
               : null,
           distance_km:
             team.distance_km !== undefined && team.distance_km !== null
-              ? parseFloat(team.distance_km.toFixed(1))
+              ? parseFloat(Number(team.distance_km).toFixed(1))
               : null,
           open_role_count:
             team.open_role_count !== null && team.open_role_count !== undefined
-              ? parseInt(team.open_role_count)
+              ? parseInt(team.open_role_count, 10)
               : 0,
         };
       });
@@ -882,44 +847,69 @@ const searchController = {
         is_public: user.is_public === true || user.is_public === "true",
         distance_km:
           user.distance_km !== undefined && user.distance_km !== null
-            ? parseFloat(user.distance_km.toFixed(1))
+            ? parseFloat(Number(user.distance_km).toFixed(1))
             : null,
       }));
 
       // ========== MATCH SORT POST-PROCESSING ==========
-      // When sorting by capacity/match, compute match scores and re-sort in JS
       let finalTeams = teamsWithFixedVisibility;
+      let finalUsers = usersWithFixedVisibility;
 
-      if (sort === "capacity" && direction === "MATCH" && userId) {
+      if (isMatchSort) {
         try {
-          const teamMatchScores = await computeTeamMatchScores(db, userId);
+          const teamIds = teamsWithFixedVisibility.map((t) => t.id);
 
-          // Enrich teams with match scores
+          const teamOverlap = await computeTeamTagOverlap(db, userId, teamIds);
           finalTeams = teamsWithFixedVisibility.map((team) => {
-            const matchInfo = teamMatchScores.get(team.id);
+            const overlap = teamOverlap.get(team.id);
             return {
               ...team,
-              best_match_score: matchInfo ? matchInfo.bestScore : 0,
-              best_match_role_id: matchInfo ? matchInfo.bestRoleId : null,
+              best_match_score: overlap ? overlap.overlapScore : 0,
+              shared_tag_count: overlap ? overlap.sharedCount : 0,
+              match_type: "tag_overlap",
             };
           });
 
-          // Sort by best match score descending
           finalTeams.sort((a, b) => b.best_match_score - a.best_match_score);
+
+          const userIds = usersWithFixedVisibility.map((u) => u.id);
+          const userOverlap = await computeUserProfileOverlap(
+            db,
+            userId,
+            userIds,
+          );
+          finalUsers = usersWithFixedVisibility.map((user) => {
+            const overlap = userOverlap.get(user.id);
+            return {
+              ...user,
+              best_match_score: overlap ? overlap.overlapScore : 0,
+              shared_tag_count: overlap ? overlap.sharedTagCount : 0,
+              shared_badge_count: overlap ? overlap.sharedBadgeCount : 0,
+              match_type: "profile_overlap",
+            };
+          });
+
+          finalUsers.sort((a, b) => b.best_match_score - a.best_match_score);
         } catch (matchErr) {
           console.error("Error computing match scores for search:", matchErr);
-          // Fall through with unsorted teams — don't break the response
         }
       }
 
-      // ========== RETURN RESPONSE WITH PAGINATION METADATA ==========
+      const paginatedTeams = isMatchSort
+        ? finalTeams.slice(offset, offset + limit)
+        : finalTeams;
+
+      const paginatedUsers = isMatchSort
+        ? finalUsers.slice(offset, offset + limit)
+        : finalUsers;
+
       const maxItems = Math.max(totalTeams, totalUsers);
 
       res.status(200).json({
         success: true,
         data: {
-          teams: finalTeams,
-          users: usersWithFixedVisibility,
+          teams: paginatedTeams,
+          users: paginatedUsers,
         },
         pagination: {
           page,
@@ -955,52 +945,45 @@ const searchController = {
    */
   async getAllUsersAndTeams(req, res) {
     try {
-      const { authenticated, sortBy, sortDir } = req.query;
+      const { sortBy, sortDir } = req.query;
       const userId = req.user?.id;
 
       console.log("GETALL DEBUG: req.user =", req.user);
       console.log("GETALL DEBUG: userId =", userId);
 
-      // === PAGINATION PARAMETERS ===
-      const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 20;
+      const page = parseInt(req.query.page, 10) || 1;
+      const limit = parseInt(req.query.limit, 10) || 20;
       const offset = (page - 1) * limit;
 
-      // === SORTING PARAMETERS ===
       const validSortOptions = [
         "recent",
         "newest",
         "name",
         "capacity",
         "proximity",
+        "match",
       ];
       const sort = validSortOptions.includes(sortBy) ? sortBy : "name";
 
-      // Direction: 'asc' or 'desc' or 'remote'
-      const validDirections = [
-        "asc",
-        "desc",
-        "remote",
-        "spots",
-        "roles",
-        "match",
-      ];
+      const validDirections = ["asc", "desc", "remote"];
       const direction = validDirections.includes(sortDir)
         ? sortDir.toUpperCase()
         : "ASC";
 
-      // === DISTANCE FILTER PARAMETER ===
+      const isMatchSort = sort === "match" && !!userId;
+
       const maxDistance = req.query.maxDistance
         ? parseFloat(req.query.maxDistance)
         : null;
       const hasValidMaxDistance =
         maxDistance !== null && Number.isFinite(maxDistance) && maxDistance > 0;
 
+      const capacityMode = req.query.capacityMode === "roles" ? "roles" : "spots";
+
       console.log(
-        `getAllUsersAndTeams: userId=${userId}, authenticated=${authenticated}, page=${page}, limit=${limit}, sortBy=${sort}, sortDir=${direction}`,
+        `getAllUsersAndTeams: userId=${userId}, page=${page}, limit=${limit}, sortBy=${sort}, sortDir=${direction}, capacityMode=${capacityMode}`,
       );
 
-      // === GET USER LOCATION (needed to decide if UI can show proximity) ===
       let userLocation = null;
 
       if (userId) {
@@ -1037,14 +1020,12 @@ const searchController = {
         teamCountQuery += ` AND t.is_public = TRUE`;
       }
 
-      // Existing remote filter
       if (sort === "proximity" && direction === "REMOTE") {
         teamCountQuery += ` AND t.is_remote = TRUE`;
       } else if (sort === "proximity") {
         teamCountQuery += ` AND t.is_remote IS NOT TRUE`;
       }
 
-      // DISTANCE FILTER (TEAM COUNT)
       if (
         hasValidMaxDistance &&
         sort === "proximity" &&
@@ -1061,16 +1042,7 @@ const searchController = {
         }
       }
 
-      // Filter to only teams with open vacant roles for roles/match capacity sort
-      if (
-        sort === "capacity" &&
-        (direction === "ROLES" || direction === "MATCH")
-      ) {
-        teamCountQuery += ` AND EXISTS (SELECT 1 FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open')`;
-      }
-
       // ========== TEAM DATA QUERY ==========
-      // Build distance calculation for proximity sort
       let teamDistanceSelect = "";
       let teamDistanceGroupBy = "";
       if (sort === "proximity" && userLocation && direction !== "REMOTE") {
@@ -1094,7 +1066,6 @@ const searchController = {
             ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "t")} as distance_km`;
           teamDistanceGroupBy = ", t.postal_code";
         } else if (userLocation.hasCity) {
-          // (your code comment said teams don't have city)
           teamDistanceSelect = `, 999999 as distance_km`;
         }
       }
@@ -1153,14 +1124,12 @@ const searchController = {
         teamQuery += ` AND t.is_public = TRUE`;
       }
 
-      // Existing remote filter
       if (sort === "proximity" && direction === "REMOTE") {
         teamQuery += ` AND t.is_remote = TRUE`;
       } else if (sort === "proximity") {
         teamQuery += ` AND t.is_remote IS NOT TRUE`;
       }
 
-      // DISTANCE FILTER (TEAM DATA)
       if (
         hasValidMaxDistance &&
         sort === "proximity" &&
@@ -1178,15 +1147,6 @@ const searchController = {
         }
       }
 
-      // Filter to only teams with open vacant roles for roles/match capacity sort
-      if (
-        sort === "capacity" &&
-        (direction === "ROLES" || direction === "MATCH")
-      ) {
-        teamQuery += ` AND EXISTS (SELECT 1 FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open')`;
-      }
-
-      // Determine ORDER BY clause based on sort parameter and direction
       let teamOrderBy;
       switch (sort) {
         case "recent":
@@ -1200,19 +1160,20 @@ const searchController = {
             direction === "DESC" ? "t.created_at DESC" : "t.created_at ASC";
           break;
         case "capacity":
-          if (direction === "ROLES") {
-            teamOrderBy = "open_role_count DESC, t.name ASC";
-          } else if (direction === "MATCH") {
-            // Match sorting is done in JS after the query — use default SQL order
-            teamOrderBy = "t.name ASC";
-          } else if (direction === "SPOTS" || direction === "DESC") {
+          if (capacityMode === "roles") {
             teamOrderBy =
-              "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC";
+              direction === "ASC"
+                ? "open_role_count ASC, t.name ASC"
+                : "open_role_count DESC, t.name ASC";
           } else {
-            // ASC = Almost Full
             teamOrderBy =
-              "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC";
+              direction === "ASC"
+                ? "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC"
+                : "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC";
           }
+          break;
+        case "match":
+          teamOrderBy = "t.name ASC";
           break;
         case "proximity":
           if (direction === "REMOTE") {
@@ -1234,9 +1195,14 @@ const searchController = {
         GROUP BY
           t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote${teamDistanceGroupBy}
         ORDER BY ${teamOrderBy}
-        LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
       `;
-      teamParams.push(limit, offset);
+
+      if (!isMatchSort) {
+        teamQuery += `
+          LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
+        `;
+        teamParams.push(limit, offset);
+      }
 
       // ========== USER COUNT QUERY ==========
       let userCountQuery = `
@@ -1259,7 +1225,6 @@ const searchController = {
         userCountQuery += ` AND u.is_public = TRUE`;
       }
 
-      // DISTANCE FILTER (USER COUNT)
       if (
         hasValidMaxDistance &&
         sort === "proximity" &&
@@ -1277,7 +1242,6 @@ const searchController = {
       }
 
       // ========== USER DATA QUERY ==========
-      // Build distance calculation for proximity sort
       let userDistanceSelect = "";
       let userDistanceGroupBy = "";
       if (sort === "proximity" && userLocation && direction !== "REMOTE") {
@@ -1306,66 +1270,66 @@ const searchController = {
       }
 
       let userQuery = `
-  SELECT
-    u.id,
-    u.username,
-    u.first_name,
-    u.last_name,
-    u.bio,
-    u.postal_code,
-    u.city,
-    u.country,
-    u.state,
-    u.avatar_url,
-    u.is_public,
-    u.created_at,
-    u.updated_at,
-    (SELECT COALESCE(
-      json_agg(
-        json_build_object(
-          'id', t.id,
-          'name', t.name,
-          'supercategory', t.supercategory,
-          'badge_credits', COALESCE(ut.badge_credits, 0),
-          'dominant_badge_category', ut.dominant_badge_category
-        )
-        ORDER BY COALESCE(ut.badge_credits, 0) DESC, t.name ASC
-      ),
-      '[]'::json
-    )
-    FROM user_tags ut
-    JOIN tags t ON ut.tag_id = t.id
-    WHERE ut.user_id = u.id) as tags,
-        (SELECT COALESCE(
-      json_agg(
-        json_build_object(
-            'id', v.badge_id,
-            'name', v.badge_name,
-            'category', v.category,
-            'color', v.badge_color,
-            'cat_image_url', v.cat_image_url,
-            'total_credits', v.total_credits,
-            'award_count', v.award_count,
-            'awarder_count', v.awarder_count,
-            'category_total_credits', v.category_total_credits,
-            'category_award_count', v.category_award_count,
-            'category_awarder_count', v.category_awarder_count,
-            'last_awarded_at', v.last_awarded_at
+        SELECT
+          u.id,
+          u.username,
+          u.first_name,
+          u.last_name,
+          u.bio,
+          u.postal_code,
+          u.city,
+          u.country,
+          u.state,
+          u.avatar_url,
+          u.is_public,
+          u.created_at,
+          u.updated_at,
+          (SELECT COALESCE(
+            json_agg(
+              json_build_object(
+                'id', t.id,
+                'name', t.name,
+                'supercategory', t.supercategory,
+                'badge_credits', COALESCE(ut.badge_credits, 0),
+                'dominant_badge_category', ut.dominant_badge_category
+              )
+              ORDER BY COALESCE(ut.badge_credits, 0) DESC, t.name ASC
+            ),
+            '[]'::json
           )
-        ORDER BY
-          v.category_total_credits DESC,
-          v.category ASC,
-          v.total_credits DESC,
-          v.badge_name ASC
-      ),
-      '[]'::json
-    )
-    FROM v_user_badges_with_category_totals v
-    WHERE v.user_id = u.id) as badges
-    ${userDistanceSelect}
-  FROM users u
-  WHERE 1=1
-`;
+          FROM user_tags ut
+          JOIN tags t ON ut.tag_id = t.id
+          WHERE ut.user_id = u.id) as tags,
+          (SELECT COALESCE(
+            json_agg(
+              json_build_object(
+                'id', v.badge_id,
+                'name', v.badge_name,
+                'category', v.category,
+                'color', v.badge_color,
+                'cat_image_url', v.cat_image_url,
+                'total_credits', v.total_credits,
+                'award_count', v.award_count,
+                'awarder_count', v.awarder_count,
+                'category_total_credits', v.category_total_credits,
+                'category_award_count', v.category_award_count,
+                'category_awarder_count', v.category_awarder_count,
+                'last_awarded_at', v.last_awarded_at
+              )
+              ORDER BY
+                v.category_total_credits DESC,
+                v.category ASC,
+                v.total_credits DESC,
+                v.badge_name ASC
+            ),
+            '[]'::json
+          )
+          FROM v_user_badges_with_category_totals v
+          WHERE v.user_id = u.id) as badges
+          ${userDistanceSelect}
+        FROM users u
+        WHERE 1=1
+      `;
 
       let userParams = [];
       let userParamIndex = 1;
@@ -1383,7 +1347,6 @@ const searchController = {
         userQuery += ` AND u.is_public = TRUE`;
       }
 
-      // DISTANCE FILTER (USER DATA)
       if (
         hasValidMaxDistance &&
         sort === "proximity" &&
@@ -1401,7 +1364,6 @@ const searchController = {
         }
       }
 
-      // Determine ORDER BY clause for users based on sort parameter and direction
       let userOrderBy;
       switch (sort) {
         case "recent":
@@ -1415,6 +1377,9 @@ const searchController = {
             direction === "DESC" ? "u.created_at DESC" : "u.created_at ASC";
           break;
         case "capacity":
+          userOrderBy = "u.username ASC";
+          break;
+        case "match":
           userOrderBy = "u.username ASC";
           break;
         case "proximity":
@@ -1436,9 +1401,14 @@ const searchController = {
 
       userQuery += `
         ORDER BY ${userOrderBy}
-        LIMIT $${userParamIndex} OFFSET $${userParamIndex + 1}
       `;
-      userParams.push(limit, offset);
+
+      if (!isMatchSort) {
+        userQuery += `
+          LIMIT $${userParamIndex} OFFSET $${userParamIndex + 1}
+        `;
+        userParams.push(limit, offset);
+      }
 
       // ========== EXECUTE ALL QUERIES ==========
       console.log("=== DEBUG SQL ===");
@@ -1459,10 +1429,9 @@ const searchController = {
           db.pool.query(userQuery, userParams),
         ]);
 
-      const totalTeams = parseInt(teamCountResult.rows[0].total);
-      const totalUsers = parseInt(userCountResult.rows[0].total);
+      const totalTeams = parseInt(teamCountResult.rows[0].total, 10);
+      const totalUsers = parseInt(userCountResult.rows[0].total, 10);
 
-      // Process team results to parse the tags JSON
       const teamsWithFixedVisibility = teamResults.rows.map((team) => {
         let parsedTags = [];
 
@@ -1493,15 +1462,15 @@ const searchController = {
           tags: parsedTags,
           available_capacity:
             team.available_capacity !== null
-              ? parseInt(team.available_capacity)
+              ? parseInt(team.available_capacity, 10)
               : null,
           distance_km:
             team.distance_km !== undefined && team.distance_km !== null
-              ? parseFloat(team.distance_km.toFixed(1))
+              ? parseFloat(Number(team.distance_km).toFixed(1))
               : null,
           open_role_count:
             team.open_role_count !== null && team.open_role_count !== undefined
-              ? parseInt(team.open_role_count)
+              ? parseInt(team.open_role_count, 10)
               : 0,
         };
       });
@@ -1511,18 +1480,69 @@ const searchController = {
         is_public: user.is_public === true || user.is_public === "true",
         distance_km:
           user.distance_km !== undefined && user.distance_km !== null
-            ? parseFloat(user.distance_km.toFixed(1))
+            ? parseFloat(Number(user.distance_km).toFixed(1))
             : null,
       }));
 
-      // ========== RETURN RESPONSE WITH PAGINATION METADATA ==========
+      // ========== MATCH SORT POST-PROCESSING ==========
+      let finalTeams = teamsWithFixedVisibility;
+      let finalUsers = usersWithFixedVisibility;
+
+      if (isMatchSort) {
+        try {
+          const teamIds = teamsWithFixedVisibility.map((t) => t.id);
+
+          const teamOverlap = await computeTeamTagOverlap(db, userId, teamIds);
+          finalTeams = teamsWithFixedVisibility.map((team) => {
+            const overlap = teamOverlap.get(team.id);
+            return {
+              ...team,
+              best_match_score: overlap ? overlap.overlapScore : 0,
+              shared_tag_count: overlap ? overlap.sharedCount : 0,
+              match_type: "tag_overlap",
+            };
+          });
+
+          finalTeams.sort((a, b) => b.best_match_score - a.best_match_score);
+
+          const userIds = usersWithFixedVisibility.map((u) => u.id);
+          const userOverlap = await computeUserProfileOverlap(
+            db,
+            userId,
+            userIds,
+          );
+          finalUsers = usersWithFixedVisibility.map((user) => {
+            const overlap = userOverlap.get(user.id);
+            return {
+              ...user,
+              best_match_score: overlap ? overlap.overlapScore : 0,
+              shared_tag_count: overlap ? overlap.sharedTagCount : 0,
+              shared_badge_count: overlap ? overlap.sharedBadgeCount : 0,
+              match_type: "profile_overlap",
+            };
+          });
+
+          finalUsers.sort((a, b) => b.best_match_score - a.best_match_score);
+        } catch (matchErr) {
+          console.error("Error computing match scores for search:", matchErr);
+        }
+      }
+
+      const paginatedTeams = isMatchSort
+        ? finalTeams.slice(offset, offset + limit)
+        : finalTeams;
+
+      const paginatedUsers = isMatchSort
+        ? finalUsers.slice(offset, offset + limit)
+        : finalUsers;
+
       const maxItems = Math.max(totalTeams, totalUsers);
 
       res.status(200).json({
         success: true,
         data: {
-          teams: teamsWithFixedVisibility,
-          users: usersWithFixedVisibility,
+          teams: paginatedTeams,
+          users: paginatedUsers,
         },
         pagination: {
           page,
@@ -1557,7 +1577,7 @@ const searchController = {
    */
   async search(req, res) {
     try {
-      const { query, tags, location, distance } = req.query;
+      const { query, tags } = req.query;
       const userId = req.user?.id;
 
       let searchQuery = `
@@ -1711,7 +1731,6 @@ const searchController = {
         });
       }
 
-      // Calculate distance using Haversine formula in PostgreSQL
       let searchQuery = `
         SELECT
           t.id,
