@@ -98,11 +98,6 @@ const searchController = {
   /**
    * Build SQL WHERE clause for filtering by maximum distance in km
    * Only works with coordinate-based (Haversine) distance
-   *
-   * @param {Object} userLocation - User's location data
-   * @param {string} tableAlias - Table alias ('t' for teams, 'u' for users)
-   * @param {string} paramPlaceholder - SQL parameter placeholder (e.g. '$3')
-   * @returns {string|null} SQL fragment or null if not applicable
    */
   buildDistanceFilterSQL(userLocation, tableAlias, paramPlaceholder) {
     if (!userLocation || !userLocation.hasCoordinates) return null;
@@ -128,11 +123,11 @@ const searchController = {
    */
   async globalSearch(req, res) {
     try {
-      const { query, authenticated, sortBy, sortDir } = req.query;
+      const { query, sortBy, sortDir } = req.query;
       const userId = req.user?.id;
 
-      const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 20;
+      const page = parseInt(req.query.page, 10) || 1;
+      const limit = parseInt(req.query.limit, 10) || 20;
       const offset = (page - 1) * limit;
 
       const validSortOptions = [
@@ -145,10 +140,12 @@ const searchController = {
       ];
       const sort = validSortOptions.includes(sortBy) ? sortBy : "name";
 
-      const validDirections = ["asc", "desc", "remote", "spots"];
+      const validDirections = ["asc", "desc", "remote"];
       const direction = validDirections.includes(sortDir)
         ? sortDir.toUpperCase()
         : "ASC";
+
+      const isMatchSort = sort === "match" && !!userId;
 
       const maxDistance = req.query.maxDistance
         ? parseFloat(req.query.maxDistance)
@@ -156,14 +153,15 @@ const searchController = {
       const hasValidMaxDistance =
         maxDistance !== null && Number.isFinite(maxDistance) && maxDistance > 0;
 
-      // === OPEN ROLES ONLY FILTER (for match sort) ===
-      const openRolesOnly = req.query.openRolesOnly === "true";
+      const capacityMode = req.query.capacityMode === "roles" ? "roles" : "spots";
 
       console.log(`=== SEARCH DEBUG ===`);
       console.log(`Search query: "${query}"`);
       console.log(`User ID from JWT: ${userId}`);
       console.log(`Pagination: page=${page}, limit=${limit}, offset=${offset}`);
-      console.log(`Sort by: ${sort}, direction: ${direction}`);
+      console.log(
+        `Sort by: ${sort}, direction: ${direction}, capacityMode: ${capacityMode}`,
+      );
 
       if (!query || query.trim().length < 2) {
         return res.status(400).json({
@@ -281,10 +279,6 @@ const searchController = {
           teamCountQuery += distFilter;
           teamCountParams.push(maxDistance);
         }
-      }
-
-      if (sort === "match" && openRolesOnly) {
-        teamCountQuery += ` AND EXISTS (SELECT 1 FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open')`;
       }
 
       // ========== TEAM DATA QUERY ==========
@@ -425,10 +419,6 @@ const searchController = {
         }
       }
 
-      if (sort === "match" && openRolesOnly) {
-        teamQuery += ` AND EXISTS (SELECT 1 FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open')`;
-      }
-
       let teamOrderBy;
       switch (sort) {
         case "recent":
@@ -442,16 +432,19 @@ const searchController = {
             direction === "DESC" ? "t.created_at DESC" : "t.created_at ASC";
           break;
         case "capacity":
-          if (direction === "SPOTS" || direction === "DESC") {
+          if (capacityMode === "roles") {
             teamOrderBy =
-              "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC";
+              direction === "ASC"
+                ? "open_role_count ASC, t.name ASC"
+                : "open_role_count DESC, t.name ASC";
           } else {
             teamOrderBy =
-              "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC";
+              direction === "ASC"
+                ? "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC"
+                : "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC";
           }
           break;
         case "match":
-          // Match sorting is done in JS post-query
           teamOrderBy = "t.name ASC";
           break;
         case "proximity":
@@ -474,9 +467,14 @@ const searchController = {
         GROUP BY
           t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote${teamDistanceGroupBy}
         ORDER BY ${teamOrderBy}
-        LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
       `;
-      teamParams.push(limit, offset);
+
+      if (!isMatchSort) {
+        teamQuery += `
+          LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
+        `;
+        teamParams.push(limit, offset);
+      }
 
       // ========== USER COUNT QUERY ==========
       let userCountQuery = `
@@ -747,7 +745,6 @@ const searchController = {
           userOrderBy = "u.username ASC";
           break;
         case "match":
-          // Match sorting is done in JS post-query
           userOrderBy = "u.username ASC";
           break;
         case "proximity":
@@ -771,9 +768,14 @@ const searchController = {
         GROUP BY
           u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.country, u.state, u.avatar_url, u.is_public, u.created_at, u.updated_at${userDistanceGroupBy}
         ORDER BY ${userOrderBy}
-        LIMIT $${userParamIndex} OFFSET $${userParamIndex + 1}
       `;
-      userParams.push(limit, offset);
+
+      if (!isMatchSort) {
+        userQuery += `
+          LIMIT $${userParamIndex} OFFSET $${userParamIndex + 1}
+        `;
+        userParams.push(limit, offset);
+      }
 
       // ========== EXECUTE ALL QUERIES ==========
       console.log("=== DEBUG SQL ===");
@@ -794,8 +796,8 @@ const searchController = {
           db.pool.query(userQuery, userParams),
         ]);
 
-      const totalTeams = parseInt(teamCountResult.rows[0].total);
-      const totalUsers = parseInt(userCountResult.rows[0].total);
+      const totalTeams = parseInt(teamCountResult.rows[0].total, 10);
+      const totalUsers = parseInt(userCountResult.rows[0].total, 10);
 
       const teamsWithFixedVisibility = teamResults.rows.map((team) => {
         let parsedTags = [];
@@ -827,15 +829,15 @@ const searchController = {
           tags: parsedTags,
           available_capacity:
             team.available_capacity !== null
-              ? parseInt(team.available_capacity)
+              ? parseInt(team.available_capacity, 10)
               : null,
           distance_km:
             team.distance_km !== undefined && team.distance_km !== null
-              ? parseFloat(team.distance_km.toFixed(1))
+              ? parseFloat(Number(team.distance_km).toFixed(1))
               : null,
           open_role_count:
             team.open_role_count !== null && team.open_role_count !== undefined
-              ? parseInt(team.open_role_count)
+              ? parseInt(team.open_role_count, 10)
               : 0,
         };
       });
@@ -845,7 +847,7 @@ const searchController = {
         is_public: user.is_public === true || user.is_public === "true",
         distance_km:
           user.distance_km !== undefined && user.distance_km !== null
-            ? parseFloat(user.distance_km.toFixed(1))
+            ? parseFloat(Number(user.distance_km).toFixed(1))
             : null,
       }));
 
@@ -853,44 +855,23 @@ const searchController = {
       let finalTeams = teamsWithFixedVisibility;
       let finalUsers = usersWithFixedVisibility;
 
-      if (sort === "match" && userId) {
+      if (isMatchSort) {
         try {
-          // --- Team scoring ---
           const teamIds = teamsWithFixedVisibility.map((t) => t.id);
 
-          if (openRolesOnly) {
-            // Use vacant-role matching (existing scoring engine)
-            const teamMatchScores = await computeTeamMatchScores(db, userId);
-            finalTeams = teamsWithFixedVisibility.map((team) => {
-              const matchInfo = teamMatchScores.get(team.id);
-              return {
-                ...team,
-                best_match_score: matchInfo ? matchInfo.bestScore : 0,
-                best_match_role_id: matchInfo ? matchInfo.bestRoleId : null,
-                match_type: "vacant_role",
-              };
-            });
-          } else {
-            // Use tag-overlap matching (general team affinity)
-            const teamOverlap = await computeTeamTagOverlap(
-              db,
-              userId,
-              teamIds,
-            );
-            finalTeams = teamsWithFixedVisibility.map((team) => {
-              const overlap = teamOverlap.get(team.id);
-              return {
-                ...team,
-                best_match_score: overlap ? overlap.overlapScore : 0,
-                shared_tag_count: overlap ? overlap.sharedCount : 0,
-                match_type: "tag_overlap",
-              };
-            });
-          }
+          const teamOverlap = await computeTeamTagOverlap(db, userId, teamIds);
+          finalTeams = teamsWithFixedVisibility.map((team) => {
+            const overlap = teamOverlap.get(team.id);
+            return {
+              ...team,
+              best_match_score: overlap ? overlap.overlapScore : 0,
+              shared_tag_count: overlap ? overlap.sharedCount : 0,
+              match_type: "tag_overlap",
+            };
+          });
 
           finalTeams.sort((a, b) => b.best_match_score - a.best_match_score);
 
-          // --- User scoring ---
           const userIds = usersWithFixedVisibility.map((u) => u.id);
           const userOverlap = await computeUserProfileOverlap(
             db,
@@ -914,13 +895,21 @@ const searchController = {
         }
       }
 
+      const paginatedTeams = isMatchSort
+        ? finalTeams.slice(offset, offset + limit)
+        : finalTeams;
+
+      const paginatedUsers = isMatchSort
+        ? finalUsers.slice(offset, offset + limit)
+        : finalUsers;
+
       const maxItems = Math.max(totalTeams, totalUsers);
 
       res.status(200).json({
         success: true,
         data: {
-          teams: finalTeams,
-          users: finalUsers,
+          teams: paginatedTeams,
+          users: paginatedUsers,
         },
         pagination: {
           page,
@@ -956,14 +945,14 @@ const searchController = {
    */
   async getAllUsersAndTeams(req, res) {
     try {
-      const { authenticated, sortBy, sortDir } = req.query;
+      const { sortBy, sortDir } = req.query;
       const userId = req.user?.id;
 
       console.log("GETALL DEBUG: req.user =", req.user);
       console.log("GETALL DEBUG: userId =", userId);
 
-      const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 20;
+      const page = parseInt(req.query.page, 10) || 1;
+      const limit = parseInt(req.query.limit, 10) || 20;
       const offset = (page - 1) * limit;
 
       const validSortOptions = [
@@ -976,10 +965,12 @@ const searchController = {
       ];
       const sort = validSortOptions.includes(sortBy) ? sortBy : "name";
 
-      const validDirections = ["asc", "desc", "remote", "spots"];
+      const validDirections = ["asc", "desc", "remote"];
       const direction = validDirections.includes(sortDir)
         ? sortDir.toUpperCase()
         : "ASC";
+
+      const isMatchSort = sort === "match" && !!userId;
 
       const maxDistance = req.query.maxDistance
         ? parseFloat(req.query.maxDistance)
@@ -987,11 +978,10 @@ const searchController = {
       const hasValidMaxDistance =
         maxDistance !== null && Number.isFinite(maxDistance) && maxDistance > 0;
 
-      // === OPEN ROLES ONLY FILTER (for match sort) ===
-      const openRolesOnly = req.query.openRolesOnly === "true";
+      const capacityMode = req.query.capacityMode === "roles" ? "roles" : "spots";
 
       console.log(
-        `getAllUsersAndTeams: userId=${userId}, authenticated=${authenticated}, page=${page}, limit=${limit}, sortBy=${sort}, sortDir=${direction}`,
+        `getAllUsersAndTeams: userId=${userId}, page=${page}, limit=${limit}, sortBy=${sort}, sortDir=${direction}, capacityMode=${capacityMode}`,
       );
 
       let userLocation = null;
@@ -1050,10 +1040,6 @@ const searchController = {
           teamCountQuery += distFilter;
           teamCountParams.push(maxDistance);
         }
-      }
-
-      if (sort === "match" && openRolesOnly) {
-        teamCountQuery += ` AND EXISTS (SELECT 1 FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open')`;
       }
 
       // ========== TEAM DATA QUERY ==========
@@ -1161,10 +1147,6 @@ const searchController = {
         }
       }
 
-      if (sort === "match" && openRolesOnly) {
-        teamQuery += ` AND EXISTS (SELECT 1 FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open')`;
-      }
-
       let teamOrderBy;
       switch (sort) {
         case "recent":
@@ -1178,16 +1160,19 @@ const searchController = {
             direction === "DESC" ? "t.created_at DESC" : "t.created_at ASC";
           break;
         case "capacity":
-          if (direction === "SPOTS" || direction === "DESC") {
+          if (capacityMode === "roles") {
             teamOrderBy =
-              "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC";
+              direction === "ASC"
+                ? "open_role_count ASC, t.name ASC"
+                : "open_role_count DESC, t.name ASC";
           } else {
             teamOrderBy =
-              "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC";
+              direction === "ASC"
+                ? "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC"
+                : "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC";
           }
           break;
         case "match":
-          // Match sorting is done in JS post-query
           teamOrderBy = "t.name ASC";
           break;
         case "proximity":
@@ -1210,9 +1195,14 @@ const searchController = {
         GROUP BY
           t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote${teamDistanceGroupBy}
         ORDER BY ${teamOrderBy}
-        LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
       `;
-      teamParams.push(limit, offset);
+
+      if (!isMatchSort) {
+        teamQuery += `
+          LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
+        `;
+        teamParams.push(limit, offset);
+      }
 
       // ========== USER COUNT QUERY ==========
       let userCountQuery = `
@@ -1390,7 +1380,6 @@ const searchController = {
           userOrderBy = "u.username ASC";
           break;
         case "match":
-          // Match sorting is done in JS post-query
           userOrderBy = "u.username ASC";
           break;
         case "proximity":
@@ -1412,9 +1401,14 @@ const searchController = {
 
       userQuery += `
         ORDER BY ${userOrderBy}
-        LIMIT $${userParamIndex} OFFSET $${userParamIndex + 1}
       `;
-      userParams.push(limit, offset);
+
+      if (!isMatchSort) {
+        userQuery += `
+          LIMIT $${userParamIndex} OFFSET $${userParamIndex + 1}
+        `;
+        userParams.push(limit, offset);
+      }
 
       // ========== EXECUTE ALL QUERIES ==========
       console.log("=== DEBUG SQL ===");
@@ -1435,8 +1429,8 @@ const searchController = {
           db.pool.query(userQuery, userParams),
         ]);
 
-      const totalTeams = parseInt(teamCountResult.rows[0].total);
-      const totalUsers = parseInt(userCountResult.rows[0].total);
+      const totalTeams = parseInt(teamCountResult.rows[0].total, 10);
+      const totalUsers = parseInt(userCountResult.rows[0].total, 10);
 
       const teamsWithFixedVisibility = teamResults.rows.map((team) => {
         let parsedTags = [];
@@ -1468,15 +1462,15 @@ const searchController = {
           tags: parsedTags,
           available_capacity:
             team.available_capacity !== null
-              ? parseInt(team.available_capacity)
+              ? parseInt(team.available_capacity, 10)
               : null,
           distance_km:
             team.distance_km !== undefined && team.distance_km !== null
-              ? parseFloat(team.distance_km.toFixed(1))
+              ? parseFloat(Number(team.distance_km).toFixed(1))
               : null,
           open_role_count:
             team.open_role_count !== null && team.open_role_count !== undefined
-              ? parseInt(team.open_role_count)
+              ? parseInt(team.open_role_count, 10)
               : 0,
         };
       });
@@ -1486,7 +1480,7 @@ const searchController = {
         is_public: user.is_public === true || user.is_public === "true",
         distance_km:
           user.distance_km !== undefined && user.distance_km !== null
-            ? parseFloat(user.distance_km.toFixed(1))
+            ? parseFloat(Number(user.distance_km).toFixed(1))
             : null,
       }));
 
@@ -1494,44 +1488,23 @@ const searchController = {
       let finalTeams = teamsWithFixedVisibility;
       let finalUsers = usersWithFixedVisibility;
 
-      if (sort === "match" && userId) {
+      if (isMatchSort) {
         try {
-          // --- Team scoring ---
           const teamIds = teamsWithFixedVisibility.map((t) => t.id);
 
-          if (openRolesOnly) {
-            // Use vacant-role matching (existing scoring engine)
-            const teamMatchScores = await computeTeamMatchScores(db, userId);
-            finalTeams = teamsWithFixedVisibility.map((team) => {
-              const matchInfo = teamMatchScores.get(team.id);
-              return {
-                ...team,
-                best_match_score: matchInfo ? matchInfo.bestScore : 0,
-                best_match_role_id: matchInfo ? matchInfo.bestRoleId : null,
-                match_type: "vacant_role",
-              };
-            });
-          } else {
-            // Use tag-overlap matching (general team affinity)
-            const teamOverlap = await computeTeamTagOverlap(
-              db,
-              userId,
-              teamIds,
-            );
-            finalTeams = teamsWithFixedVisibility.map((team) => {
-              const overlap = teamOverlap.get(team.id);
-              return {
-                ...team,
-                best_match_score: overlap ? overlap.overlapScore : 0,
-                shared_tag_count: overlap ? overlap.sharedCount : 0,
-                match_type: "tag_overlap",
-              };
-            });
-          }
+          const teamOverlap = await computeTeamTagOverlap(db, userId, teamIds);
+          finalTeams = teamsWithFixedVisibility.map((team) => {
+            const overlap = teamOverlap.get(team.id);
+            return {
+              ...team,
+              best_match_score: overlap ? overlap.overlapScore : 0,
+              shared_tag_count: overlap ? overlap.sharedCount : 0,
+              match_type: "tag_overlap",
+            };
+          });
 
           finalTeams.sort((a, b) => b.best_match_score - a.best_match_score);
 
-          // --- User scoring ---
           const userIds = usersWithFixedVisibility.map((u) => u.id);
           const userOverlap = await computeUserProfileOverlap(
             db,
@@ -1555,13 +1528,21 @@ const searchController = {
         }
       }
 
+      const paginatedTeams = isMatchSort
+        ? finalTeams.slice(offset, offset + limit)
+        : finalTeams;
+
+      const paginatedUsers = isMatchSort
+        ? finalUsers.slice(offset, offset + limit)
+        : finalUsers;
+
       const maxItems = Math.max(totalTeams, totalUsers);
 
       res.status(200).json({
         success: true,
         data: {
-          teams: finalTeams,
-          users: finalUsers,
+          teams: paginatedTeams,
+          users: paginatedUsers,
         },
         pagination: {
           page,
@@ -1596,7 +1577,7 @@ const searchController = {
    */
   async search(req, res) {
     try {
-      const { query, tags, location, distance } = req.query;
+      const { query, tags } = req.query;
       const userId = req.user?.id;
 
       let searchQuery = `
