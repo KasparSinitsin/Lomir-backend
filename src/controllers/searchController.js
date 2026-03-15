@@ -10,6 +10,19 @@ const {
   computeUserProfileOverlap,
 } = require("../utils/matchingScorer");
 
+const VALID_SEARCH_TYPES = ["all", "teams", "users"];
+
+function parseSearchType(value) {
+  if (typeof value !== "string") return "all";
+
+  const normalized = value.toLowerCase();
+  return VALID_SEARCH_TYPES.includes(normalized) ? normalized : "all";
+}
+
+function parseBooleanFlag(value) {
+  return typeof value === "string" && value.toLowerCase() === "true";
+}
+
 const searchController = {
   /**
    * Helper function to get user's location data (coordinates, postal_code, city)
@@ -125,6 +138,10 @@ const searchController = {
     try {
       const { query, sortBy, sortDir } = req.query;
       const userId = req.user?.id;
+      const searchType = parseSearchType(req.query.searchType);
+      const includeTeams = searchType !== "users";
+      const includeUsers = searchType !== "teams";
+      const openRolesOnly = parseBooleanFlag(req.query.openRolesOnly);
 
       const page = parseInt(req.query.page, 10) || 1;
       const limit = parseInt(req.query.limit, 10) || 20;
@@ -160,7 +177,7 @@ const searchController = {
       console.log(`User ID from JWT: ${userId}`);
       console.log(`Pagination: page=${page}, limit=${limit}, offset=${offset}`);
       console.log(
-        `Sort by: ${sort}, direction: ${direction}, capacityMode: ${capacityMode}`,
+        `Sort by: ${sort}, direction: ${direction}, capacityMode: ${capacityMode}, searchType: ${searchType}, openRolesOnly: ${openRolesOnly}`,
       );
 
       if (!query || query.trim().length < 2) {
@@ -257,6 +274,17 @@ const searchController = {
         teamCountParams.push(userId);
       } else {
         teamCountQuery += ` AND t.is_public = TRUE`;
+      }
+
+      if (openRolesOnly) {
+        teamCountQuery += `
+          AND EXISTS (
+            SELECT 1
+            FROM team_vacant_roles vr_filter
+            WHERE vr_filter.team_id = t.id
+              AND vr_filter.status = 'open'
+          )
+        `;
       }
 
       if (sort === "proximity" && direction === "REMOTE") {
@@ -394,6 +422,17 @@ const searchController = {
         teamParamIndex++;
       } else {
         teamQuery += ` AND t.is_public = TRUE`;
+      }
+
+      if (openRolesOnly) {
+        teamQuery += `
+          AND EXISTS (
+            SELECT 1
+            FROM team_vacant_roles vr_filter
+            WHERE vr_filter.team_id = t.id
+              AND vr_filter.status = 'open'
+          )
+        `;
       }
 
       if (sort === "proximity" && direction === "REMOTE") {
@@ -790,10 +829,18 @@ const searchController = {
 
       const [teamCountResult, teamResults, userCountResult, userResults] =
         await Promise.all([
-          db.pool.query(teamCountQuery, teamCountParams),
-          db.pool.query(teamQuery, teamParams),
-          db.pool.query(userCountQuery, userCountParams),
-          db.pool.query(userQuery, userParams),
+          includeTeams
+            ? db.pool.query(teamCountQuery, teamCountParams)
+            : Promise.resolve({ rows: [{ total: "0" }] }),
+          includeTeams
+            ? db.pool.query(teamQuery, teamParams)
+            : Promise.resolve({ rows: [] }),
+          includeUsers
+            ? db.pool.query(userCountQuery, userCountParams)
+            : Promise.resolve({ rows: [{ total: "0" }] }),
+          includeUsers
+            ? db.pool.query(userQuery, userParams)
+            : Promise.resolve({ rows: [] }),
         ]);
 
       const totalTeams = parseInt(teamCountResult.rows[0].total, 10);
@@ -903,7 +950,18 @@ const searchController = {
         ? finalUsers.slice(offset, offset + limit)
         : finalUsers;
 
-      const maxItems = Math.max(totalTeams, totalUsers);
+      const paginationBaseItems =
+        searchType === "teams"
+          ? totalTeams
+          : searchType === "users"
+            ? totalUsers
+            : Math.max(totalTeams, totalUsers);
+      const totalItems =
+        searchType === "teams"
+          ? totalTeams
+          : searchType === "users"
+            ? totalUsers
+            : totalTeams + totalUsers;
 
       res.status(200).json({
         success: true,
@@ -916,9 +974,9 @@ const searchController = {
           limit,
           totalTeams,
           totalUsers,
-          totalItems: totalTeams + totalUsers,
-          totalPages: Math.ceil(maxItems / limit),
-          hasNextPage: offset + limit < maxItems,
+          totalItems,
+          totalPages: Math.ceil(paginationBaseItems / limit),
+          hasNextPage: offset + limit < paginationBaseItems,
           hasPrevPage: page > 1,
         },
         sorting: {
@@ -947,6 +1005,10 @@ const searchController = {
     try {
       const { sortBy, sortDir } = req.query;
       const userId = req.user?.id;
+      const searchType = parseSearchType(req.query.searchType);
+      const includeTeams = searchType !== "users";
+      const includeUsers = searchType !== "teams";
+      const openRolesOnly = parseBooleanFlag(req.query.openRolesOnly);
 
       console.log("GETALL DEBUG: req.user =", req.user);
       console.log("GETALL DEBUG: userId =", userId);
@@ -981,7 +1043,7 @@ const searchController = {
       const capacityMode = req.query.capacityMode === "roles" ? "roles" : "spots";
 
       console.log(
-        `getAllUsersAndTeams: userId=${userId}, page=${page}, limit=${limit}, sortBy=${sort}, sortDir=${direction}, capacityMode=${capacityMode}`,
+        `getAllUsersAndTeams: userId=${userId}, page=${page}, limit=${limit}, sortBy=${sort}, sortDir=${direction}, capacityMode=${capacityMode}, searchType=${searchType}, openRolesOnly=${openRolesOnly}`,
       );
 
       let userLocation = null;
@@ -1018,6 +1080,17 @@ const searchController = {
         teamCountParams.push(userId);
       } else {
         teamCountQuery += ` AND t.is_public = TRUE`;
+      }
+
+      if (openRolesOnly) {
+        teamCountQuery += `
+          AND EXISTS (
+            SELECT 1
+            FROM team_vacant_roles vr_filter
+            WHERE vr_filter.team_id = t.id
+              AND vr_filter.status = 'open'
+          )
+        `;
       }
 
       if (sort === "proximity" && direction === "REMOTE") {
@@ -1122,6 +1195,17 @@ const searchController = {
         teamParamIndex++;
       } else {
         teamQuery += ` AND t.is_public = TRUE`;
+      }
+
+      if (openRolesOnly) {
+        teamQuery += `
+          AND EXISTS (
+            SELECT 1
+            FROM team_vacant_roles vr_filter
+            WHERE vr_filter.team_id = t.id
+              AND vr_filter.status = 'open'
+          )
+        `;
       }
 
       if (sort === "proximity" && direction === "REMOTE") {
@@ -1423,10 +1507,18 @@ const searchController = {
 
       const [teamCountResult, teamResults, userCountResult, userResults] =
         await Promise.all([
-          db.pool.query(teamCountQuery, teamCountParams),
-          db.pool.query(teamQuery, teamParams),
-          db.pool.query(userCountQuery, userCountParams),
-          db.pool.query(userQuery, userParams),
+          includeTeams
+            ? db.pool.query(teamCountQuery, teamCountParams)
+            : Promise.resolve({ rows: [{ total: "0" }] }),
+          includeTeams
+            ? db.pool.query(teamQuery, teamParams)
+            : Promise.resolve({ rows: [] }),
+          includeUsers
+            ? db.pool.query(userCountQuery, userCountParams)
+            : Promise.resolve({ rows: [{ total: "0" }] }),
+          includeUsers
+            ? db.pool.query(userQuery, userParams)
+            : Promise.resolve({ rows: [] }),
         ]);
 
       const totalTeams = parseInt(teamCountResult.rows[0].total, 10);
@@ -1536,7 +1628,18 @@ const searchController = {
         ? finalUsers.slice(offset, offset + limit)
         : finalUsers;
 
-      const maxItems = Math.max(totalTeams, totalUsers);
+      const paginationBaseItems =
+        searchType === "teams"
+          ? totalTeams
+          : searchType === "users"
+            ? totalUsers
+            : Math.max(totalTeams, totalUsers);
+      const totalItems =
+        searchType === "teams"
+          ? totalTeams
+          : searchType === "users"
+            ? totalUsers
+            : totalTeams + totalUsers;
 
       res.status(200).json({
         success: true,
@@ -1549,9 +1652,9 @@ const searchController = {
           limit,
           totalTeams,
           totalUsers,
-          totalItems: totalTeams + totalUsers,
-          totalPages: Math.ceil(maxItems / limit),
-          hasNextPage: offset + limit < maxItems,
+          totalItems,
+          totalPages: Math.ceil(paginationBaseItems / limit),
+          hasNextPage: offset + limit < paginationBaseItems,
           hasPrevPage: page > 1,
         },
         sorting: {
