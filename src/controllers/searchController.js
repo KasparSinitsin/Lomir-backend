@@ -8,6 +8,7 @@ const {
   computeTeamMatchScores,
   computeTeamTagOverlap,
   computeUserProfileOverlap,
+  scoreUserAgainstRole,
 } = require("../utils/matchingScorer");
 
 const VALID_SEARCH_TYPES = ["all", "teams", "users"];
@@ -171,6 +172,7 @@ const searchController = {
         : "ASC";
 
       const isMatchSort = sort === "match" && !!userId;
+      const matchRoleId = req.query.roleId ? parseInt(req.query.roleId, 10) : null;
 
       const maxDistance = req.query.maxDistance
         ? parseFloat(req.query.maxDistance)
@@ -188,6 +190,7 @@ const searchController = {
         `Sort by: ${sort}, direction: ${direction}, capacityMode: ${capacityMode}, searchType: ${searchType}, openRolesOnly: ${openRolesOnly}`,
       );
       console.log(`Tag filter IDs: ${JSON.stringify(tagIds)}, Badge filter IDs: ${JSON.stringify(badgeIds)}`);
+      console.log(`Match sort: roleId=${matchRoleId || 'none (profile-based)'}`);
 
       if (!query || query.trim().length < 2) {
         return res.status(400).json({
@@ -715,7 +718,7 @@ const searchController = {
                 )
               )
             END as distance_km`;
-          userDistanceGroupBy = ", u.latitude, u.longitude";
+          userDistanceGroupBy = "";
         } else if (userLocation.hasPostalCode) {
           userDistanceSelect = `,
             ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "u")} as distance_km`;
@@ -740,6 +743,8 @@ const searchController = {
           u.is_public,
           u.created_at,
           u.updated_at,
+          u.latitude,
+          u.longitude,
           (SELECT COALESCE(
             json_agg(
               json_build_object(
@@ -926,7 +931,7 @@ const searchController = {
 
       userQuery += `
         GROUP BY
-          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.country, u.state, u.avatar_url, u.is_public, u.created_at, u.updated_at${userDistanceGroupBy}
+          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.country, u.state, u.avatar_url, u.is_public, u.created_at, u.updated_at, u.latitude, u.longitude${userDistanceGroupBy}
         ORDER BY ${userOrderBy}
       `;
 
@@ -1022,9 +1027,11 @@ const searchController = {
       // ========== MATCH SORT POST-PROCESSING ==========
       let finalTeams = teamsWithFixedVisibility;
       let finalUsers = usersWithFixedVisibility;
+      let roleData = null;
 
       if (isMatchSort) {
         try {
+          // --- Team scoring: always profile-based ---
           const teamIds = teamsWithFixedVisibility.map((t) => t.id);
 
           const teamOverlap = await computeTeamTagOverlap(db, userId, teamIds);
@@ -1040,24 +1047,101 @@ const searchController = {
 
           finalTeams.sort((a, b) => b.best_match_score - a.best_match_score);
 
-          const userIds = usersWithFixedVisibility.map((u) => u.id);
-          const userOverlap = await computeUserProfileOverlap(
-            db,
-            userId,
-            userIds,
-          );
-          finalUsers = usersWithFixedVisibility.map((user) => {
-            const overlap = userOverlap.get(user.id);
-            return {
-              ...user,
-              best_match_score: overlap ? overlap.overlapScore : 0,
-              shared_tag_count: overlap ? overlap.sharedTagCount : 0,
-              shared_badge_count: overlap ? overlap.sharedBadgeCount : 0,
-              match_type: "profile_overlap",
-            };
-          });
+          // --- User scoring: role-based OR profile-based ---
+          if (matchRoleId) {
+            const roleResult = await db.pool.query(
+              `SELECT id, role_name, is_remote, latitude, longitude, max_distance_km,
+                      city, country, state
+               FROM team_vacant_roles WHERE id = $1 AND status = 'open'`,
+              [matchRoleId],
+            );
 
-          finalUsers.sort((a, b) => b.best_match_score - a.best_match_score);
+            if (roleResult.rows.length > 0) {
+              roleData = roleResult.rows[0];
+
+              const [roleTagsRes, roleBadgesRes] = await Promise.all([
+                db.pool.query(
+                  `SELECT tag_id FROM team_vacant_role_tags WHERE role_id = $1`,
+                  [matchRoleId],
+                ),
+                db.pool.query(
+                  `SELECT badge_id FROM team_vacant_role_badges WHERE role_id = $1`,
+                  [matchRoleId],
+                ),
+              ]);
+
+              const roleTagIds = roleTagsRes.rows.map((r) => Number(r.tag_id));
+              const roleBadgeIds = roleBadgesRes.rows.map((r) => Number(r.badge_id));
+
+              const userIds = usersWithFixedVisibility.map((u) => u.id);
+
+              const [allUserTags, allUserBadges] = await Promise.all([
+                db.pool.query(
+                  `SELECT user_id, tag_id FROM user_tags WHERE user_id = ANY($1)`,
+                  [userIds],
+                ),
+                db.pool.query(
+                  `SELECT DISTINCT user_id, badge_id FROM user_badges WHERE user_id = ANY($1)`,
+                  [userIds],
+                ),
+              ]);
+
+              const userTagMap = {};
+              const userBadgeMap = {};
+              for (const r of allUserTags.rows) {
+                if (!userTagMap[r.user_id]) userTagMap[r.user_id] = new Set();
+                userTagMap[r.user_id].add(Number(r.tag_id));
+              }
+              for (const r of allUserBadges.rows) {
+                if (!userBadgeMap[r.user_id]) userBadgeMap[r.user_id] = new Set();
+                userBadgeMap[r.user_id].add(Number(r.badge_id));
+              }
+
+              finalUsers = usersWithFixedVisibility.map((user) => {
+                const scores = scoreUserAgainstRole({
+                  userTagIds: userTagMap[user.id] || new Set(),
+                  userBadgeIds: userBadgeMap[user.id] || new Set(),
+                  userLat: user.latitude,
+                  userLng: user.longitude,
+                  roleTagIds,
+                  roleBadgeIds,
+                  role: roleData,
+                });
+
+                return {
+                  ...user,
+                  best_match_score: scores.matchScore,
+                  match_details: {
+                    tag_score: scores.tagScore,
+                    badge_score: scores.badgeScore,
+                    distance_score: scores.distanceScore,
+                    distance_km: scores.distanceKm,
+                  },
+                  match_type: "role_match",
+                };
+              });
+
+              finalUsers.sort((a, b) => b.best_match_score - a.best_match_score);
+            }
+          }
+
+          // Profile-based user scoring (default when no roleId, or role not found)
+          if (!matchRoleId || finalUsers === usersWithFixedVisibility) {
+            const userIds = usersWithFixedVisibility.map((u) => u.id);
+            const userOverlap = await computeUserProfileOverlap(db, userId, userIds);
+            finalUsers = usersWithFixedVisibility.map((user) => {
+              const overlap = userOverlap.get(user.id);
+              return {
+                ...user,
+                best_match_score: overlap ? overlap.overlapScore : 0,
+                shared_tag_count: overlap ? overlap.sharedTagCount : 0,
+                shared_badge_count: overlap ? overlap.sharedBadgeCount : 0,
+                match_type: "profile_overlap",
+              };
+            });
+
+            finalUsers.sort((a, b) => b.best_match_score - a.best_match_score);
+          }
         } catch (matchErr) {
           console.error("Error computing match scores for search:", matchErr);
         }
@@ -1104,6 +1188,15 @@ const searchController = {
           sortBy: sort,
           sortDir: direction.toLowerCase(),
         },
+        matchRole: roleData
+          ? {
+              id: roleData.id,
+              roleName: roleData.role_name,
+              isRemote: roleData.is_remote,
+              city: roleData.city,
+              country: roleData.country,
+            }
+          : null,
         userLocation: userLocation
           ? { hasLocation: true, hasCoordinates: !!userLocation.hasCoordinates }
           : { hasLocation: false, hasCoordinates: false },
@@ -1162,6 +1255,7 @@ const searchController = {
         : "ASC";
 
       const isMatchSort = sort === "match" && !!userId;
+      const matchRoleId = req.query.roleId ? parseInt(req.query.roleId, 10) : null;
 
       const maxDistance = req.query.maxDistance
         ? parseFloat(req.query.maxDistance)
@@ -1175,6 +1269,7 @@ const searchController = {
         `getAllUsersAndTeams: userId=${userId}, page=${page}, limit=${limit}, sortBy=${sort}, sortDir=${direction}, capacityMode=${capacityMode}, searchType=${searchType}, openRolesOnly=${openRolesOnly}`,
       );
       console.log(`Tag filter IDs: ${JSON.stringify(tagIds)}, Badge filter IDs: ${JSON.stringify(badgeIds)}`);
+      console.log(`Match sort: roleId=${matchRoleId || 'none (profile-based)'}`);
 
       let userLocation = null;
 
@@ -1563,7 +1658,7 @@ const searchController = {
                 )
               )
             END as distance_km`;
-          userDistanceGroupBy = ", u.latitude, u.longitude";
+          userDistanceGroupBy = "";
         } else if (userLocation.hasPostalCode) {
           userDistanceSelect = `,
             ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "u")} as distance_km`;
@@ -1588,6 +1683,8 @@ const searchController = {
           u.is_public,
           u.created_at,
           u.updated_at,
+          u.latitude,
+          u.longitude,
           (SELECT COALESCE(
             json_agg(
               json_build_object(
@@ -1821,9 +1918,11 @@ const searchController = {
       // ========== MATCH SORT POST-PROCESSING ==========
       let finalTeams = teamsWithFixedVisibility;
       let finalUsers = usersWithFixedVisibility;
+      let roleData = null;
 
       if (isMatchSort) {
         try {
+          // --- Team scoring: always profile-based ---
           const teamIds = teamsWithFixedVisibility.map((t) => t.id);
 
           const teamOverlap = await computeTeamTagOverlap(db, userId, teamIds);
@@ -1839,24 +1938,101 @@ const searchController = {
 
           finalTeams.sort((a, b) => b.best_match_score - a.best_match_score);
 
-          const userIds = usersWithFixedVisibility.map((u) => u.id);
-          const userOverlap = await computeUserProfileOverlap(
-            db,
-            userId,
-            userIds,
-          );
-          finalUsers = usersWithFixedVisibility.map((user) => {
-            const overlap = userOverlap.get(user.id);
-            return {
-              ...user,
-              best_match_score: overlap ? overlap.overlapScore : 0,
-              shared_tag_count: overlap ? overlap.sharedTagCount : 0,
-              shared_badge_count: overlap ? overlap.sharedBadgeCount : 0,
-              match_type: "profile_overlap",
-            };
-          });
+          // --- User scoring: role-based OR profile-based ---
+          if (matchRoleId) {
+            const roleResult = await db.pool.query(
+              `SELECT id, role_name, is_remote, latitude, longitude, max_distance_km,
+                      city, country, state
+               FROM team_vacant_roles WHERE id = $1 AND status = 'open'`,
+              [matchRoleId],
+            );
 
-          finalUsers.sort((a, b) => b.best_match_score - a.best_match_score);
+            if (roleResult.rows.length > 0) {
+              roleData = roleResult.rows[0];
+
+              const [roleTagsRes, roleBadgesRes] = await Promise.all([
+                db.pool.query(
+                  `SELECT tag_id FROM team_vacant_role_tags WHERE role_id = $1`,
+                  [matchRoleId],
+                ),
+                db.pool.query(
+                  `SELECT badge_id FROM team_vacant_role_badges WHERE role_id = $1`,
+                  [matchRoleId],
+                ),
+              ]);
+
+              const roleTagIds = roleTagsRes.rows.map((r) => Number(r.tag_id));
+              const roleBadgeIds = roleBadgesRes.rows.map((r) => Number(r.badge_id));
+
+              const userIds = usersWithFixedVisibility.map((u) => u.id);
+
+              const [allUserTags, allUserBadges] = await Promise.all([
+                db.pool.query(
+                  `SELECT user_id, tag_id FROM user_tags WHERE user_id = ANY($1)`,
+                  [userIds],
+                ),
+                db.pool.query(
+                  `SELECT DISTINCT user_id, badge_id FROM user_badges WHERE user_id = ANY($1)`,
+                  [userIds],
+                ),
+              ]);
+
+              const userTagMap = {};
+              const userBadgeMap = {};
+              for (const r of allUserTags.rows) {
+                if (!userTagMap[r.user_id]) userTagMap[r.user_id] = new Set();
+                userTagMap[r.user_id].add(Number(r.tag_id));
+              }
+              for (const r of allUserBadges.rows) {
+                if (!userBadgeMap[r.user_id]) userBadgeMap[r.user_id] = new Set();
+                userBadgeMap[r.user_id].add(Number(r.badge_id));
+              }
+
+              finalUsers = usersWithFixedVisibility.map((user) => {
+                const scores = scoreUserAgainstRole({
+                  userTagIds: userTagMap[user.id] || new Set(),
+                  userBadgeIds: userBadgeMap[user.id] || new Set(),
+                  userLat: user.latitude,
+                  userLng: user.longitude,
+                  roleTagIds,
+                  roleBadgeIds,
+                  role: roleData,
+                });
+
+                return {
+                  ...user,
+                  best_match_score: scores.matchScore,
+                  match_details: {
+                    tag_score: scores.tagScore,
+                    badge_score: scores.badgeScore,
+                    distance_score: scores.distanceScore,
+                    distance_km: scores.distanceKm,
+                  },
+                  match_type: "role_match",
+                };
+              });
+
+              finalUsers.sort((a, b) => b.best_match_score - a.best_match_score);
+            }
+          }
+
+          // Profile-based user scoring (default when no roleId, or role not found)
+          if (!matchRoleId || finalUsers === usersWithFixedVisibility) {
+            const userIds = usersWithFixedVisibility.map((u) => u.id);
+            const userOverlap = await computeUserProfileOverlap(db, userId, userIds);
+            finalUsers = usersWithFixedVisibility.map((user) => {
+              const overlap = userOverlap.get(user.id);
+              return {
+                ...user,
+                best_match_score: overlap ? overlap.overlapScore : 0,
+                shared_tag_count: overlap ? overlap.sharedTagCount : 0,
+                shared_badge_count: overlap ? overlap.sharedBadgeCount : 0,
+                match_type: "profile_overlap",
+              };
+            });
+
+            finalUsers.sort((a, b) => b.best_match_score - a.best_match_score);
+          }
         } catch (matchErr) {
           console.error("Error computing match scores for search:", matchErr);
         }
@@ -1903,6 +2079,15 @@ const searchController = {
           sortBy: sort,
           sortDir: direction.toLowerCase(),
         },
+        matchRole: roleData
+          ? {
+              id: roleData.id,
+              roleName: roleData.role_name,
+              isRemote: roleData.is_remote,
+              city: roleData.city,
+              country: roleData.country,
+            }
+          : null,
         userLocation: userLocation
           ? { hasLocation: true, hasCoordinates: !!userLocation.hasCoordinates }
           : { hasLocation: false, hasCoordinates: false },
