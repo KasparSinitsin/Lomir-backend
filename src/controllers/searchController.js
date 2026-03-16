@@ -142,6 +142,7 @@ const searchController = {
       const includeTeams = searchType !== "users";
       const includeUsers = searchType !== "teams";
       const openRolesOnly = parseBooleanFlag(req.query.openRolesOnly);
+      const excludeOwnTeams = parseBooleanFlag(req.query.excludeOwnTeams) && !!userId;
 
       const page = parseInt(req.query.page, 10) || 1;
       const limit = parseInt(req.query.limit, 10) || 20;
@@ -285,6 +286,19 @@ const searchController = {
               AND vr_filter.status = 'open'
           )
         `;
+      }
+
+      if (excludeOwnTeams) {
+        const memberParamIdx = teamCountParams.length + 1;
+        teamCountQuery += `
+          AND NOT EXISTS (
+            SELECT 1
+            FROM team_members tm_excluded
+            WHERE tm_excluded.team_id = t.id
+              AND tm_excluded.user_id = $${memberParamIdx}
+          )
+        `;
+        teamCountParams.push(userId);
       }
 
       if (sort === "proximity" && direction === "REMOTE") {
@@ -433,6 +447,19 @@ const searchController = {
               AND vr_filter.status = 'open'
           )
         `;
+      }
+
+      if (excludeOwnTeams) {
+        teamQuery += `
+          AND NOT EXISTS (
+            SELECT 1
+            FROM team_members tm_excluded
+            WHERE tm_excluded.team_id = t.id
+              AND tm_excluded.user_id = $${teamParamIndex}
+          )
+        `;
+        teamParams.push(userId);
+        teamParamIndex++;
       }
 
       if (sort === "proximity" && direction === "REMOTE") {
@@ -1009,6 +1036,7 @@ const searchController = {
       const includeTeams = searchType !== "users";
       const includeUsers = searchType !== "teams";
       const openRolesOnly = parseBooleanFlag(req.query.openRolesOnly);
+      const excludeOwnTeams = parseBooleanFlag(req.query.excludeOwnTeams) && !!userId;
 
       console.log("GETALL DEBUG: req.user =", req.user);
       console.log("GETALL DEBUG: userId =", userId);
@@ -1091,6 +1119,19 @@ const searchController = {
               AND vr_filter.status = 'open'
           )
         `;
+      }
+
+      if (excludeOwnTeams) {
+        const memberParamIdx = teamCountParams.length + 1;
+        teamCountQuery += `
+          AND NOT EXISTS (
+            SELECT 1
+            FROM team_members tm_excluded
+            WHERE tm_excluded.team_id = t.id
+              AND tm_excluded.user_id = $${memberParamIdx}
+          )
+        `;
+        teamCountParams.push(userId);
       }
 
       if (sort === "proximity" && direction === "REMOTE") {
@@ -1206,6 +1247,19 @@ const searchController = {
               AND vr_filter.status = 'open'
           )
         `;
+      }
+
+      if (excludeOwnTeams) {
+        teamQuery += `
+          AND NOT EXISTS (
+            SELECT 1
+            FROM team_members tm_excluded
+            WHERE tm_excluded.team_id = t.id
+              AND tm_excluded.user_id = $${teamParamIndex}
+          )
+        `;
+        teamParams.push(userId);
+        teamParamIndex++;
       }
 
       if (sort === "proximity" && direction === "REMOTE") {
