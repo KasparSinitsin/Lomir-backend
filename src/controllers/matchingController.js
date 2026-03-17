@@ -561,4 +561,6 @@ const getMatchingCandidates = async (req, res) => {
 module.exports = {
   getMatchingRoles,
   getMatchingCandidates,
+  computeDistanceScore,
+  WEIGHTS,
 };
