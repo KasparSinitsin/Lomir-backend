@@ -144,6 +144,8 @@ const searchController = {
       const includeUsers = searchType !== "teams";
       const openRolesOnly = parseBooleanFlag(req.query.openRolesOnly);
       const excludeOwnTeams = parseBooleanFlag(req.query.excludeOwnTeams) && !!userId;
+      const excludeTeamId = req.query.excludeTeamId ? parseInt(req.query.excludeTeamId, 10) : null;
+      const hasValidExcludeTeamId = excludeTeamId !== null && Number.isFinite(excludeTeamId) && excludeTeamId > 0;
 
       const tagIds = req.query.tagIds
         ? req.query.tagIds.split(",").map(Number).filter(Number.isFinite)
@@ -191,6 +193,7 @@ const searchController = {
       );
       console.log(`Tag filter IDs: ${JSON.stringify(tagIds)}, Badge filter IDs: ${JSON.stringify(badgeIds)}`);
       console.log(`Match sort: roleId=${matchRoleId || 'none (profile-based)'}`);
+      console.log(`Exclude team members: teamId=${excludeTeamId || 'none'}`);
 
       if (!query || query.trim().length < 2) {
         return res.status(400).json({
@@ -700,6 +703,18 @@ const searchController = {
         userCountParams.push(badgeIds);
       }
 
+      if (hasValidExcludeTeamId) {
+        const etIdx = userCountParams.length + 1;
+        userCountQuery += `
+          AND NOT EXISTS (
+            SELECT 1 FROM team_members tm_excl
+            WHERE tm_excl.team_id = $${etIdx}
+              AND tm_excl.user_id = u.id
+          )
+        `;
+        userCountParams.push(excludeTeamId);
+      }
+
       // ========== USER DATA QUERY ==========
       let userDistanceSelect = "";
       let userDistanceGroupBy = "";
@@ -891,6 +906,18 @@ const searchController = {
           )
         `;
         userParams.push(badgeIds);
+        userParamIndex++;
+      }
+
+      if (hasValidExcludeTeamId) {
+        userQuery += `
+          AND NOT EXISTS (
+            SELECT 1 FROM team_members tm_excl
+            WHERE tm_excl.team_id = $${userParamIndex}
+              AND tm_excl.user_id = u.id
+          )
+        `;
+        userParams.push(excludeTeamId);
         userParamIndex++;
       }
 
@@ -1224,6 +1251,8 @@ const searchController = {
       const includeUsers = searchType !== "teams";
       const openRolesOnly = parseBooleanFlag(req.query.openRolesOnly);
       const excludeOwnTeams = parseBooleanFlag(req.query.excludeOwnTeams) && !!userId;
+      const excludeTeamId = req.query.excludeTeamId ? parseInt(req.query.excludeTeamId, 10) : null;
+      const hasValidExcludeTeamId = excludeTeamId !== null && Number.isFinite(excludeTeamId) && excludeTeamId > 0;
 
       const tagIds = req.query.tagIds
         ? req.query.tagIds.split(",").map(Number).filter(Number.isFinite)
@@ -1270,6 +1299,7 @@ const searchController = {
       );
       console.log(`Tag filter IDs: ${JSON.stringify(tagIds)}, Badge filter IDs: ${JSON.stringify(badgeIds)}`);
       console.log(`Match sort: roleId=${matchRoleId || 'none (profile-based)'}`);
+      console.log(`Exclude team members: teamId=${excludeTeamId || 'none'}`);
 
       let userLocation = null;
 
@@ -1702,6 +1732,18 @@ const searchController = {
         }
       }
 
+      if (hasValidExcludeTeamId) {
+        const etIdx = userCountParams.length + 1;
+        userCountQuery += `
+          AND NOT EXISTS (
+            SELECT 1 FROM team_members tm_excl
+            WHERE tm_excl.team_id = $${etIdx}
+              AND tm_excl.user_id = u.id
+          )
+        `;
+        userCountParams.push(excludeTeamId);
+      }
+
       // ========== USER DATA QUERY ==========
       let userDistanceSelect = "";
       let userDistanceGroupBy = "";
@@ -1872,6 +1914,18 @@ const searchController = {
           userParams.push(badgeIds);
           userParamIndex++;
         }
+      }
+
+      if (hasValidExcludeTeamId) {
+        userQuery += `
+          AND NOT EXISTS (
+            SELECT 1 FROM team_members tm_excl
+            WHERE tm_excl.team_id = $${userParamIndex}
+              AND tm_excl.user_id = u.id
+          )
+        `;
+        userParams.push(excludeTeamId);
+        userParamIndex++;
       }
 
       let userOrderBy;
