@@ -738,7 +738,8 @@ const getUserPendingApplications = async (req, res) => {
     // Get user's pending applications with team details
     const applicationsResult = await db.pool.query(
       `SELECT 
-    ta.id, ta.team_id, ta.message, ta.status, ta.created_at,
+    ta.id, ta.team_id, ta.role_id, ta.message, ta.status, ta.created_at,
+    vr.role_name,
     t.name, t.description, t.teamavatar_url, t.max_members, t.is_public,
     (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count,
     owner.id as owner_id,
@@ -748,6 +749,7 @@ const getUserPendingApplications = async (req, res) => {
     owner.avatar_url as owner_avatar_url
    FROM team_applications ta
    JOIN teams t ON ta.team_id = t.id
+   LEFT JOIN team_vacant_roles vr ON ta.role_id = vr.id
    JOIN team_members tm ON t.id = tm.team_id AND tm.role = 'owner'
    JOIN users owner ON tm.user_id = owner.id
    WHERE ta.applicant_id = $1 AND ta.status = 'pending'
@@ -760,6 +762,12 @@ const getUserPendingApplications = async (req, res) => {
       message: row.message,
       status: row.status,
       created_at: row.created_at,
+      role: row.role_id
+        ? {
+            id: row.role_id,
+            name: row.role_name,
+          }
+        : null,
       team: {
         id: row.team_id,
         name: row.name,
@@ -1511,11 +1519,13 @@ const getTeamApplications = async (req, res) => {
     // Get pending applications with applicant details
     const applicationsResult = await db.pool.query(
       `SELECT 
-        ta.id, ta.message, ta.status, ta.created_at,
+        ta.id, ta.role_id, ta.message, ta.status, ta.created_at,
+        vr.role_name,
         u.id as applicant_id, u.username, u.first_name, u.last_name, 
         u.bio, u.avatar_url, u.postal_code, u.city, u.country, u.state
        FROM team_applications ta
        JOIN users u ON ta.applicant_id = u.id
+       LEFT JOIN team_vacant_roles vr ON ta.role_id = vr.id
        WHERE ta.team_id = $1 AND ta.status = 'pending'
        ORDER BY ta.created_at ASC`,
       [teamId],
@@ -1526,6 +1536,12 @@ const getTeamApplications = async (req, res) => {
       message: row.message,
       status: row.status,
       created_at: row.created_at,
+      role: row.role_id
+        ? {
+            id: row.role_id,
+            name: row.role_name,
+          }
+        : null,
       applicant: {
         id: row.applicant_id,
         username: row.username,
@@ -1967,7 +1983,9 @@ const applyToJoinTeam = async (req, res) => {
   try {
     const teamId = req.params.id;
     const applicantId = req.user.id;
-    const { message, isDraft = false } = req.body;
+    const { message, isDraft = false, roleId } = req.body;
+    const hasRoleId = roleId !== undefined && roleId !== null && roleId !== "";
+    const normalizedRoleId = hasRoleId ? Number(roleId) : null;
 
     // Validation
     if (!message || message.trim().length === 0) {
@@ -1981,6 +1999,16 @@ const applyToJoinTeam = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Message cannot exceed 500 characters",
+      });
+    }
+
+    if (
+      hasRoleId &&
+      (!Number.isInteger(normalizedRoleId) || normalizedRoleId <= 0)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "roleId must be a positive integer when provided",
       });
     }
 
@@ -1999,6 +2027,22 @@ const applyToJoinTeam = async (req, res) => {
     }
 
     const team = teamCheck.rows[0];
+
+    if (normalizedRoleId !== null) {
+      const roleCheck = await db.pool.query(
+        `SELECT id
+         FROM team_vacant_roles
+         WHERE id = $1 AND team_id = $2 AND status = 'open'`,
+        [normalizedRoleId, teamId],
+      );
+
+      if (roleCheck.rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Vacant role not found or is no longer open for this team",
+        });
+      }
+    }
 
     // Check if user is already a member
     const memberCheck = await db.pool.query(
@@ -2047,14 +2091,20 @@ const applyToJoinTeam = async (req, res) => {
     try {
       await client.query("BEGIN");
 
-      // Insert or update application
+      // Persist the optional role link when the application originates from a vacant role.
       const applicationResult = await client.query(
-        `INSERT INTO team_applications (team_id, applicant_id, message, status, created_at)
-         VALUES ($1, $2, $3, $4, NOW())
+        `INSERT INTO team_applications (team_id, applicant_id, message, status, role_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())
          ON CONFLICT (team_id, applicant_id) 
-         DO UPDATE SET message = $3, status = $4, updated_at = NOW()
+         DO UPDATE SET message = $3, status = $4, role_id = $5, updated_at = NOW()
          RETURNING id`,
-        [teamId, applicantId, message.trim(), isDraft ? "draft" : "pending"],
+        [
+          teamId,
+          applicantId,
+          message.trim(),
+          isDraft ? "draft" : "pending",
+          normalizedRoleId,
+        ],
       );
 
       await client.query("COMMIT");
