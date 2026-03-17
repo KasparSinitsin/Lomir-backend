@@ -323,7 +323,7 @@ const searchController = {
 
       if (
         hasValidMaxDistance &&
-        sort === "proximity" &&
+        userLocation &&
         direction !== "REMOTE"
       ) {
         const distFilter = searchController.buildDistanceFilterSQL(
@@ -361,7 +361,7 @@ const searchController = {
       // ========== TEAM DATA QUERY ==========
       let teamDistanceSelect = "";
       let teamDistanceGroupBy = "";
-      if (sort === "proximity" && userLocation && direction !== "REMOTE") {
+      if (userLocation && (sort === "proximity" && direction !== "REMOTE" || hasValidMaxDistance)) {
         if (userLocation.hasCoordinates) {
           teamDistanceSelect = `,
             CASE
@@ -505,7 +505,7 @@ const searchController = {
 
       if (
         hasValidMaxDistance &&
-        sort === "proximity" &&
+        userLocation &&
         direction !== "REMOTE"
       ) {
         const distFilter = searchController.buildDistanceFilterSQL(
@@ -669,7 +669,7 @@ const searchController = {
 
       if (
         hasValidMaxDistance &&
-        sort === "proximity" &&
+        userLocation &&
         direction !== "REMOTE"
       ) {
         const distFilter = searchController.buildDistanceFilterSQL(
@@ -718,7 +718,7 @@ const searchController = {
       // ========== USER DATA QUERY ==========
       let userDistanceSelect = "";
       let userDistanceGroupBy = "";
-      if (sort === "proximity" && userLocation && direction !== "REMOTE") {
+      if (userLocation && (sort === "proximity" && direction !== "REMOTE" || hasValidMaxDistance)) {
         if (userLocation.hasCoordinates) {
           userDistanceSelect = `,
             CASE
@@ -872,7 +872,7 @@ const searchController = {
 
       if (
         hasValidMaxDistance &&
-        sort === "proximity" &&
+        userLocation &&
         direction !== "REMOTE"
       ) {
         const distFilter = searchController.buildDistanceFilterSQL(
@@ -1056,6 +1056,7 @@ const searchController = {
       let finalUsers = usersWithFixedVisibility;
       let roleData = null;
 
+      // Best Match only re-ranks the SQL result set; maxDistance stays active as an independent filter.
       if (isMatchSort) {
         try {
           // --- Team scoring: always profile-based ---
@@ -1369,7 +1370,7 @@ const searchController = {
 
       if (
         hasValidMaxDistance &&
-        sort === "proximity" &&
+        userLocation &&
         direction !== "REMOTE"
       ) {
         const distFilter = searchController.buildDistanceFilterSQL(
@@ -1426,7 +1427,7 @@ const searchController = {
       // ========== TEAM DATA QUERY ==========
       let teamDistanceSelect = "";
       let teamDistanceGroupBy = "";
-      if (sort === "proximity" && userLocation && direction !== "REMOTE") {
+      if (userLocation && (sort === "proximity" && direction !== "REMOTE" || hasValidMaxDistance)) {
         if (userLocation.hasCoordinates) {
           teamDistanceSelect = `,
             CASE
@@ -1537,7 +1538,7 @@ const searchController = {
 
       if (
         hasValidMaxDistance &&
-        sort === "proximity" &&
+        userLocation &&
         direction !== "REMOTE"
       ) {
         const distFilter = searchController.buildDistanceFilterSQL(
@@ -1675,7 +1676,7 @@ const searchController = {
 
       if (
         hasValidMaxDistance &&
-        sort === "proximity" &&
+        userLocation &&
         direction !== "REMOTE"
       ) {
         const distFilter = searchController.buildDistanceFilterSQL(
@@ -1747,7 +1748,7 @@ const searchController = {
       // ========== USER DATA QUERY ==========
       let userDistanceSelect = "";
       let userDistanceGroupBy = "";
-      if (sort === "proximity" && userLocation && direction !== "REMOTE") {
+      if (userLocation && (sort === "proximity" && direction !== "REMOTE" || hasValidMaxDistance)) {
         if (userLocation.hasCoordinates) {
           userDistanceSelect = `,
             CASE
@@ -1854,7 +1855,7 @@ const searchController = {
 
       if (
         hasValidMaxDistance &&
-        sort === "proximity" &&
+        userLocation &&
         direction !== "REMOTE"
       ) {
         const distFilter = searchController.buildDistanceFilterSQL(
@@ -2061,6 +2062,7 @@ const searchController = {
       let finalUsers = usersWithFixedVisibility;
       let roleData = null;
 
+      // Best Match only re-ranks the SQL result set; maxDistance stays active as an independent filter.
       if (isMatchSort) {
         try {
           // --- Team scoring: always profile-based ---
