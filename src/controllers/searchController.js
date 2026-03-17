@@ -1353,25 +1353,44 @@ const searchController = {
         }
       }
 
-      if (tagIds.length > 0) {
+      if (tagIds.length > 0 && badgeIds.length > 0 && matchRoleId) {
+        const tagParam = `$${teamCountParams.length + 1}`;
+        const badgeParam = `$${teamCountParams.length + 2}`;
         teamCountQuery += `
-          AND t.id IN (
-            SELECT tt_filter.team_id FROM team_tags tt_filter
-            WHERE tt_filter.tag_id = ANY($${teamCountParams.length + 1}::int[])
+          AND (
+            t.id IN (
+              SELECT tt_filter.team_id FROM team_tags tt_filter
+              WHERE tt_filter.tag_id = ANY(${tagParam}::int[])
+            )
+            OR t.id IN (
+              SELECT tm_badge.team_id FROM team_members tm_badge
+              JOIN user_badges ub_badge ON tm_badge.user_id = ub_badge.user_id
+              WHERE ub_badge.badge_id = ANY(${badgeParam}::int[])
+            )
           )
         `;
-        teamCountParams.push(tagIds);
-      }
+        teamCountParams.push(tagIds, badgeIds);
+      } else {
+        if (tagIds.length > 0) {
+          teamCountQuery += `
+            AND t.id IN (
+              SELECT tt_filter.team_id FROM team_tags tt_filter
+              WHERE tt_filter.tag_id = ANY($${teamCountParams.length + 1}::int[])
+            )
+          `;
+          teamCountParams.push(tagIds);
+        }
 
-      if (badgeIds.length > 0) {
-        teamCountQuery += `
-          AND t.id IN (
-            SELECT tm_badge.team_id FROM team_members tm_badge
-            JOIN user_badges ub_badge ON tm_badge.user_id = ub_badge.user_id
-            WHERE ub_badge.badge_id = ANY($${teamCountParams.length + 1}::int[])
-          )
-        `;
-        teamCountParams.push(badgeIds);
+        if (badgeIds.length > 0) {
+          teamCountQuery += `
+            AND t.id IN (
+              SELECT tm_badge.team_id FROM team_members tm_badge
+              JOIN user_badges ub_badge ON tm_badge.user_id = ub_badge.user_id
+              WHERE ub_badge.badge_id = ANY($${teamCountParams.length + 1}::int[])
+            )
+          `;
+          teamCountParams.push(badgeIds);
+        }
       }
 
       // ========== TEAM DATA QUERY ==========
@@ -1503,27 +1522,47 @@ const searchController = {
         }
       }
 
-      if (tagIds.length > 0) {
+      if (tagIds.length > 0 && badgeIds.length > 0 && matchRoleId) {
+        const tagParam2 = `$${teamParamIndex}`;
+        const badgeParam2 = `$${teamParamIndex + 1}`;
         teamQuery += `
-          AND t.id IN (
-            SELECT tt_filter.team_id FROM team_tags tt_filter
-            WHERE tt_filter.tag_id = ANY($${teamParamIndex}::int[])
+          AND (
+            t.id IN (
+              SELECT tt_filter.team_id FROM team_tags tt_filter
+              WHERE tt_filter.tag_id = ANY(${tagParam2}::int[])
+            )
+            OR t.id IN (
+              SELECT tm_badge.team_id FROM team_members tm_badge
+              JOIN user_badges ub_badge ON tm_badge.user_id = ub_badge.user_id
+              WHERE ub_badge.badge_id = ANY(${badgeParam2}::int[])
+            )
           )
         `;
-        teamParams.push(tagIds);
-        teamParamIndex++;
-      }
+        teamParams.push(tagIds, badgeIds);
+        teamParamIndex += 2;
+      } else {
+        if (tagIds.length > 0) {
+          teamQuery += `
+            AND t.id IN (
+              SELECT tt_filter.team_id FROM team_tags tt_filter
+              WHERE tt_filter.tag_id = ANY($${teamParamIndex}::int[])
+            )
+          `;
+          teamParams.push(tagIds);
+          teamParamIndex++;
+        }
 
-      if (badgeIds.length > 0) {
-        teamQuery += `
-          AND t.id IN (
-            SELECT tm_badge.team_id FROM team_members tm_badge
-            JOIN user_badges ub_badge ON tm_badge.user_id = ub_badge.user_id
-            WHERE ub_badge.badge_id = ANY($${teamParamIndex}::int[])
-          )
-        `;
-        teamParams.push(badgeIds);
-        teamParamIndex++;
+        if (badgeIds.length > 0) {
+          teamQuery += `
+            AND t.id IN (
+              SELECT tm_badge.team_id FROM team_members tm_badge
+              JOIN user_badges ub_badge ON tm_badge.user_id = ub_badge.user_id
+              WHERE ub_badge.badge_id = ANY($${teamParamIndex}::int[])
+            )
+          `;
+          teamParams.push(badgeIds);
+          teamParamIndex++;
+        }
       }
 
       let teamOrderBy;
@@ -1620,24 +1659,47 @@ const searchController = {
         }
       }
 
-      if (tagIds.length > 0) {
-        userCountQuery += `
-          AND u.id IN (
-            SELECT ut_filter.user_id FROM user_tags ut_filter
-            WHERE ut_filter.tag_id = ANY($${userCountParams.length + 1}::int[])
-          )
-        `;
-        userCountParams.push(tagIds);
+      if (matchRoleId && userId) {
+        userCountQuery += ` AND u.id != $${userCountParams.length + 1}`;
+        userCountParams.push(userId);
       }
 
-      if (badgeIds.length > 0) {
+      if (tagIds.length > 0 && badgeIds.length > 0 && matchRoleId) {
+        const tagParam = `$${userCountParams.length + 1}`;
+        const badgeParam = `$${userCountParams.length + 2}`;
         userCountQuery += `
-          AND u.id IN (
-            SELECT ub_filter.user_id FROM user_badges ub_filter
-            WHERE ub_filter.badge_id = ANY($${userCountParams.length + 1}::int[])
+          AND (
+            u.id IN (
+              SELECT ut_filter.user_id FROM user_tags ut_filter
+              WHERE ut_filter.tag_id = ANY(${tagParam}::int[])
+            )
+            OR u.id IN (
+              SELECT ub_filter.user_id FROM user_badges ub_filter
+              WHERE ub_filter.badge_id = ANY(${badgeParam}::int[])
+            )
           )
         `;
-        userCountParams.push(badgeIds);
+        userCountParams.push(tagIds, badgeIds);
+      } else {
+        if (tagIds.length > 0) {
+          userCountQuery += `
+            AND u.id IN (
+              SELECT ut_filter.user_id FROM user_tags ut_filter
+              WHERE ut_filter.tag_id = ANY($${userCountParams.length + 1}::int[])
+            )
+          `;
+          userCountParams.push(tagIds);
+        }
+
+        if (badgeIds.length > 0) {
+          userCountQuery += `
+            AND u.id IN (
+              SELECT ub_filter.user_id FROM user_badges ub_filter
+              WHERE ub_filter.badge_id = ANY($${userCountParams.length + 1}::int[])
+            )
+          `;
+          userCountParams.push(badgeIds);
+        }
       }
 
       // ========== USER DATA QUERY ==========
@@ -1765,26 +1827,51 @@ const searchController = {
         }
       }
 
-      if (tagIds.length > 0) {
-        userQuery += `
-          AND u.id IN (
-            SELECT ut_filter.user_id FROM user_tags ut_filter
-            WHERE ut_filter.tag_id = ANY($${userParamIndex}::int[])
-          )
-        `;
-        userParams.push(tagIds);
+      if (matchRoleId && userId) {
+        userQuery += ` AND u.id != $${userParamIndex}`;
+        userParams.push(userId);
         userParamIndex++;
       }
 
-      if (badgeIds.length > 0) {
+      if (tagIds.length > 0 && badgeIds.length > 0 && matchRoleId) {
+        const tagParam2 = `$${userParamIndex}`;
+        const badgeParam2 = `$${userParamIndex + 1}`;
         userQuery += `
-          AND u.id IN (
-            SELECT ub_filter.user_id FROM user_badges ub_filter
-            WHERE ub_filter.badge_id = ANY($${userParamIndex}::int[])
+          AND (
+            u.id IN (
+              SELECT ut_filter.user_id FROM user_tags ut_filter
+              WHERE ut_filter.tag_id = ANY(${tagParam2}::int[])
+            )
+            OR u.id IN (
+              SELECT ub_filter.user_id FROM user_badges ub_filter
+              WHERE ub_filter.badge_id = ANY(${badgeParam2}::int[])
+            )
           )
         `;
-        userParams.push(badgeIds);
-        userParamIndex++;
+        userParams.push(tagIds, badgeIds);
+        userParamIndex += 2;
+      } else {
+        if (tagIds.length > 0) {
+          userQuery += `
+            AND u.id IN (
+              SELECT ut_filter.user_id FROM user_tags ut_filter
+              WHERE ut_filter.tag_id = ANY($${userParamIndex}::int[])
+            )
+          `;
+          userParams.push(tagIds);
+          userParamIndex++;
+        }
+
+        if (badgeIds.length > 0) {
+          userQuery += `
+            AND u.id IN (
+              SELECT ub_filter.user_id FROM user_badges ub_filter
+              WHERE ub_filter.badge_id = ANY($${userParamIndex}::int[])
+            )
+          `;
+          userParams.push(badgeIds);
+          userParamIndex++;
+        }
       }
 
       let userOrderBy;
