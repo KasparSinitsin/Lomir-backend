@@ -1056,6 +1056,7 @@ const searchController = {
       let finalUsers = usersWithFixedVisibility;
       let roleData = null;
 
+      // Best Match only re-ranks the SQL result set; maxDistance stays active as an independent filter.
       if (isMatchSort) {
         try {
           // --- Team scoring: always profile-based ---
@@ -2061,6 +2062,7 @@ const searchController = {
       let finalUsers = usersWithFixedVisibility;
       let roleData = null;
 
+      // Best Match only re-ranks the SQL result set; maxDistance stays active as an independent filter.
       if (isMatchSort) {
         try {
           // --- Team scoring: always profile-based ---
