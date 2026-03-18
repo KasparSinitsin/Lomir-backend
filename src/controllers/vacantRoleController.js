@@ -1,5 +1,6 @@
 const db = require("../config/database");
 const { geocodeAddress } = require("../utils/geocodingUtil");
+const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 
 const fetchRoleTags = async (clientOrPool, roleId) => {
   const result = await clientOrPool.query(
@@ -137,10 +138,65 @@ const getVacantRoles = async (req, res) => {
       badgesByRole[badge.role_id].push(badge);
     }
 
-    // Attach to each role
+    // If the user is authenticated, fetch their tags/badges/location for match scoring
+    let userTagIds = new Set();
+    let userBadgeIds = new Set();
+    let userLat = null;
+    let userLng = null;
+
+    if (req.user) {
+      const [userTagsResult, userBadgesResult, userLocationResult] = await Promise.all([
+        db.pool.query(`SELECT tag_id FROM user_tags WHERE user_id = $1`, [req.user.id]),
+        db.pool.query(`SELECT DISTINCT badge_id FROM user_badges WHERE user_id = $1`, [req.user.id]),
+        db.pool.query(`SELECT latitude, longitude FROM users WHERE id = $1`, [req.user.id]),
+      ]);
+      userTagIds = new Set(userTagsResult.rows.map((r) => r.tag_id));
+      userBadgeIds = new Set(userBadgesResult.rows.map((r) => r.badge_id));
+      if (userLocationResult.rows.length > 0) {
+        userLat = userLocationResult.rows[0].latitude;
+        userLng = userLocationResult.rows[0].longitude;
+      }
+    }
+
+    // Attach tags, badges and (if authenticated) match score to each role
     const enrichedRoles = roles.map((role) => {
       const tags = tagsByRole[role.id] || [];
       const badges = badgesByRole[role.id] || [];
+
+      if (!req.user) {
+        return {
+          ...role,
+          tags,
+          badges,
+          desiredTags: tags,
+          desiredBadges: badges,
+        };
+      }
+
+      const roleTagIds = tags.map((t) => t.tag_id);
+      const roleBadgeIds = badges.map((b) => b.badge_id);
+
+      const tagScore = roleTagIds.length > 0
+        ? roleTagIds.filter((id) => userTagIds.has(id)).length / roleTagIds.length
+        : 0.5;
+
+      const badgeScore = roleBadgeIds.length > 0
+        ? roleBadgeIds.filter((id) => userBadgeIds.has(id)).length / roleBadgeIds.length
+        : 0.5;
+
+      const { score: distanceScore, distanceKm } = computeDistanceScore({
+        isRemote: role.is_remote,
+        userLat,
+        userLng,
+        roleLat: role.latitude,
+        roleLng: role.longitude,
+        maxDistKm: role.max_distance_km,
+      });
+
+      const matchScore =
+        WEIGHTS.tags * tagScore +
+        WEIGHTS.badges * badgeScore +
+        WEIGHTS.distance * distanceScore;
 
       return {
         ...role,
@@ -148,6 +204,17 @@ const getVacantRoles = async (req, res) => {
         badges,
         desiredTags: tags,
         desiredBadges: badges,
+        match_score: Math.round(matchScore * 100) / 100,
+        match_details: {
+          tag_score: Math.round(tagScore * 100) / 100,
+          badge_score: Math.round(badgeScore * 100) / 100,
+          distance_score: Math.round(distanceScore * 100) / 100,
+          matching_tags: roleTagIds.filter((id) => userTagIds.has(id)).length,
+          total_required_tags: roleTagIds.length,
+          matching_badges: roleBadgeIds.filter((id) => userBadgeIds.has(id)).length,
+          total_required_badges: roleBadgeIds.length,
+          distance_km: distanceKm !== null ? Math.round(distanceKm) : null,
+        },
       };
     });
 
