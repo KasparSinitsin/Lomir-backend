@@ -10,6 +10,7 @@ const {
   notifyTeamMembers,
   notifyTeamAdmins,
 } = require("./notificationController");
+const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 
 // Helper function to extract Cloudinary public ID from URL
 const extractCloudinaryPublicId = (url) => {
@@ -737,25 +738,81 @@ const getUserPendingApplications = async (req, res) => {
 
     // Get user's pending applications with team details
     const applicationsResult = await db.pool.query(
-      `SELECT 
+      `SELECT
     ta.id, ta.team_id, ta.role_id, ta.message, ta.status, ta.created_at,
-    vr.role_name,
+    vr.role_name, vr.bio AS role_bio, vr.city AS role_city, vr.country AS role_country,
+    vr.state AS role_state, vr.is_remote AS role_is_remote,
+    vr.latitude AS role_latitude, vr.longitude AS role_longitude,
+    vr.max_distance_km AS role_max_distance_km, vr.status AS role_status,
     t.name, t.description, t.teamavatar_url, t.max_members, t.is_public,
     (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count,
     owner.id as owner_id,
     owner.username as owner_username,
     owner.first_name as owner_first_name,
     owner.last_name as owner_last_name,
-    owner.avatar_url as owner_avatar_url
+    owner.avatar_url as owner_avatar_url,
+    u.latitude AS applicant_latitude, u.longitude AS applicant_longitude
    FROM team_applications ta
    JOIN teams t ON ta.team_id = t.id
    LEFT JOIN team_vacant_roles vr ON ta.role_id = vr.id
    JOIN team_members tm ON t.id = tm.team_id AND tm.role = 'owner'
    JOIN users owner ON tm.user_id = owner.id
+   JOIN users u ON ta.applicant_id = u.id
    WHERE ta.applicant_id = $1 AND ta.status = 'pending'
    ORDER BY ta.created_at DESC`,
       [userId],
     );
+
+    // Batch-fetch role tags and badges for applications that reference a vacant role
+    const roleIds = [...new Set(
+      applicationsResult.rows.map((r) => r.role_id).filter(Boolean)
+    )];
+
+    let roleTagsByRole = {};
+    let roleBadgesByRole = {};
+    let userTagIds = new Set();
+    let userBadgeIds = new Set();
+
+    if (roleIds.length > 0) {
+      const [roleTagsResult, roleBadgesResult, userTagsResult, userBadgesResult] =
+        await Promise.all([
+          db.pool.query(
+            `SELECT vrt.role_id, t.id AS tag_id, t.name, t.category, t.supercategory
+             FROM team_vacant_role_tags vrt
+             JOIN tags t ON vrt.tag_id = t.id
+             WHERE vrt.role_id = ANY($1)
+             ORDER BY t.supercategory, t.category, t.name`,
+            [roleIds]
+          ),
+          db.pool.query(
+            `SELECT vrb.role_id, b.id AS badge_id, b.name, b.category, b.color, b.image_url, b.cat_image_url
+             FROM team_vacant_role_badges vrb
+             JOIN badges b ON vrb.badge_id = b.id
+             WHERE vrb.role_id = ANY($1)
+             ORDER BY b.category, b.name`,
+            [roleIds]
+          ),
+          db.pool.query(
+            `SELECT tag_id FROM user_tags WHERE user_id = $1`,
+            [userId]
+          ),
+          db.pool.query(
+            `SELECT DISTINCT badge_id FROM user_badges WHERE user_id = $1`,
+            [userId]
+          ),
+        ]);
+
+      for (const tag of roleTagsResult.rows) {
+        if (!roleTagsByRole[tag.role_id]) roleTagsByRole[tag.role_id] = [];
+        roleTagsByRole[tag.role_id].push(tag);
+      }
+      for (const badge of roleBadgesResult.rows) {
+        if (!roleBadgesByRole[badge.role_id]) roleBadgesByRole[badge.role_id] = [];
+        roleBadgesByRole[badge.role_id].push(badge);
+      }
+      userTagIds = new Set(userTagsResult.rows.map((r) => r.tag_id));
+      userBadgeIds = new Set(userBadgesResult.rows.map((r) => r.badge_id));
+    }
 
     const applications = applicationsResult.rows.map((row) => ({
       id: row.id,
@@ -763,10 +820,61 @@ const getUserPendingApplications = async (req, res) => {
       status: row.status,
       created_at: row.created_at,
       role: row.role_id
-        ? {
-            id: row.role_id,
-            name: row.role_name,
-          }
+        ? (() => {
+            const roleTags = roleTagsByRole[row.role_id] || [];
+            const roleBadges = roleBadgesByRole[row.role_id] || [];
+            const roleTagIds = roleTags.map((t) => t.tag_id);
+            const roleBadgeIds = roleBadges.map((b) => b.badge_id);
+
+            const tagScore = roleTagIds.length > 0
+              ? roleTagIds.filter((id) => userTagIds.has(id)).length / roleTagIds.length
+              : 0.5;
+
+            const badgeScore = roleBadgeIds.length > 0
+              ? roleBadgeIds.filter((id) => userBadgeIds.has(id)).length / roleBadgeIds.length
+              : 0.5;
+
+            const { score: distanceScore, distanceKm } = computeDistanceScore({
+              isRemote: row.role_is_remote,
+              userLat: row.applicant_latitude,
+              userLng: row.applicant_longitude,
+              roleLat: row.role_latitude,
+              roleLng: row.role_longitude,
+              maxDistKm: row.role_max_distance_km,
+            });
+
+            const matchScore =
+              WEIGHTS.tags * tagScore +
+              WEIGHTS.badges * badgeScore +
+              WEIGHTS.distance * distanceScore;
+
+            return {
+              id: row.role_id,
+              role_name: row.role_name,
+              bio: row.role_bio,
+              city: row.role_city,
+              country: row.role_country,
+              state: row.role_state,
+              is_remote: row.role_is_remote,
+              latitude: row.role_latitude,
+              longitude: row.role_longitude,
+              max_distance_km: row.role_max_distance_km,
+              status: row.role_status,
+              tags: roleTags,
+              badges: roleBadges,
+              match_score: Math.round(matchScore * 100) / 100,
+              match_details: {
+                tag_score: Math.round(tagScore * 100) / 100,
+                badge_score: Math.round(badgeScore * 100) / 100,
+                distance_score: Math.round(distanceScore * 100) / 100,
+                matching_tags: roleTagIds.filter((id) => userTagIds.has(id)).length,
+                total_required_tags: roleTagIds.length,
+                matching_badges: roleBadgeIds.filter((id) => userBadgeIds.has(id)).length,
+                total_required_badges: roleBadgeIds.length,
+                distance_km: distanceKm !== null ? Math.round(distanceKm) : null,
+              },
+            };
+          })()
         : null,
       team: {
         id: row.team_id,
@@ -1518,11 +1626,15 @@ const getTeamApplications = async (req, res) => {
 
     // Get pending applications with applicant details
     const applicationsResult = await db.pool.query(
-      `SELECT 
+      `SELECT
         ta.id, ta.role_id, ta.message, ta.status, ta.created_at,
-        vr.role_name,
-        u.id as applicant_id, u.username, u.first_name, u.last_name, 
-        u.bio, u.avatar_url, u.postal_code, u.city, u.country, u.state
+        vr.role_name, vr.bio AS role_bio, vr.city AS role_city, vr.country AS role_country,
+        vr.state AS role_state, vr.is_remote AS role_is_remote,
+        vr.latitude AS role_latitude, vr.longitude AS role_longitude,
+        vr.max_distance_km AS role_max_distance_km, vr.status AS role_status,
+        u.id as applicant_id, u.username, u.first_name, u.last_name,
+        u.bio, u.avatar_url, u.postal_code, u.city, u.country, u.state,
+        u.latitude AS applicant_latitude, u.longitude AS applicant_longitude
        FROM team_applications ta
        JOIN users u ON ta.applicant_id = u.id
        LEFT JOIN team_vacant_roles vr ON ta.role_id = vr.id
@@ -1531,16 +1643,145 @@ const getTeamApplications = async (req, res) => {
       [teamId],
     );
 
+    // Batch-fetch role tags and badges for applications that reference a vacant role
+    const roleIds = [...new Set(
+      applicationsResult.rows
+        .map((r) => r.role_id)
+        .filter(Boolean)
+    )];
+
+    let roleTagsByRole = {};
+    let roleBadgesByRole = {};
+
+    if (roleIds.length > 0) {
+      const [roleTagsResult, roleBadgesResult] = await Promise.all([
+        db.pool.query(
+          `SELECT vrt.role_id, t.id AS tag_id, t.name, t.category, t.supercategory
+           FROM team_vacant_role_tags vrt
+           JOIN tags t ON vrt.tag_id = t.id
+           WHERE vrt.role_id = ANY($1)
+           ORDER BY t.supercategory, t.category, t.name`,
+          [roleIds]
+        ),
+        db.pool.query(
+          `SELECT vrb.role_id, b.id AS badge_id, b.name, b.category, b.color, b.image_url, b.cat_image_url
+           FROM team_vacant_role_badges vrb
+           JOIN badges b ON vrb.badge_id = b.id
+           WHERE vrb.role_id = ANY($1)
+           ORDER BY b.category, b.name`,
+          [roleIds]
+        ),
+      ]);
+
+      for (const tag of roleTagsResult.rows) {
+        if (!roleTagsByRole[tag.role_id]) roleTagsByRole[tag.role_id] = [];
+        roleTagsByRole[tag.role_id].push(tag);
+      }
+      for (const badge of roleBadgesResult.rows) {
+        if (!roleBadgesByRole[badge.role_id]) roleBadgesByRole[badge.role_id] = [];
+        roleBadgesByRole[badge.role_id].push(badge);
+      }
+    }
+
+    // Also batch-fetch applicant tags and badges for match scoring
+    const applicantIds = [...new Set(
+      applicationsResult.rows.map((r) => r.applicant_id)
+    )];
+
+    let applicantTagsByUser = {};
+    let applicantBadgesByUser = {};
+
+    if (applicantIds.length > 0 && roleIds.length > 0) {
+      const [appTagsResult, appBadgesResult] = await Promise.all([
+        db.pool.query(
+          `SELECT user_id, tag_id FROM user_tags WHERE user_id = ANY($1)`,
+          [applicantIds]
+        ),
+        db.pool.query(
+          `SELECT DISTINCT ub.user_id, ub.badge_id
+           FROM user_badges ub
+           WHERE ub.user_id = ANY($1)`,
+          [applicantIds]
+        ),
+      ]);
+
+      for (const row of appTagsResult.rows) {
+        if (!applicantTagsByUser[row.user_id]) applicantTagsByUser[row.user_id] = new Set();
+        applicantTagsByUser[row.user_id].add(row.tag_id);
+      }
+      for (const row of appBadgesResult.rows) {
+        if (!applicantBadgesByUser[row.user_id]) applicantBadgesByUser[row.user_id] = new Set();
+        applicantBadgesByUser[row.user_id].add(row.badge_id);
+      }
+    }
+
     const applications = applicationsResult.rows.map((row) => ({
       id: row.id,
       message: row.message,
       status: row.status,
       created_at: row.created_at,
       role: row.role_id
-        ? {
-            id: row.role_id,
-            name: row.role_name,
-          }
+        ? (() => {
+            const roleTags = roleTagsByRole[row.role_id] || [];
+            const roleBadges = roleBadgesByRole[row.role_id] || [];
+            const roleTagIds = roleTags.map((t) => t.tag_id);
+            const roleBadgeIds = roleBadges.map((b) => b.badge_id);
+
+            const userTags = applicantTagsByUser[row.applicant_id] || new Set();
+            const userBadges = applicantBadgesByUser[row.applicant_id] || new Set();
+
+            // Tag score
+            let tagScore = roleTagIds.length > 0
+              ? roleTagIds.filter((id) => userTags.has(id)).length / roleTagIds.length
+              : 0.5;
+
+            // Badge score
+            let badgeScore = roleBadgeIds.length > 0
+              ? roleBadgeIds.filter((id) => userBadges.has(id)).length / roleBadgeIds.length
+              : 0.5;
+
+            // Distance score
+            const { score: distanceScore, distanceKm } = computeDistanceScore({
+              isRemote: row.role_is_remote,
+              userLat: row.applicant_latitude,
+              userLng: row.applicant_longitude,
+              roleLat: row.role_latitude,
+              roleLng: row.role_longitude,
+              maxDistKm: row.role_max_distance_km,
+            });
+
+            const matchScore =
+              WEIGHTS.tags * tagScore +
+              WEIGHTS.badges * badgeScore +
+              WEIGHTS.distance * distanceScore;
+
+            return {
+              id: row.role_id,
+              role_name: row.role_name,
+              bio: row.role_bio,
+              city: row.role_city,
+              country: row.role_country,
+              state: row.role_state,
+              is_remote: row.role_is_remote,
+              latitude: row.role_latitude,
+              longitude: row.role_longitude,
+              max_distance_km: row.role_max_distance_km,
+              status: row.role_status,
+              tags: roleTags,
+              badges: roleBadges,
+              match_score: Math.round(matchScore * 100) / 100,
+              match_details: {
+                tag_score: Math.round(tagScore * 100) / 100,
+                badge_score: Math.round(badgeScore * 100) / 100,
+                distance_score: Math.round(distanceScore * 100) / 100,
+                matching_tags: roleTagIds.filter((id) => userTags.has(id)).length,
+                total_required_tags: roleTagIds.length,
+                matching_badges: roleBadgeIds.filter((id) => userBadges.has(id)).length,
+                total_required_badges: roleBadgeIds.length,
+                distance_km: distanceKm !== null ? Math.round(distanceKm) : null,
+              },
+            };
+          })()
         : null,
       applicant: {
         id: row.applicant_id,
@@ -1983,7 +2224,9 @@ const applyToJoinTeam = async (req, res) => {
   try {
     const teamId = req.params.id;
     const applicantId = req.user.id;
-    const { message, isDraft = false, roleId } = req.body;
+    const message = req.body.message;
+    const isDraft = req.body.isDraft ?? req.body.is_draft ?? false;
+    const roleId = req.body.roleId ?? req.body.role_id ?? null;
     const hasRoleId = roleId !== undefined && roleId !== null && roleId !== "";
     const normalizedRoleId = hasRoleId ? Number(roleId) : null;
 

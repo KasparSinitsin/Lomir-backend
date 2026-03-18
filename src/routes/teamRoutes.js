@@ -45,8 +45,8 @@ router.delete(
 
 // ==================== VACANT ROLE ROUTES ====================
 
-// Get all vacant roles for a team (public)
-router.get("/:teamId/vacant-roles", vacantRoleController.getVacantRoles);
+// Get all vacant roles for a team (public, but enriched with match score if authenticated)
+router.get("/:teamId/vacant-roles", auth.optionalAuthenticateToken, vacantRoleController.getVacantRoles);
 
 // Get a single vacant role by ID (public)
 router.get(
