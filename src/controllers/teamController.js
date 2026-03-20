@@ -499,8 +499,9 @@ const getTeamById = async (req, res) => {
     // Fetch team details with member count
     const teamResult = await db.pool.query(
       `
-      SELECT t.*, 
-             COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count
+      SELECT t.*,
+             COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
+             (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count
       FROM teams t
       LEFT JOIN team_members tm ON t.id = tm.team_id
       WHERE t.id = $1
@@ -652,6 +653,7 @@ const getUserTeams = async (req, res) => {
              t.updated_at, 
              t.postal_code,
              COALESCE(COUNT(DISTINCT tm.user_id), 0) AS current_members_count,
+             (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count,
              tmr.role as user_role
       FROM teams t
       JOIN team_members tmr ON t.id = tmr.team_id AND tmr.user_id = $1
