@@ -532,6 +532,8 @@ router.post(
 );
 
 router.get("/:id/badge-awards", teamController.getTeamBadgeAwards);
+router.get("/:id/member-badges", teamController.getTeamMemberBadges);
+router.get("/:id/member-badge-awards", teamController.getTeamMemberBadgeAwards);
 router.get("/:id", teamController.getTeamById);
 router.put("/:id", auth.authenticateToken, teamController.updateTeam);
 router.delete("/:id", auth.authenticateToken, teamController.deleteTeam);
