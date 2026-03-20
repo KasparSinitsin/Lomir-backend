@@ -3210,11 +3210,169 @@ const getTeamBadgeAwards = async (req, res) => {
   }
 };
 
+/**
+ * @description Get aggregated badge summary for all team members
+ * @route GET /api/teams/:id/member-badges
+ * @access Public
+ *
+ * Returns one row per badge that any team member has earned credits in,
+ * with aggregated totals. Shape matches the per-user badge summary used
+ * by BadgesDisplaySection so the frontend component can be reused as-is.
+ */
+const getTeamMemberBadges = async (req, res) => {
+  try {
+    const teamId = req.params.id;
+
+    const result = await db.pool.query(
+      `
+      WITH badge_totals AS (
+        SELECT
+          b.id                          AS badge_id,
+          b.name,
+          b.description,
+          b.category,
+          b.color,
+          b.image_url,
+          b.cat_image_url,
+          SUM(ba.credits)::int               AS total_credits,
+          COUNT(ba.id)::int                   AS award_count,
+          COUNT(DISTINCT ba.awarded_by_user_id)::int AS awarder_count,
+          COUNT(DISTINCT ba.awarded_to_user_id)::int AS awardee_count
+        FROM badge_awards ba
+        JOIN badges b         ON ba.badge_id = b.id
+        JOIN team_members tm  ON ba.awarded_to_user_id = tm.user_id
+                             AND tm.team_id = $1
+        GROUP BY b.id, b.name, b.description, b.category, b.color,
+                 b.image_url, b.cat_image_url
+      ),
+      category_totals AS (
+        SELECT
+          category,
+          SUM(total_credits)::int          AS category_total_credits,
+          SUM(award_count)::int            AS category_award_count,
+          SUM(awarder_count)::int          AS category_awarder_count
+        FROM badge_totals
+        GROUP BY category
+      )
+      SELECT
+        bt.*,
+        ct.category_total_credits,
+        ct.category_award_count,
+        ct.category_awarder_count
+      FROM badge_totals bt
+      JOIN category_totals ct ON bt.category = ct.category
+      ORDER BY bt.category, bt.total_credits DESC, bt.name
+      `,
+      [teamId],
+    );
+
+    console.log(
+      `🏅 Team ${teamId} aggregated member badges: ${result.rows.length} distinct badges`,
+    );
+
+    const grandTotalCredits = result.rows.reduce(
+      (sum, row) => sum + Number(row.total_credits || 0),
+      0,
+    );
+
+    res.status(200).json({
+      success: true,
+      data: result.rows,
+      meta: { totalCredits: grandTotalCredits },
+    });
+  } catch (error) {
+    console.error("Error fetching team member badges:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching team member badges",
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * @description Get ALL badge awards for team members (not filtered by focus areas)
+ * @route GET /api/teams/:id/member-badge-awards
+ * @access Public
+ *
+ * Used by badge category and badge pill drill-down modals in TeamDetailsModal.
+ * Unlike getTeamBadgeAwards (which filters to focus-area tags), this returns
+ * every badge award earned by any team member.
+ */
+const getTeamMemberBadgeAwards = async (req, res) => {
+  try {
+    const teamId = req.params.id;
+
+    const result = await db.pool.query(
+      `
+      SELECT
+        ba.id AS award_id,
+        b.id AS badge_id,
+        b.name AS badge_name,
+        b.description AS badge_description,
+        b.category AS badge_category,
+        b.image_url AS badge_image_url,
+        b.color AS badge_color,
+        b.cat_image_url AS badge_category_image_url,
+        ba.credits,
+        ba.created_at AS awarded_at,
+        ba.reason,
+        ba.context_type,
+        ba.context_id,
+        ba.custom_team_name,
+        ba.project_name,
+        ba.team_id,
+        COALESCE(t_ctx.name, ba.custom_team_name) AS team_name,
+        ba.tag_id,
+        tag.name AS tag_name,
+        tag.category AS tag_category,
+        ba.awarded_by_user_id,
+        awarder.username AS awarded_by_username,
+        awarder.first_name AS awarded_by_first_name,
+        awarder.last_name AS awarded_by_last_name,
+        awarder.avatar_url AS awarded_by_avatar_url,
+        ba.awarded_to_user_id,
+        recipient.username AS awarded_to_username,
+        recipient.first_name AS awarded_to_first_name,
+        recipient.last_name AS awarded_to_last_name,
+        recipient.avatar_url AS awarded_to_avatar_url
+      FROM badge_awards ba
+      JOIN badges b ON ba.badge_id = b.id
+      JOIN team_members tm ON ba.awarded_to_user_id = tm.user_id AND tm.team_id = $1
+      LEFT JOIN users awarder ON ba.awarded_by_user_id = awarder.id
+      LEFT JOIN users recipient ON ba.awarded_to_user_id = recipient.id
+      LEFT JOIN teams t_ctx ON ba.team_id = t_ctx.id
+      LEFT JOIN tags tag ON ba.tag_id = tag.id
+      ORDER BY ba.created_at DESC, ba.id DESC
+      `,
+      [teamId],
+    );
+
+    console.log(
+      `🏅 Team ${teamId} all member badge awards: ${result.rows.length} rows`,
+    );
+
+    res.status(200).json({
+      success: true,
+      data: result.rows,
+    });
+  } catch (error) {
+    console.error("Error fetching team member badge awards:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching team member badge awards",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   createTeam,
   getAllTeams,
   getTeamById,
   getTeamBadgeAwards,
+  getTeamMemberBadges,
+  getTeamMemberBadgeAwards,
   getUserTeams,
   getUserRoleInTeam,
   updateTeam,
