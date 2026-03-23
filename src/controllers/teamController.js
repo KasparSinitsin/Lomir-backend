@@ -11,6 +11,7 @@ const {
   notifyTeamAdmins,
 } = require("./notificationController");
 const { computeDistanceScore, WEIGHTS } = require("./matchingController");
+const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer");
 
 // Helper function to extract Cloudinary public ID from URL
 const extractCloudinaryPublicId = (url) => {
@@ -746,6 +747,12 @@ const getUserPendingApplications = async (req, res) => {
     vr.state AS role_state, vr.is_remote AS role_is_remote,
     vr.latitude AS role_latitude, vr.longitude AS role_longitude,
     vr.max_distance_km AS role_max_distance_km, vr.status AS role_status,
+    vr.filled_by AS role_filled_by,
+    fu.id AS role_filled_by_user_id,
+    fu.first_name AS role_filled_by_user_first_name,
+    fu.last_name AS role_filled_by_user_last_name,
+    fu.username AS role_filled_by_user_username,
+    fu.avatar_url AS role_filled_by_user_avatar_url,
     t.name, t.description, t.teamavatar_url, t.max_members, t.is_public,
     (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count,
     owner.id as owner_id,
@@ -757,6 +764,7 @@ const getUserPendingApplications = async (req, res) => {
    FROM team_applications ta
    JOIN teams t ON ta.team_id = t.id
    LEFT JOIN team_vacant_roles vr ON ta.role_id = vr.id
+   LEFT JOIN users fu ON vr.filled_by = fu.id
    JOIN team_members tm ON t.id = tm.team_id AND tm.role = 'owner'
    JOIN users owner ON tm.user_id = owner.id
    JOIN users u ON ta.applicant_id = u.id
@@ -850,18 +858,7 @@ const getUserPendingApplications = async (req, res) => {
               WEIGHTS.badges * badgeScore +
               WEIGHTS.distance * distanceScore;
 
-            return {
-              id: row.role_id,
-              role_name: row.role_name,
-              bio: row.role_bio,
-              city: row.role_city,
-              country: row.role_country,
-              state: row.role_state,
-              is_remote: row.role_is_remote,
-              latitude: row.role_latitude,
-              longitude: row.role_longitude,
-              max_distance_km: row.role_max_distance_km,
-              status: row.role_status,
+            return serializeEmbeddedVacantRole(row, {
               tags: roleTags,
               badges: roleBadges,
               match_score: Math.round(matchScore * 100) / 100,
@@ -875,7 +872,7 @@ const getUserPendingApplications = async (req, res) => {
                 total_required_badges: roleBadgeIds.length,
                 distance_km: distanceKm !== null ? Math.round(distanceKm) : null,
               },
-            };
+            });
           })()
         : null,
       team: {
@@ -1634,12 +1631,19 @@ const getTeamApplications = async (req, res) => {
         vr.state AS role_state, vr.is_remote AS role_is_remote,
         vr.latitude AS role_latitude, vr.longitude AS role_longitude,
         vr.max_distance_km AS role_max_distance_km, vr.status AS role_status,
+        vr.filled_by AS role_filled_by,
+        fu.id AS role_filled_by_user_id,
+        fu.first_name AS role_filled_by_user_first_name,
+        fu.last_name AS role_filled_by_user_last_name,
+        fu.username AS role_filled_by_user_username,
+        fu.avatar_url AS role_filled_by_user_avatar_url,
         u.id as applicant_id, u.username, u.first_name, u.last_name,
         u.bio, u.avatar_url, u.postal_code, u.city, u.country, u.state,
         u.latitude AS applicant_latitude, u.longitude AS applicant_longitude
        FROM team_applications ta
        JOIN users u ON ta.applicant_id = u.id
        LEFT JOIN team_vacant_roles vr ON ta.role_id = vr.id
+       LEFT JOIN users fu ON vr.filled_by = fu.id
        WHERE ta.team_id = $1 AND ta.status = 'pending'
        ORDER BY ta.created_at ASC`,
       [teamId],
@@ -1757,18 +1761,7 @@ const getTeamApplications = async (req, res) => {
               WEIGHTS.badges * badgeScore +
               WEIGHTS.distance * distanceScore;
 
-            return {
-              id: row.role_id,
-              role_name: row.role_name,
-              bio: row.role_bio,
-              city: row.role_city,
-              country: row.role_country,
-              state: row.role_state,
-              is_remote: row.role_is_remote,
-              latitude: row.role_latitude,
-              longitude: row.role_longitude,
-              max_distance_km: row.role_max_distance_km,
-              status: row.role_status,
+            return serializeEmbeddedVacantRole(row, {
               tags: roleTags,
               badges: roleBadges,
               match_score: Math.round(matchScore * 100) / 100,
@@ -1782,7 +1775,7 @@ const getTeamApplications = async (req, res) => {
                 total_required_badges: roleBadgeIds.length,
                 distance_km: distanceKm !== null ? Math.round(distanceKm) : null,
               },
-            };
+            });
           })()
         : null,
       applicant: {
