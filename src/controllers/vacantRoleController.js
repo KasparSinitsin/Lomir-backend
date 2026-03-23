@@ -1,6 +1,29 @@
 const db = require("../config/database");
 const { geocodeAddress } = require("../utils/geocodingUtil");
 const { computeDistanceScore, WEIGHTS } = require("./matchingController");
+const { serializeVacantRole } = require("../utils/vacantRoleSerializer");
+
+const VACANT_ROLE_SELECT = `SELECT vr.*,
+              u.first_name AS creator_first_name,
+              u.last_name AS creator_last_name,
+              u.username AS creator_username,
+              fu.id AS filled_by_user_id,
+              fu.first_name AS filled_by_user_first_name,
+              fu.last_name AS filled_by_user_last_name,
+              fu.username AS filled_by_user_username,
+              fu.avatar_url AS filled_by_user_avatar_url
+       FROM team_vacant_roles vr
+       JOIN users u ON vr.created_by = u.id
+       LEFT JOIN users fu ON vr.filled_by = fu.id`;
+
+const VACANT_ROLE_STATUS_SELECT = `SELECT vr.*,
+              fu.id AS filled_by_user_id,
+              fu.first_name AS filled_by_user_first_name,
+              fu.last_name AS filled_by_user_last_name,
+              fu.username AS filled_by_user_username,
+              fu.avatar_url AS filled_by_user_avatar_url
+       FROM team_vacant_roles vr
+       LEFT JOIN users fu ON vr.filled_by = fu.id`;
 
 const fetchRoleTags = async (clientOrPool, roleId) => {
   const result = await clientOrPool.query(
@@ -68,12 +91,7 @@ const getVacantRoles = async (req, res) => {
 
     // Fetch roles
     const rolesResult = await db.pool.query(
-      `SELECT vr.*,
-              u.first_name AS creator_first_name,
-              u.last_name AS creator_last_name,
-              u.username AS creator_username
-       FROM team_vacant_roles vr
-       JOIN users u ON vr.created_by = u.id
+      `${VACANT_ROLE_SELECT}
        WHERE vr.team_id = $1
          AND ($2 = 'all' OR vr.status = $2)
        ORDER BY vr.created_at DESC`,
@@ -164,13 +182,12 @@ const getVacantRoles = async (req, res) => {
       const badges = badgesByRole[role.id] || [];
 
       if (!req.user) {
-        return {
-          ...role,
+        return serializeVacantRole(role, {
           tags,
           badges,
           desiredTags: tags,
           desiredBadges: badges,
-        };
+        });
       }
 
       const roleTagIds = tags.map((t) => t.tag_id);
@@ -198,8 +215,7 @@ const getVacantRoles = async (req, res) => {
         WEIGHTS.badges * badgeScore +
         WEIGHTS.distance * distanceScore;
 
-      return {
-        ...role,
+      return serializeVacantRole(role, {
         tags,
         badges,
         desiredTags: tags,
@@ -215,7 +231,7 @@ const getVacantRoles = async (req, res) => {
           total_required_badges: roleBadgeIds.length,
           distance_km: distanceKm !== null ? Math.round(distanceKm) : null,
         },
-      };
+      });
     });
 
     res.status(200).json({
@@ -241,12 +257,7 @@ const getVacantRoleById = async (req, res) => {
     const { teamId, roleId } = req.params;
 
     const roleResult = await db.pool.query(
-      `SELECT vr.*,
-              u.first_name AS creator_first_name,
-              u.last_name AS creator_last_name,
-              u.username AS creator_username
-       FROM team_vacant_roles vr
-       JOIN users u ON vr.created_by = u.id
+      `${VACANT_ROLE_SELECT}
        WHERE vr.id = $1 AND vr.team_id = $2`,
       [roleId, teamId],
     );
@@ -263,14 +274,14 @@ const getVacantRoleById = async (req, res) => {
     const tags = await fetchRoleTags(db.pool, roleId);
     const badges = await fetchRoleBadges(db.pool, roleId);
 
-    role.tags = tags;
-    role.badges = badges;
-    role.desiredTags = tags;
-    role.desiredBadges = badges;
-
     res.status(200).json({
       success: true,
-      data: role,
+      data: serializeVacantRole(role, {
+        tags,
+        badges,
+        desiredTags: tags,
+        desiredBadges: badges,
+      }),
     });
   } catch (error) {
     console.error("Error fetching vacant role:", error);
@@ -450,7 +461,7 @@ const createVacantRole = async (req, res) => {
       await client.query("COMMIT");
 
       const role = {
-        ...roleResult.rows[0],
+        ...serializeVacantRole(roleResult.rows[0]),
         tags,
         badges,
         desiredTags: tags,
@@ -675,16 +686,16 @@ const updateVacantRole = async (req, res) => {
       await client.query("COMMIT");
 
       // Fetch the full updated role with tags and badges
-  const tags = await fetchRoleTags(db.pool, roleId);
-const badges = await fetchRoleBadges(db.pool, roleId);
+      const tags = await fetchRoleTags(db.pool, roleId);
+      const badges = await fetchRoleBadges(db.pool, roleId);
 
-const updatedRole = {
-  ...roleResult.rows[0],
-  tags,
-  badges,
-  desiredTags: tags,
-  desiredBadges: badges,
-};
+      const updatedRole = {
+        ...serializeVacantRole(roleResult.rows[0]),
+        tags,
+        badges,
+        desiredTags: tags,
+        desiredBadges: badges,
+      };
 
       console.log(`✅ Vacant role ${roleId} updated for team ${teamId}`);
 
@@ -793,7 +804,14 @@ const updateVacantRoleStatus = async (req, res) => {
       });
     }
 
-    // If marking as filled, optionally record who filled it
+    const normalizedFilledBy =
+      status === "filled" &&
+      filled_by !== undefined &&
+      filled_by !== null &&
+      filled_by !== ""
+        ? filled_by
+        : null;
+
     const result = await db.pool.query(
       `UPDATE team_vacant_roles
        SET status = $1,
@@ -801,7 +819,7 @@ const updateVacantRoleStatus = async (req, res) => {
            updated_at = NOW()
        WHERE id = $3 AND team_id = $4
        RETURNING *`,
-      [status, status === "filled" ? filled_by || null : null, roleId, teamId],
+      [status, normalizedFilledBy, roleId, teamId],
     );
 
     if (result.rows.length === 0) {
@@ -811,6 +829,12 @@ const updateVacantRoleStatus = async (req, res) => {
       });
     }
 
+    const updatedRoleResult = await db.pool.query(
+      `${VACANT_ROLE_STATUS_SELECT}
+       WHERE vr.id = $1 AND vr.team_id = $2`,
+      [roleId, teamId],
+    );
+
     console.log(
       `✅ Vacant role ${roleId} status changed to "${status}" in team ${teamId}`,
     );
@@ -818,7 +842,7 @@ const updateVacantRoleStatus = async (req, res) => {
     res.status(200).json({
       success: true,
       message: `Vacant role status updated to "${status}"`,
-      data: result.rows[0],
+      data: serializeVacantRole(updatedRoleResult.rows[0]),
     });
   } catch (error) {
     console.error("Update vacant role status error:", error);
