@@ -1807,6 +1807,7 @@ const handleTeamApplication = async (req, res) => {
   try {
     const applicationId = req.params.applicationId;
     const { action, response } = req.body; // action: 'approve' or 'decline'
+    const fillRole = req.body.fillRole ?? req.body.fill_role ?? false;
     const userId = req.user.id;
 
     // Get application details
@@ -1982,6 +1983,41 @@ const handleTeamApplication = async (req, res) => {
           );
         }
         // === END NOTIFICATION ===
+
+        // Auto-fill the associated vacant role if the application targets one
+        let roleFilled = false;
+        let filledRoleName = null;
+
+        if (application.role_id && fillRole) {
+          const roleUpdateResult = await client.query(
+            `UPDATE team_vacant_roles
+             SET status = 'filled', filled_by = $1, updated_at = NOW()
+             WHERE id = $2 AND team_id = $3 AND status = 'open'
+             RETURNING id, role_name`,
+            [application.applicant_id, application.role_id, application.team_id],
+          );
+          roleFilled = roleUpdateResult.rows.length > 0;
+          filledRoleName = roleFilled ? roleUpdateResult.rows[0].role_name : null;
+        }
+
+        await client.query("COMMIT");
+
+        if (roleFilled) {
+          console.log(
+            `✅ Auto-filled vacant role "${filledRoleName}" (${application.role_id}) with user ${application.applicant_id} in team ${application.team_id}`,
+          );
+        }
+
+        return res.status(200).json({
+          success: true,
+          message: "Application approved successfully",
+          data: {
+            applicationId: parseInt(applicationId),
+            status: "approved",
+            roleFilled,
+            filledRoleName,
+          },
+        });
       } else if (action === "decline") {
         // Get approver's name for the decline message
         const approverName =
