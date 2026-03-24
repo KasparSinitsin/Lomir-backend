@@ -760,7 +760,11 @@ const getUserPendingApplications = async (req, res) => {
     owner.first_name as owner_first_name,
     owner.last_name as owner_last_name,
     owner.avatar_url as owner_avatar_url,
-    u.latitude AS applicant_latitude, u.longitude AS applicant_longitude
+    u.latitude AS applicant_latitude, u.longitude AS applicant_longitude,
+    EXISTS (
+      SELECT 1 FROM team_members
+      WHERE team_id = t.id AND user_id = $1
+    ) AS is_team_member
    FROM team_applications ta
    JOIN teams t ON ta.team_id = t.id
    LEFT JOIN team_vacant_roles vr ON ta.role_id = vr.id
@@ -829,6 +833,7 @@ const getUserPendingApplications = async (req, res) => {
       message: row.message,
       status: row.status,
       created_at: row.created_at,
+      isInternalRoleApplication: row.is_team_member === true && row.role_id != null,
       role: row.role_id
         ? (() => {
             const roleTags = roleTagsByRole[row.role_id] || [];
@@ -1854,41 +1859,51 @@ const handleTeamApplication = async (req, res) => {
       await client.query("BEGIN");
 
       if (action === "approve") {
-        // Check if team is full
-        const memberCountResult = await client.query(
-          `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
-          [application.team_id],
+        // Check if applicant is already a member (internal role application)
+        const existingMember = await client.query(
+          `SELECT id FROM team_members WHERE team_id = $1 AND user_id = $2`,
+          [application.team_id, application.applicant_id]
         );
 
-        if (
-          application.max_members !== null &&
-          parseInt(memberCountResult.rows[0].count) >= application.max_members
-        ) {
-          await client.query("ROLLBACK");
-          return res.status(400).json({
-            success: false,
-            message: "Team is already at maximum capacity",
-          });
+        const isInternalRoleApp = existingMember.rows.length > 0;
+
+        if (!isInternalRoleApp) {
+          // External application — check capacity and add to team
+          const memberCountResult = await client.query(
+            `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
+            [application.team_id],
+          );
+
+          if (
+            application.max_members !== null &&
+            parseInt(memberCountResult.rows[0].count) >= application.max_members
+          ) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({
+              success: false,
+              message: "Team is already at maximum capacity",
+            });
+          }
+
+          // Add user to team
+          await client.query(
+            `INSERT INTO team_members (team_id, user_id, role, joined_at)
+     VALUES ($1, $2, 'member', NOW())`,
+            [application.team_id, application.applicant_id],
+          );
+
+          // Clean up any pending invitations for this user to this team
+          await client.query(
+            `UPDATE team_invitations
+     SET status = 'accepted', responded_at = NOW()
+     WHERE team_id = $1 AND invitee_id = $2 AND status = 'pending'`,
+            [application.team_id, application.applicant_id],
+          );
         }
 
-        // Add user to team
+        // Update application status — runs for both internal and external
         await client.query(
-          `INSERT INTO team_members (team_id, user_id, role, joined_at)
-   VALUES ($1, $2, 'member', NOW())`,
-          [application.team_id, application.applicant_id],
-        );
-
-        // Clean up any pending invitations for this user to this team
-        await client.query(
-          `UPDATE team_invitations 
-   SET status = 'accepted', responded_at = NOW()
-   WHERE team_id = $1 AND invitee_id = $2 AND status = 'pending'`,
-          [application.team_id, application.applicant_id],
-        );
-
-        // Update application status
-        await client.query(
-          `UPDATE team_applications 
+          `UPDATE team_applications
    SET status = 'approved', reviewed_at = NOW(), reviewed_by = $1
    WHERE id = $2`,
           [userId, applicationId],
@@ -1905,7 +1920,18 @@ const handleTeamApplication = async (req, res) => {
             ? `${approver.first_name} ${approver.last_name}`
             : approver.username;
 
-        const systemMessage = `🎉 ${applicantName} has applied successfully to your team and has been added as a team member by ${approverName}. Say hello to them!`;
+        let roleName = null;
+        if (application.role_id) {
+          const roleResult = await client.query(
+            `SELECT role_name FROM team_vacant_roles WHERE id = $1`,
+            [application.role_id]
+          );
+          roleName = roleResult.rows[0]?.role_name ?? null;
+        }
+
+        const systemMessage = isInternalRoleApp && roleName
+          ? `${applicantName}'s application for ${roleName} was approved`
+          : `🎉 ${applicantName} has applied successfully to your team and has been added as a team member by ${approverName}. Say hello to them!`;
 
         await client.query(
           `INSERT INTO messages (sender_id, team_id, content, sent_at)
@@ -2324,41 +2350,61 @@ const applyToJoinTeam = async (req, res) => {
       [teamId, applicantId],
     );
 
-    if (memberCheck.rows.length > 0) {
+    const isAlreadyMember = memberCheck.rows.length > 0;
+
+    if (isAlreadyMember && !normalizedRoleId) {
       return res.status(400).json({
         success: false,
-        message: "You are already a member of this team",
+        message: "You are already a member of this team. To apply for a role, please select a specific vacant role.",
       });
     }
 
-    // Check if team is full
-    const memberCount = await db.pool.query(
-      `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
-      [teamId],
-    );
+    if (!isAlreadyMember) {
+      // Check if team is full
+      const memberCount = await db.pool.query(
+        `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
+        [teamId],
+      );
 
-    if (
-      team.max_members !== null &&
-      parseInt(memberCount.rows[0].count) >= team.max_members
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Team is already at maximum capacity",
-      });
+      if (
+        team.max_members !== null &&
+        parseInt(memberCount.rows[0].count) >= team.max_members
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Team is already at maximum capacity",
+        });
+      }
     }
 
-    // Check if user already has a pending application
-    const existingApplicationCheck = await db.pool.query(
-      `SELECT id FROM team_applications 
-       WHERE team_id = $1 AND applicant_id = $2 AND status = 'pending'`,
-      [teamId, applicantId],
-    );
+    if (isAlreadyMember && normalizedRoleId) {
+      // Internal role application — check for duplicate role-specific application
+      const existingRoleAppCheck = await db.pool.query(
+        `SELECT id FROM team_applications
+         WHERE team_id = $1 AND applicant_id = $2 AND role_id = $3 AND status = 'pending'`,
+        [teamId, applicantId, normalizedRoleId],
+      );
 
-    if (existingApplicationCheck.rows.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: "You already have a pending application for this team",
-      });
+      if (existingRoleAppCheck.rows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: "You already have a pending application for this role",
+        });
+      }
+    } else if (!isAlreadyMember) {
+      // External application — keep existing general duplicate check
+      const existingApplicationCheck = await db.pool.query(
+        `SELECT id FROM team_applications
+         WHERE team_id = $1 AND applicant_id = $2 AND status = 'pending'`,
+        [teamId, applicantId],
+      );
+
+      if (existingApplicationCheck.rows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: "You already have a pending application for this team",
+        });
+      }
     }
 
     const client = await db.pool.connect();
@@ -2369,8 +2415,6 @@ const applyToJoinTeam = async (req, res) => {
       const applicationResult = await client.query(
         `INSERT INTO team_applications (team_id, applicant_id, message, status, role_id, created_at)
          VALUES ($1, $2, $3, $4, $5, NOW())
-         ON CONFLICT (team_id, applicant_id) 
-         DO UPDATE SET message = $3, status = $4, role_id = $5, updated_at = NOW()
          RETURNING id`,
         [
           teamId,
@@ -2400,7 +2444,9 @@ const applyToJoinTeam = async (req, res) => {
           await notifyTeamAdmins({
             teamId: parseInt(teamId),
             type: "application_received",
-            title: `${applicantName} applied to join ${team.name}`,
+            title: isAlreadyMember
+              ? `${applicantName} applied for a role in ${team.name}`
+              : `${applicantName} applied to join ${team.name}`,
             message: message || null,
             referenceType: "team_application",
             referenceId: applicationResult.rows[0].id,
@@ -2424,14 +2470,21 @@ const applyToJoinTeam = async (req, res) => {
       }
       // === END NOTIFICATION ===
 
+      if (isAlreadyMember) {
+        console.log(
+          `📋 Internal role application: user ${applicantId} applied for role ${normalizedRoleId} in team ${teamId}`
+        );
+      }
+
       res.status(201).json({
         success: true,
-        message: isDraft
-          ? "Application draft saved successfully"
-          : "Application sent successfully",
+        message: isAlreadyMember
+          ? (isDraft ? "Role application draft saved" : "Role application sent to the team owner and admins")
+          : (isDraft ? "Application draft saved successfully" : "Application sent successfully"),
         data: {
           applicationId: applicationResult.rows[0].id,
           status: isDraft ? "draft" : "pending",
+          isInternalRoleApplication: isAlreadyMember,
         },
       });
     } catch (dbError) {
