@@ -178,3 +178,114 @@ test("applyToJoinTeam rejects roleId values that do not point to an open role on
   assert.match(res.body.message, /Vacant role not found/i);
   assert.equal(connectCalled, false);
 });
+
+function buildPoolQueryStubAsMember({ pendingRoleRows = [] } = {}) {
+  const calls = [];
+
+  const query = async (sql, params = []) => {
+    calls.push({ sql, params });
+
+    if (sql.includes("FROM teams") && sql.includes("archived_at IS NULL")) {
+      return { rows: [{ id: 42, name: "Alpha", owner_id: 2, max_members: 5 }] };
+    }
+
+    if (sql.includes("FROM team_vacant_roles")) {
+      return { rows: [{ id: 9 }] };
+    }
+
+    if (sql.includes("FROM team_members WHERE team_id = $1 AND user_id = $2")) {
+      // User IS already a member
+      return { rows: [{ id: 77 }] };
+    }
+
+    if (
+      sql.includes("FROM team_applications") &&
+      sql.includes("role_id = $3") &&
+      sql.includes("status = 'pending'")
+    ) {
+      return { rows: pendingRoleRows };
+    }
+
+    if (sql.includes("FROM users WHERE id = $1")) {
+      return { rows: [{ first_name: "Test", last_name: "User", username: "testuser" }] };
+    }
+
+    throw new Error(`Unexpected pool SQL in member stub: ${sql}`);
+  };
+
+  return { query, calls };
+}
+
+test("applyToJoinTeam allows an existing member to apply for a specific role", async () => {
+  const { query } = buildPoolQueryStubAsMember();
+  const { client, calls: clientCalls } = buildClientStub();
+
+  db.pool.query = query;
+  db.pool.connect = async () => client;
+
+  const req = createRequest({
+    message: "I want to take on this role.",
+    isDraft: false,
+    roleId: 9,
+  });
+  const res = createResponse();
+
+  await teamController.applyToJoinTeam(req, res);
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.body.success, true);
+  assert.equal(res.body.data.isInternalRoleApplication, true);
+
+  const insertCall = clientCalls.find(({ sql }) =>
+    sql.includes("INSERT INTO team_applications"),
+  );
+  assert.ok(insertCall);
+  assert.equal(insertCall.params[4], 9);
+});
+
+test("applyToJoinTeam rejects a member applying without a roleId", async () => {
+  const { query } = buildPoolQueryStubAsMember();
+  let connectCalled = false;
+
+  db.pool.query = query;
+  db.pool.connect = async () => {
+    connectCalled = true;
+    throw new Error("connect should not be called");
+  };
+
+  const req = createRequest({
+    message: "I want to join again.",
+  });
+  const res = createResponse();
+
+  await teamController.applyToJoinTeam(req, res);
+
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.success, false);
+  assert.match(res.body.message, /already a member/i);
+  assert.equal(connectCalled, false);
+});
+
+test("applyToJoinTeam rejects duplicate internal role application for same role", async () => {
+  const { query } = buildPoolQueryStubAsMember({ pendingRoleRows: [{ id: 55 }] });
+  let connectCalled = false;
+
+  db.pool.query = query;
+  db.pool.connect = async () => {
+    connectCalled = true;
+    throw new Error("connect should not be called");
+  };
+
+  const req = createRequest({
+    message: "I want this role.",
+    roleId: 9,
+  });
+  const res = createResponse();
+
+  await teamController.applyToJoinTeam(req, res);
+
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.success, false);
+  assert.match(res.body.message, /already have a pending application for this role/i);
+  assert.equal(connectCalled, false);
+});
