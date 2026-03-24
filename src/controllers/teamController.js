@@ -1846,6 +1846,13 @@ const handleTeamApplication = async (req, res) => {
       });
     }
 
+    if (userId === application.applicant_id) {
+      return res.status(403).json({
+        success: false,
+        message: "You cannot approve or decline your own application. Another team owner or admin must review it.",
+      });
+    }
+
     // Get approver's name
     const approverResult = await db.pool.query(
       `SELECT first_name, last_name, username FROM users WHERE id = $1`,
