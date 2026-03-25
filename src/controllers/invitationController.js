@@ -11,13 +11,24 @@ const sendTeamInvitation = async (req, res) => {
   try {
     const teamId = req.params.teamId;
     const inviterId = req.user.id;
-    const { inviteeId, invitee_id, message = "" } = req.body;
+    const { inviteeId, invitee_id, roleId, role_id, message = "" } = req.body;
     const finalInviteeId = inviteeId || invitee_id;
+    const rawRoleId = roleId ?? role_id ?? null;
+    const hasRoleId =
+      rawRoleId !== undefined && rawRoleId !== null && rawRoleId !== "";
+    const finalRoleId = hasRoleId ? Number(rawRoleId) : null;
 
     if (!finalInviteeId) {
       return res.status(400).json({
         success: false,
         message: "Invitee ID is required",
+      });
+    }
+
+    if (hasRoleId && (!Number.isInteger(finalRoleId) || finalRoleId <= 0)) {
+      return res.status(400).json({
+        success: false,
+        message: "roleId must be a positive integer when provided",
       });
     }
 
@@ -48,6 +59,29 @@ const sendTeamInvitation = async (req, res) => {
         success: false,
         message: "Only team owners and admins can send invitations",
       });
+    }
+
+    if (finalRoleId !== null) {
+      const roleCheck = await db.pool.query(
+        `SELECT id, status
+         FROM team_vacant_roles
+         WHERE id = $1 AND team_id = $2`,
+        [finalRoleId, teamId],
+      );
+
+      if (roleCheck.rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Vacant role not found for this team",
+        });
+      }
+
+      if (roleCheck.rows[0].status !== "open") {
+        return res.status(400).json({
+          success: false,
+          message: "Vacant role is no longer open",
+        });
+      }
     }
 
     // Check if invitee exists
@@ -129,10 +163,10 @@ const sendTeamInvitation = async (req, res) => {
 
     // Create the invitation
     const invitationResult = await db.pool.query(
-      `INSERT INTO team_invitations (team_id, inviter_id, invitee_id, message, status, created_at)
-       VALUES ($1, $2, $3, $4, 'pending', NOW())
+      `INSERT INTO team_invitations (team_id, inviter_id, invitee_id, message, status, role_id, created_at)
+       VALUES ($1, $2, $3, $4, 'pending', $5, NOW())
        RETURNING id`,
-      [teamId, inviterId, finalInviteeId, message.trim()],
+      [teamId, inviterId, finalInviteeId, message.trim(), finalRoleId],
     );
 
     // === CREATE NOTIFICATION FOR INVITEE ===
@@ -202,15 +236,17 @@ const getUserReceivedInvitations = async (req, res) => {
 
     const invitationsResult = await db.pool.query(
       `SELECT 
-        ti.id, ti.message, ti.status, ti.created_at,
+        ti.id, ti.message, ti.status, ti.created_at, ti.role_id,
         t.id as team_id, t.name as team_name, t.description as team_description,
         t.teamavatar_url, t.max_members, t.is_public,
         (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count,
+        vr.role_name,
         u.id as inviter_id, u.username as inviter_username, 
         u.first_name as inviter_first_name, u.last_name as inviter_last_name,
         u.avatar_url as inviter_avatar_url
        FROM team_invitations ti
        JOIN teams t ON ti.team_id = t.id
+       LEFT JOIN team_vacant_roles vr ON ti.role_id = vr.id
        JOIN users u ON ti.inviter_id = u.id
        WHERE ti.invitee_id = $1 
        AND ti.status = 'pending'
@@ -228,6 +264,8 @@ const getUserReceivedInvitations = async (req, res) => {
       message: row.message,
       status: row.status,
       created_at: row.created_at,
+      role_id: row.role_id === null ? null : parseInt(row.role_id),
+      role_name: row.role_name,
       team: {
         id: row.team_id,
         name: row.team_name,
@@ -284,7 +322,8 @@ const getTeamSentInvitations = async (req, res) => {
 
     const invitationsResult = await db.pool.query(
       `SELECT 
-    ti.id, ti.message, ti.status, ti.created_at,
+    ti.id, ti.message, ti.status, ti.created_at, ti.role_id,
+    vr.role_name,
     u.id as invitee_id, u.username, u.first_name, u.last_name,
     u.avatar_url, u.bio, u.postal_code,
     inv.id as inviter_id,
@@ -293,6 +332,7 @@ const getTeamSentInvitations = async (req, res) => {
     inv.last_name as inviter_last_name,
     inv.avatar_url as inviter_avatar_url
    FROM team_invitations ti
+   LEFT JOIN team_vacant_roles vr ON ti.role_id = vr.id
    JOIN users u ON ti.invitee_id = u.id
    JOIN users inv ON ti.inviter_id = inv.id
    WHERE ti.team_id = $1 AND ti.status = 'pending'
@@ -305,6 +345,8 @@ const getTeamSentInvitations = async (req, res) => {
       message: row.message,
       status: row.status,
       created_at: row.created_at,
+      role_id: row.role_id === null ? null : parseInt(row.role_id),
+      role_name: row.role_name,
       invitee: {
         id: row.invitee_id,
         username: row.username,
