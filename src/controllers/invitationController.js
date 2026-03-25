@@ -637,7 +637,8 @@ const respondToInvitation = async (req, res) => {
   try {
     const invitationId = req.params.invitationId;
     const userId = req.user.id;
-    const { action, response_message } = req.body; // Add response_message
+    const { action, response_message } = req.body;
+    const fillRole = req.body.fill_role ?? req.body.fillRole ?? false;
 
     if (!["accept", "decline"].includes(action)) {
       return res.status(400).json({
@@ -671,6 +672,9 @@ const respondToInvitation = async (req, res) => {
     try {
       await client.query("BEGIN");
 
+      let roleFilled = false;
+      let filledRoleName = null;
+
       if (action === "accept") {
         // Check if team is still not full
         const memberCount = await client.query(
@@ -698,39 +702,48 @@ const respondToInvitation = async (req, res) => {
 
         // Update invitation status
         await client.query(
-          `UPDATE team_invitations 
+          `UPDATE team_invitations
            SET status = 'accepted', responded_at = NOW()
            WHERE id = $1`,
           [invitationId],
         );
 
-        // If there's a response message, add it to the TEAM CHAT
-        if (response_message && response_message.trim()) {
-          // Always add join message to TEAM CHAT
-          const inviteeName =
-            invitation.invitee_first_name && invitation.invitee_last_name
-              ? `${invitation.invitee_first_name} ${invitation.invitee_last_name}`
-              : invitation.invitee_username;
-
-          const formattedMessage =
-            response_message && response_message.trim()
-              ? `👋 ${inviteeName} joined the team!\n\n"${response_message.trim()}"`
-              : `👋 ${inviteeName} joined the team!`;
-
-          await client.query(
-            `INSERT INTO messages (sender_id, team_id, content, sent_at)
-           VALUES ($1, $2, $3, NOW())`,
-            [userId, invitation.team_id, formattedMessage],
+        // Auto-fill the associated vacant role if requested
+        if (invitation.role_id && fillRole) {
+          const roleUpdateResult = await client.query(
+            `UPDATE team_vacant_roles
+             SET status = 'filled', filled_by = $1, updated_at = NOW()
+             WHERE id = $2 AND team_id = $3 AND status = 'open'
+             RETURNING id, role_name`,
+            [userId, invitation.role_id, invitation.team_id],
           );
+          roleFilled = roleUpdateResult.rows.length > 0;
+          filledRoleName = roleFilled
+            ? roleUpdateResult.rows[0].role_name
+            : null;
         }
+
+        const inviteeName =
+          invitation.invitee_first_name && invitation.invitee_last_name
+            ? `${invitation.invitee_first_name} ${invitation.invitee_last_name}`
+            : invitation.invitee_username;
+
+        const joinLine = roleFilled
+          ? `👋 ${inviteeName} joined the team as ${filledRoleName}!`
+          : `👋 ${inviteeName} joined the team!`;
+        const formattedMessage =
+          response_message && response_message.trim()
+            ? `${joinLine}\n\n"${response_message.trim()}"`
+            : joinLine;
+
+        await client.query(
+          `INSERT INTO messages (sender_id, team_id, content, sent_at)
+           VALUES ($1, $2, $3, NOW())`,
+          [userId, invitation.team_id, formattedMessage],
+        );
 
         // === CREATE NOTIFICATIONS FOR TEAM MEMBERS ===
         try {
-          const inviteeName =
-            invitation.invitee_first_name && invitation.invitee_last_name
-              ? `${invitation.invitee_first_name} ${invitation.invitee_last_name}`
-              : invitation.invitee_username;
-
           await notifyTeamMembers({
             teamId: invitation.team_id,
             excludeUserId: userId,
@@ -748,6 +761,28 @@ const respondToInvitation = async (req, res) => {
               type: "member_joined",
               teamId: invitation.team_id,
             });
+          }
+
+          // Notify the inviter if the role was filled
+          if (roleFilled) {
+            await createNotification({
+              userId: invitation.inviter_id,
+              type: "invitation_accepted",
+              title: `${inviteeName} accepted your invitation and joined ${invitation.team_name} as ${filledRoleName}`,
+              referenceType: "team_invitation",
+              referenceId: parseInt(invitationId),
+              teamId: invitation.team_id,
+              actorId: userId,
+            });
+
+            if (io) {
+              io.to(`user:${invitation.inviter_id}`).emit("notification:new", {
+                type: "invitation_accepted",
+                teamId: invitation.team_id,
+                roleFilled,
+                filledRoleName,
+              });
+            }
           }
         } catch (notificationError) {
           console.error("Error creating join notification:", notificationError);
@@ -845,6 +880,10 @@ const respondToInvitation = async (req, res) => {
           action === "accept"
             ? `You have joined ${invitation.team_name}!`
             : "Invitation declined",
+        data: {
+          roleFilled,
+          filledRoleName,
+        },
       });
     } catch (dbError) {
       await client.query("ROLLBACK");
