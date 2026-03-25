@@ -201,7 +201,7 @@ const getVacantRoles = async (req, res) => {
         ? roleBadgeIds.filter((id) => userBadgeIds.has(id)).length / roleBadgeIds.length
         : 0.5;
 
-      const { score: distanceScore, distanceKm } = computeDistanceScore({
+      const { score: distanceScore, distanceKm, isWithinRange } = computeDistanceScore({
         isRemote: role.is_remote,
         userLat,
         userLng,
@@ -230,6 +230,8 @@ const getVacantRoles = async (req, res) => {
           matching_badges: roleBadgeIds.filter((id) => userBadgeIds.has(id)).length,
           total_required_badges: roleBadgeIds.length,
           distance_km: distanceKm !== null ? Math.round(distanceKm) : null,
+          max_distance_km: role.max_distance_km,
+          is_within_range: isWithinRange,
         },
       });
     });

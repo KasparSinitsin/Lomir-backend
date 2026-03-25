@@ -3,6 +3,8 @@ const {
   createNotification,
   notifyTeamMembers,
 } = require("./notificationController");
+const { computeDistanceScore, WEIGHTS } = require("./matchingController");
+const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer");
 
 /**
  * Send a team invitation to a user
@@ -235,29 +237,99 @@ const getUserReceivedInvitations = async (req, res) => {
     const userId = req.user.id;
 
     const invitationsResult = await db.pool.query(
-      `SELECT 
+      `SELECT
         ti.id, ti.message, ti.status, ti.created_at, ti.role_id,
         t.id as team_id, t.name as team_name, t.description as team_description,
         t.teamavatar_url, t.max_members, t.is_public,
         (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count,
         vr.role_name,
-        u.id as inviter_id, u.username as inviter_username, 
+        vr.bio as role_bio,
+        vr.city as role_city, vr.country as role_country, vr.state as role_state,
+        vr.is_remote as role_is_remote,
+        vr.latitude as role_latitude, vr.longitude as role_longitude,
+        vr.max_distance_km as role_max_distance_km,
+        vr.status as role_status,
+        u.id as inviter_id, u.username as inviter_username,
         u.first_name as inviter_first_name, u.last_name as inviter_last_name,
         u.avatar_url as inviter_avatar_url
        FROM team_invitations ti
        JOIN teams t ON ti.team_id = t.id
        LEFT JOIN team_vacant_roles vr ON ti.role_id = vr.id
        JOIN users u ON ti.inviter_id = u.id
-       WHERE ti.invitee_id = $1 
+       WHERE ti.invitee_id = $1
        AND ti.status = 'pending'
        AND t.archived_at IS NULL
        AND NOT EXISTS (
-         SELECT 1 FROM team_members tm 
+         SELECT 1 FROM team_members tm
          WHERE tm.team_id = t.id AND tm.user_id = $1
        )
        ORDER BY ti.created_at DESC`,
       [userId],
     );
+
+    // Batch-fetch role tags/badges + current user data for match scoring
+    const roleIds = [...new Set(
+      invitationsResult.rows.map((r) => r.role_id).filter(Boolean)
+    )];
+
+    let roleTagsByRole = {};
+    let roleBadgesByRole = {};
+    let currentUserTags = new Set();
+    let currentUserBadges = new Set();
+    let currentUserLat = null;
+    let currentUserLng = null;
+
+    if (roleIds.length > 0) {
+      const [roleTagsResult, roleBadgesResult, userLocationResult, userTagsResult, userBadgesResult] = await Promise.all([
+        db.pool.query(
+          `SELECT vrt.role_id, t.id AS tag_id, t.name, t.category, t.supercategory
+           FROM team_vacant_role_tags vrt
+           JOIN tags t ON vrt.tag_id = t.id
+           WHERE vrt.role_id = ANY($1)
+           ORDER BY t.supercategory, t.category, t.name`,
+          [roleIds]
+        ),
+        db.pool.query(
+          `SELECT vrb.role_id, b.id AS badge_id, b.name, b.category, b.color, b.image_url, b.cat_image_url
+           FROM team_vacant_role_badges vrb
+           JOIN badges b ON vrb.badge_id = b.id
+           WHERE vrb.role_id = ANY($1)
+           ORDER BY b.category, b.name`,
+          [roleIds]
+        ),
+        db.pool.query(
+          `SELECT latitude, longitude FROM users WHERE id = $1`,
+          [userId]
+        ),
+        db.pool.query(
+          `SELECT tag_id FROM user_tags WHERE user_id = $1`,
+          [userId]
+        ),
+        db.pool.query(
+          `SELECT DISTINCT badge_id FROM user_badges WHERE user_id = $1`,
+          [userId]
+        ),
+      ]);
+
+      for (const tag of roleTagsResult.rows) {
+        if (!roleTagsByRole[tag.role_id]) roleTagsByRole[tag.role_id] = [];
+        roleTagsByRole[tag.role_id].push(tag);
+      }
+      for (const badge of roleBadgesResult.rows) {
+        if (!roleBadgesByRole[badge.role_id]) roleBadgesByRole[badge.role_id] = [];
+        roleBadgesByRole[badge.role_id].push(badge);
+      }
+      if (userLocationResult.rows.length > 0) {
+        currentUserLat = userLocationResult.rows[0].latitude;
+        currentUserLng = userLocationResult.rows[0].longitude;
+      }
+      for (const row of userTagsResult.rows) {
+        currentUserTags.add(row.tag_id);
+      }
+      for (const row of userBadgesResult.rows) {
+        currentUserBadges.add(row.badge_id);
+      }
+    }
 
     const invitations = invitationsResult.rows.map((row) => ({
       id: row.id,
@@ -266,6 +338,54 @@ const getUserReceivedInvitations = async (req, res) => {
       created_at: row.created_at,
       role_id: row.role_id === null ? null : parseInt(row.role_id),
       role_name: row.role_name,
+      role: row.role_id
+        ? (() => {
+            const roleTags = roleTagsByRole[row.role_id] || [];
+            const roleBadges = roleBadgesByRole[row.role_id] || [];
+            const roleTagIds = roleTags.map((t) => t.tag_id);
+            const roleBadgeIds = roleBadges.map((b) => b.badge_id);
+
+            const tagScore = roleTagIds.length > 0
+              ? roleTagIds.filter((id) => currentUserTags.has(id)).length / roleTagIds.length
+              : 0.5;
+
+            const badgeScore = roleBadgeIds.length > 0
+              ? roleBadgeIds.filter((id) => currentUserBadges.has(id)).length / roleBadgeIds.length
+              : 0.5;
+
+            const { score: distanceScore, distanceKm, isWithinRange } = computeDistanceScore({
+              isRemote: row.role_is_remote,
+              userLat: currentUserLat,
+              userLng: currentUserLng,
+              roleLat: row.role_latitude,
+              roleLng: row.role_longitude,
+              maxDistKm: row.role_max_distance_km,
+            });
+
+            const matchScore =
+              WEIGHTS.tags * tagScore +
+              WEIGHTS.badges * badgeScore +
+              WEIGHTS.distance * distanceScore;
+
+            return serializeEmbeddedVacantRole(row, {
+              tags: roleTags,
+              badges: roleBadges,
+              match_score: Math.round(matchScore * 100) / 100,
+              match_details: {
+                tag_score: Math.round(tagScore * 100) / 100,
+                badge_score: Math.round(badgeScore * 100) / 100,
+                distance_score: Math.round(distanceScore * 100) / 100,
+                matching_tags: roleTagIds.filter((id) => currentUserTags.has(id)).length,
+                total_required_tags: roleTagIds.length,
+                matching_badges: roleBadgeIds.filter((id) => currentUserBadges.has(id)).length,
+                total_required_badges: roleBadgeIds.length,
+                distance_km: distanceKm !== null ? Math.round(distanceKm) : null,
+                max_distance_km: row.role_max_distance_km,
+                is_within_range: isWithinRange,
+              },
+            });
+          })()
+        : null,
       team: {
         id: row.team_id,
         name: row.team_name,
@@ -321,11 +441,18 @@ const getTeamSentInvitations = async (req, res) => {
     }
 
     const invitationsResult = await db.pool.query(
-      `SELECT 
+      `SELECT
     ti.id, ti.message, ti.status, ti.created_at, ti.role_id,
     vr.role_name,
+    vr.bio as role_bio,
+    vr.city as role_city, vr.country as role_country, vr.state as role_state,
+    vr.is_remote as role_is_remote,
+    vr.latitude as role_latitude, vr.longitude as role_longitude,
+    vr.max_distance_km as role_max_distance_km,
+    vr.status as role_status,
     u.id as invitee_id, u.username, u.first_name, u.last_name,
     u.avatar_url, u.bio, u.postal_code,
+    u.latitude as invitee_latitude, u.longitude as invitee_longitude,
     inv.id as inviter_id,
     inv.username as inviter_username,
     inv.first_name as inviter_first_name,
@@ -340,6 +467,78 @@ const getTeamSentInvitations = async (req, res) => {
       [teamId],
     );
 
+    // Batch-fetch role tags and badges for role-linked invitations
+    const roleIds = [...new Set(
+      invitationsResult.rows.map((r) => r.role_id).filter(Boolean)
+    )];
+
+    let roleTagsByRole = {};
+    let roleBadgesByRole = {};
+
+    if (roleIds.length > 0) {
+      const [roleTagsResult, roleBadgesResult] = await Promise.all([
+        db.pool.query(
+          `SELECT vrt.role_id, t.id AS tag_id, t.name, t.category, t.supercategory
+           FROM team_vacant_role_tags vrt
+           JOIN tags t ON vrt.tag_id = t.id
+           WHERE vrt.role_id = ANY($1)
+           ORDER BY t.supercategory, t.category, t.name`,
+          [roleIds]
+        ),
+        db.pool.query(
+          `SELECT vrb.role_id, b.id AS badge_id, b.name, b.category, b.color, b.image_url, b.cat_image_url
+           FROM team_vacant_role_badges vrb
+           JOIN badges b ON vrb.badge_id = b.id
+           WHERE vrb.role_id = ANY($1)
+           ORDER BY b.category, b.name`,
+          [roleIds]
+        ),
+      ]);
+
+      for (const tag of roleTagsResult.rows) {
+        if (!roleTagsByRole[tag.role_id]) roleTagsByRole[tag.role_id] = [];
+        roleTagsByRole[tag.role_id].push(tag);
+      }
+      for (const badge of roleBadgesResult.rows) {
+        if (!roleBadgesByRole[badge.role_id]) roleBadgesByRole[badge.role_id] = [];
+        roleBadgesByRole[badge.role_id].push(badge);
+      }
+    }
+
+    // Batch-fetch invitee tags and badges for match scoring
+    const inviteeIds = [...new Set(
+      invitationsResult.rows
+        .filter((r) => r.role_id)
+        .map((r) => r.invitee_id)
+    )];
+
+    let inviteeTagsByUser = {};
+    let inviteeBadgesByUser = {};
+
+    if (inviteeIds.length > 0 && roleIds.length > 0) {
+      const [inviteeTagsResult, inviteeBadgesResult] = await Promise.all([
+        db.pool.query(
+          `SELECT user_id, tag_id FROM user_tags WHERE user_id = ANY($1)`,
+          [inviteeIds]
+        ),
+        db.pool.query(
+          `SELECT DISTINCT ub.user_id, ub.badge_id
+           FROM user_badges ub
+           WHERE ub.user_id = ANY($1)`,
+          [inviteeIds]
+        ),
+      ]);
+
+      for (const row of inviteeTagsResult.rows) {
+        if (!inviteeTagsByUser[row.user_id]) inviteeTagsByUser[row.user_id] = new Set();
+        inviteeTagsByUser[row.user_id].add(row.tag_id);
+      }
+      for (const row of inviteeBadgesResult.rows) {
+        if (!inviteeBadgesByUser[row.user_id]) inviteeBadgesByUser[row.user_id] = new Set();
+        inviteeBadgesByUser[row.user_id].add(row.badge_id);
+      }
+    }
+
     const invitations = invitationsResult.rows.map((row) => ({
       id: row.id,
       message: row.message,
@@ -347,6 +546,57 @@ const getTeamSentInvitations = async (req, res) => {
       created_at: row.created_at,
       role_id: row.role_id === null ? null : parseInt(row.role_id),
       role_name: row.role_name,
+      role: row.role_id
+        ? (() => {
+            const roleTags = roleTagsByRole[row.role_id] || [];
+            const roleBadges = roleBadgesByRole[row.role_id] || [];
+            const roleTagIds = roleTags.map((t) => t.tag_id);
+            const roleBadgeIds = roleBadges.map((b) => b.badge_id);
+
+            const userTags = inviteeTagsByUser[row.invitee_id] || new Set();
+            const userBadges = inviteeBadgesByUser[row.invitee_id] || new Set();
+
+            const tagScore = roleTagIds.length > 0
+              ? roleTagIds.filter((id) => userTags.has(id)).length / roleTagIds.length
+              : 0.5;
+
+            const badgeScore = roleBadgeIds.length > 0
+              ? roleBadgeIds.filter((id) => userBadges.has(id)).length / roleBadgeIds.length
+              : 0.5;
+
+            const { score: distanceScore, distanceKm, isWithinRange } = computeDistanceScore({
+              isRemote: row.role_is_remote,
+              userLat: row.invitee_latitude,
+              userLng: row.invitee_longitude,
+              roleLat: row.role_latitude,
+              roleLng: row.role_longitude,
+              maxDistKm: row.role_max_distance_km,
+            });
+
+            const matchScore =
+              WEIGHTS.tags * tagScore +
+              WEIGHTS.badges * badgeScore +
+              WEIGHTS.distance * distanceScore;
+
+            return serializeEmbeddedVacantRole(row, {
+              tags: roleTags,
+              badges: roleBadges,
+              match_score: Math.round(matchScore * 100) / 100,
+              match_details: {
+                tag_score: Math.round(tagScore * 100) / 100,
+                badge_score: Math.round(badgeScore * 100) / 100,
+                distance_score: Math.round(distanceScore * 100) / 100,
+                matching_tags: roleTagIds.filter((id) => userTags.has(id)).length,
+                total_required_tags: roleTagIds.length,
+                matching_badges: roleBadgeIds.filter((id) => userBadges.has(id)).length,
+                total_required_badges: roleBadgeIds.length,
+                distance_km: distanceKm !== null ? Math.round(distanceKm) : null,
+                max_distance_km: row.role_max_distance_km,
+                is_within_range: isWithinRange,
+              },
+            });
+          })()
+        : null,
       invitee: {
         id: row.invitee_id,
         username: row.username,

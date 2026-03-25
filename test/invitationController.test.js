@@ -221,7 +221,7 @@ test("sendTeamInvitation rejects roleId values that no longer point to an open r
   );
 });
 
-test("getUserReceivedInvitations includes optional role_id and role_name fields", async () => {
+test("getUserReceivedInvitations includes optional role_id, role_name, and full role object", async () => {
   db.pool.query = async (sql) => {
     if (sql.includes("FROM team_invitations ti") && sql.includes("LEFT JOIN team_vacant_roles vr")) {
       return {
@@ -233,6 +233,15 @@ test("getUserReceivedInvitations includes optional role_id and role_name fields"
             created_at: "2026-03-24T10:00:00.000Z",
             role_id: 9,
             role_name: "Backend Developer",
+            role_bio: "Build APIs",
+            role_city: "Berlin",
+            role_country: "DE",
+            role_state: null,
+            role_is_remote: false,
+            role_latitude: 52.52,
+            role_longitude: 13.405,
+            role_max_distance_km: 50,
+            role_status: "open",
             team_id: 42,
             team_name: "Alpha",
             team_description: "Builders",
@@ -250,6 +259,26 @@ test("getUserReceivedInvitations includes optional role_id and role_name fields"
       };
     }
 
+    if (sql.includes("FROM team_vacant_role_tags vrt")) {
+      return { rows: [{ role_id: 9, tag_id: 1, name: "Node.js", category: "Backend", supercategory: "Tech" }] };
+    }
+
+    if (sql.includes("FROM team_vacant_role_badges vrb")) {
+      return { rows: [] };
+    }
+
+    if (sql.includes("SELECT latitude, longitude FROM users")) {
+      return { rows: [{ latitude: 52.5, longitude: 13.4 }] };
+    }
+
+    if (sql.includes("SELECT tag_id FROM user_tags")) {
+      return { rows: [{ tag_id: 1 }] };
+    }
+
+    if (sql.includes("SELECT DISTINCT badge_id FROM user_badges")) {
+      return { rows: [] };
+    }
+
     throw new Error(`Unexpected SQL in received invitations test: ${sql}`);
   };
 
@@ -262,9 +291,16 @@ test("getUserReceivedInvitations includes optional role_id and role_name fields"
   assert.equal(res.body.success, true);
   assert.equal(res.body.data[0].role_id, 9);
   assert.equal(res.body.data[0].role_name, "Backend Developer");
+  assert.ok(res.body.data[0].role, "role object should be present when role_id is set");
+  assert.equal(res.body.data[0].role.role_name, "Backend Developer");
+  assert.equal(res.body.data[0].role.bio, "Build APIs");
+  assert.ok(Array.isArray(res.body.data[0].role.tags), "role.tags should be an array");
+  assert.ok(Array.isArray(res.body.data[0].role.badges), "role.badges should be an array");
+  assert.ok(typeof res.body.data[0].role.match_score === "number", "role.match_score should be a number");
+  assert.ok(res.body.data[0].role.match_details, "role.match_details should be present");
 });
 
-test("getTeamSentInvitations includes optional role_id and role_name fields", async () => {
+test("getTeamSentInvitations includes optional role_id, role_name, and full role object", async () => {
   db.pool.query = async (sql) => {
     if (
       sql.includes("FROM team_members") &&
@@ -283,6 +319,15 @@ test("getTeamSentInvitations includes optional role_id and role_name fields", as
             created_at: "2026-03-24T10:00:00.000Z",
             role_id: 11,
             role_name: "Product Designer",
+            role_bio: "Design the product",
+            role_city: "Berlin",
+            role_country: "DE",
+            role_state: null,
+            role_is_remote: true,
+            role_latitude: null,
+            role_longitude: null,
+            role_max_distance_km: null,
+            role_status: "open",
             invitee_id: 99,
             username: "invitee99",
             first_name: "Jamie",
@@ -290,6 +335,8 @@ test("getTeamSentInvitations includes optional role_id and role_name fields", as
             avatar_url: "https://example.com/jamie.png",
             bio: "Design systems",
             postal_code: "10115",
+            invitee_latitude: null,
+            invitee_longitude: null,
             inviter_id: 7,
             inviter_username: "aliceadmin",
             inviter_first_name: "Alice",
@@ -298,6 +345,22 @@ test("getTeamSentInvitations includes optional role_id and role_name fields", as
           },
         ],
       };
+    }
+
+    if (sql.includes("FROM team_vacant_role_tags vrt")) {
+      return { rows: [] };
+    }
+
+    if (sql.includes("FROM team_vacant_role_badges vrb")) {
+      return { rows: [] };
+    }
+
+    if (sql.includes("SELECT user_id, tag_id FROM user_tags")) {
+      return { rows: [] };
+    }
+
+    if (sql.includes("SELECT DISTINCT ub.user_id, ub.badge_id")) {
+      return { rows: [] };
     }
 
     throw new Error(`Unexpected SQL in team invitations test: ${sql}`);
@@ -312,4 +375,11 @@ test("getTeamSentInvitations includes optional role_id and role_name fields", as
   assert.equal(res.body.success, true);
   assert.equal(res.body.data[0].role_id, 11);
   assert.equal(res.body.data[0].role_name, "Product Designer");
+  assert.ok(res.body.data[0].role, "role object should be present when role_id is set");
+  assert.equal(res.body.data[0].role.role_name, "Product Designer");
+  assert.equal(res.body.data[0].role.bio, "Design the product");
+  assert.ok(Array.isArray(res.body.data[0].role.tags), "role.tags should be an array");
+  assert.ok(Array.isArray(res.body.data[0].role.badges), "role.badges should be an array");
+  assert.ok(typeof res.body.data[0].role.match_score === "number", "role.match_score should be a number");
+  assert.ok(res.body.data[0].role.match_details, "role.match_details should be present");
 });
