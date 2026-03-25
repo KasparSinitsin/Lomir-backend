@@ -60,7 +60,7 @@ const haversineKm = (lat1, lon1, lat2, lon2) => {
  * @param {number|null} opts.roleLat    — role's latitude
  * @param {number|null} opts.roleLng    — role's longitude
  * @param {number|null} opts.maxDistKm  — role's max_distance_km
- * @returns {{ score: number, distanceKm: number|null }}
+ * @returns {{ score: number, distanceKm: number|null, isWithinRange: boolean|null }}
  */
 const computeDistanceScore = ({
   isRemote,
@@ -72,28 +72,29 @@ const computeDistanceScore = ({
 }) => {
   // Remote role — perfect score for everyone
   if (isRemote) {
-    return { score: 1.0, distanceKm: null };
+    return { score: 1.0, distanceKm: null, isWithinRange: true };
   }
 
   // Both sides need coordinates
   if (userLat && userLng && roleLat && roleLng) {
     const distanceKm = haversineKm(userLat, userLng, roleLat, roleLng);
     const maxDist = maxDistKm || 50; // default radius if none set
+    const withinRange = distanceKm <= maxDist;
 
     if (distanceKm <= maxDist) {
       // Within the radius → 100%
-      return { score: 1.0, distanceKm };
+      return { score: 1.0, distanceKm, isWithinRange: true };
     } else if (distanceKm <= maxDist + LOCATION_GRACE_KM) {
       // Up to 20 km beyond the radius → 25%
-      return { score: LOCATION_GRACE_SCORE, distanceKm };
+      return { score: LOCATION_GRACE_SCORE, distanceKm, isWithinRange: false };
     } else {
       // Farther away → 0%
-      return { score: 0.0, distanceKm };
+      return { score: 0.0, distanceKm, isWithinRange: false };
     }
   }
 
-  // No location data on one or both sides → neutral
-  return { score: 0.5, distanceKm: null };
+  // No location data on one or both sides → can't determine
+  return { score: 0.5, distanceKm: null, isWithinRange: null };
 };
 
 // ============================================================
@@ -290,7 +291,7 @@ const getMatchingRoles = async (req, res) => {
       }
 
       // --- Distance score (new rules) ---
-      const { score: distanceScore, distanceKm } = computeDistanceScore({
+      const { score: distanceScore, distanceKm, isWithinRange } = computeDistanceScore({
         isRemote: role.is_remote,
         userLat: user.latitude,
         userLng: user.longitude,
@@ -324,10 +325,7 @@ const getMatchingRoles = async (req, res) => {
           total_required_badges: roleBadges.length,
           distance_km: distanceKm !== null ? Math.round(distanceKm) : null,
           max_distance_km: role.max_distance_km,
-          is_within_range:
-            role.is_remote ||
-            distanceKm === null ||
-            distanceKm <= (role.max_distance_km || 50),
+          is_within_range: isWithinRange,
         },
       };
     });
@@ -500,7 +498,7 @@ const getMatchingCandidates = async (req, res) => {
       }
 
       // Distance score (new rules)
-      const { score: distanceScore, distanceKm } = computeDistanceScore({
+      const { score: distanceScore, distanceKm, isWithinRange } = computeDistanceScore({
         isRemote: role.is_remote,
         userLat: candidate.latitude,
         userLng: candidate.longitude,
@@ -528,6 +526,8 @@ const getMatchingCandidates = async (req, res) => {
             .length,
           total_required_badges: roleBadgeIds.length,
           distance_km: distanceKm !== null ? Math.round(distanceKm) : null,
+          max_distance_km: role.max_distance_km,
+          is_within_range: isWithinRange,
         },
       };
     });

@@ -45,14 +45,15 @@ function computeDistanceScore({
   roleLng,
   maxDistKm,
 }) {
-  if (isRemote) return { score: 1.0, distanceKm: null };
+  if (isRemote) return { score: 1.0, distanceKm: null, isWithinRange: true };
 
   if (!userLat || !userLng || !roleLat || !roleLng) {
-    return { score: 0.5, distanceKm: null };
+    return { score: 0.5, distanceKm: null, isWithinRange: null };
   }
 
   const dist = haversineKm(userLat, userLng, roleLat, roleLng);
   const maxDist = maxDistKm || 50;
+  const withinRange = dist <= maxDist;
 
   let score;
   if (dist <= maxDist) {
@@ -63,7 +64,7 @@ function computeDistanceScore({
     score = 0.0;
   }
 
-  return { score, distanceKm: dist };
+  return { score, distanceKm: dist, isWithinRange: withinRange };
 }
 
 /**
@@ -94,7 +95,7 @@ function scoreUserAgainstRole({
     badgeScore = 0.5;
   }
 
-  const { score: distanceScore, distanceKm } = computeDistanceScore({
+  const { score: distanceScore, distanceKm, isWithinRange } = computeDistanceScore({
     isRemote: role.is_remote,
     userLat,
     userLng,
@@ -114,6 +115,8 @@ function scoreUserAgainstRole({
     badgeScore: Math.round(badgeScore * 100) / 100,
     distanceScore: Math.round(distanceScore * 100) / 100,
     distanceKm: distanceKm !== null ? Math.round(distanceKm) : null,
+    maxDistanceKm: role.max_distance_km,
+    isWithinRange,
   };
 }
 

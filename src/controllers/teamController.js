@@ -849,7 +849,7 @@ const getUserPendingApplications = async (req, res) => {
               ? roleBadgeIds.filter((id) => userBadgeIds.has(id)).length / roleBadgeIds.length
               : 0.5;
 
-            const { score: distanceScore, distanceKm } = computeDistanceScore({
+            const { score: distanceScore, distanceKm, isWithinRange } = computeDistanceScore({
               isRemote: row.role_is_remote,
               userLat: row.applicant_latitude,
               userLng: row.applicant_longitude,
@@ -876,6 +876,8 @@ const getUserPendingApplications = async (req, res) => {
                 matching_badges: roleBadgeIds.filter((id) => userBadgeIds.has(id)).length,
                 total_required_badges: roleBadgeIds.length,
                 distance_km: distanceKm !== null ? Math.round(distanceKm) : null,
+                max_distance_km: row.role_max_distance_km,
+                is_within_range: isWithinRange,
               },
             });
           })()
@@ -1752,7 +1754,7 @@ const getTeamApplications = async (req, res) => {
               : 0.5;
 
             // Distance score
-            const { score: distanceScore, distanceKm } = computeDistanceScore({
+            const { score: distanceScore, distanceKm, isWithinRange } = computeDistanceScore({
               isRemote: row.role_is_remote,
               userLat: row.applicant_latitude,
               userLng: row.applicant_longitude,
@@ -1779,6 +1781,8 @@ const getTeamApplications = async (req, res) => {
                 matching_badges: roleBadgeIds.filter((id) => userBadges.has(id)).length,
                 total_required_badges: roleBadgeIds.length,
                 distance_km: distanceKm !== null ? Math.round(distanceKm) : null,
+                max_distance_km: row.role_max_distance_km,
+                is_within_range: isWithinRange,
               },
             });
           })()
