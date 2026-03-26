@@ -11,7 +11,7 @@
  *     computeDistanceScore,
  *     scoreUserAgainstRole,
  *     computeTeamMatchScores,       // best vacant-role match per team
- *     computeTeamTagOverlap,        // tag overlap between user and teams
+ *     computeTeamProfileMatchScores,// tag+badge+location match for teams
  *     computeUserProfileOverlap,    // tag+badge overlap between users
  *     WEIGHTS,
  *   } = require("../utils/matchingScorer");
@@ -19,6 +19,22 @@
 
 // Scoring weights for vacant-role matching
 const WEIGHTS = { tags: 0.4, badges: 0.3, distance: 0.3 };
+
+function roundScore(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function normalizeCoordinate(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeCountry(value) {
+  return typeof value === "string" && value.trim() !== ""
+    ? value.trim().toLowerCase()
+    : null;
+}
 
 /**
  * Haversine distance between two lat/lng points in km.
@@ -110,10 +126,10 @@ function scoreUserAgainstRole({
     WEIGHTS.distance * distanceScore;
 
   return {
-    matchScore: Math.round(matchScore * 100) / 100,
-    tagScore: Math.round(tagScore * 100) / 100,
-    badgeScore: Math.round(badgeScore * 100) / 100,
-    distanceScore: Math.round(distanceScore * 100) / 100,
+    matchScore: roundScore(matchScore),
+    tagScore: roundScore(tagScore),
+    badgeScore: roundScore(badgeScore),
+    distanceScore: roundScore(distanceScore),
     distanceKm: distanceKm !== null ? Math.round(distanceKm) : null,
     maxDistanceKm: role.max_distance_km,
     isWithinRange,
@@ -219,8 +235,208 @@ async function computeTeamMatchScores(db, userId) {
 }
 
 // ============================================================
-// NEW: Profile-based overlap scoring (for Best Match sort)
+// Team profile scoring (for Best Match sort)
 // ============================================================
+
+function computeTeamProfileDistanceScore({
+  isRemote,
+  userLat,
+  userLng,
+  teamLat,
+  teamLng,
+  userCountry,
+  teamCountry,
+}) {
+  if (isRemote) {
+    return { score: 1.0, distanceKm: null };
+  }
+
+  const hasUserCoords =
+    Number.isFinite(userLat) && Number.isFinite(userLng);
+  const hasTeamCoords =
+    Number.isFinite(teamLat) && Number.isFinite(teamLng);
+
+  if (hasUserCoords && hasTeamCoords) {
+    const distanceKm = haversineKm(userLat, userLng, teamLat, teamLng);
+
+    if (distanceKm <= 25) return { score: 1.0, distanceKm };
+    if (distanceKm <= 100) return { score: 0.75, distanceKm };
+    if (distanceKm <= 300) return { score: 0.5, distanceKm };
+    if (distanceKm <= 1000) return { score: 0.25, distanceKm };
+
+    return { score: 0, distanceKm };
+  }
+
+  if (userCountry && teamCountry && userCountry === teamCountry) {
+    return { score: 0.5, distanceKm: null };
+  }
+
+  return { score: 0, distanceKm: null };
+}
+
+/**
+ * Compute team profile match scores between a user and a set of teams.
+ *
+ * Score = weighted sum of:
+ * - tag coverage: shared team tags / total unique team tags
+ * - badge coverage: shared team badges / total unique team badges
+ * - location score: remote / coordinate buckets / country fallback
+ *
+ * @param {Object} db
+ * @param {number} userId
+ * @param {number[]} teamIds
+ * @returns {Promise<Map<number, {
+ *   matchScore,
+ *   tagScore,
+ *   badgeScore,
+ *   distanceScore,
+ *   sharedTagCount,
+ *   sharedBadgeCount,
+ *   totalUniqueTeamTags,
+ *   totalUniqueTeamBadges,
+ *   distanceKm
+ * }>>}
+ */
+async function computeTeamProfileMatchScores(db, userId, teamIds) {
+  const result = new Map();
+  if (!teamIds || teamIds.length === 0) return result;
+
+  const normalizedTeamIds = [...new Set(teamIds.map(Number).filter(Number.isFinite))];
+  if (normalizedTeamIds.length === 0) return result;
+
+  const [
+    userProfileRes,
+    userTagsRes,
+    userBadgesRes,
+    teamProfilesRes,
+    teamTagsRes,
+    teamBadgesRes,
+  ] = await Promise.all([
+    db.pool.query(
+      `SELECT latitude, longitude, country
+       FROM users
+       WHERE id = $1`,
+      [userId],
+    ),
+    db.pool.query(`SELECT tag_id FROM user_tags WHERE user_id = $1`, [userId]),
+    db.pool.query(
+      `SELECT DISTINCT badge_id FROM badge_awards WHERE awarded_to_user_id = $1`,
+      [userId],
+    ),
+    db.pool.query(
+      `SELECT id, is_remote, latitude, longitude, country
+       FROM teams
+       WHERE id = ANY($1)`,
+      [normalizedTeamIds],
+    ),
+    db.pool.query(
+      `SELECT team_id, tag_id
+       FROM team_tags
+       WHERE team_id = ANY($1)`,
+      [normalizedTeamIds],
+    ),
+    db.pool.query(
+      `SELECT DISTINCT tm.team_id, ba.badge_id
+       FROM team_members tm
+       JOIN badge_awards ba ON ba.awarded_to_user_id = tm.user_id
+       WHERE tm.team_id = ANY($1)`,
+      [normalizedTeamIds],
+    ),
+  ]);
+
+  const userProfile = userProfileRes.rows[0] || {};
+  const userLat = normalizeCoordinate(userProfile.latitude);
+  const userLng = normalizeCoordinate(userProfile.longitude);
+  const userCountry = normalizeCountry(userProfile.country);
+
+  const userTagIds = new Set(userTagsRes.rows.map((row) => Number(row.tag_id)));
+  const userBadgeIds = new Set(
+    userBadgesRes.rows.map((row) => Number(row.badge_id)),
+  );
+
+  const teamProfileMap = new Map(
+    teamProfilesRes.rows.map((row) => [
+      Number(row.id),
+      {
+        is_remote: row.is_remote === true || row.is_remote === "true",
+        latitude: normalizeCoordinate(row.latitude),
+        longitude: normalizeCoordinate(row.longitude),
+        country: normalizeCountry(row.country),
+      },
+    ]),
+  );
+
+  const teamTagMap = new Map();
+  for (const row of teamTagsRes.rows) {
+    const teamId = Number(row.team_id);
+    if (!teamTagMap.has(teamId)) teamTagMap.set(teamId, new Set());
+    teamTagMap.get(teamId).add(Number(row.tag_id));
+  }
+
+  const teamBadgeMap = new Map();
+  for (const row of teamBadgesRes.rows) {
+    const teamId = Number(row.team_id);
+    if (!teamBadgeMap.has(teamId)) teamBadgeMap.set(teamId, new Set());
+    teamBadgeMap.get(teamId).add(Number(row.badge_id));
+  }
+
+  for (const teamId of normalizedTeamIds) {
+    const teamProfile = teamProfileMap.get(teamId);
+    const teamTagIds = teamTagMap.get(teamId) || new Set();
+    const teamBadgeIds = teamBadgeMap.get(teamId) || new Set();
+
+    let sharedTagCount = 0;
+    for (const tagId of teamTagIds) {
+      if (userTagIds.has(tagId)) sharedTagCount++;
+    }
+
+    let sharedBadgeCount = 0;
+    for (const badgeId of teamBadgeIds) {
+      if (userBadgeIds.has(badgeId)) sharedBadgeCount++;
+    }
+
+    const roundedTagScore = roundScore(
+      teamTagIds.size > 0 ? sharedTagCount / teamTagIds.size : 0,
+    );
+    const roundedBadgeScore = roundScore(
+      teamBadgeIds.size > 0 ? sharedBadgeCount / teamBadgeIds.size : 0,
+    );
+
+    const distanceResult = computeTeamProfileDistanceScore({
+      isRemote: teamProfile?.is_remote === true,
+      userLat,
+      userLng,
+      teamLat: teamProfile?.latitude ?? null,
+      teamLng: teamProfile?.longitude ?? null,
+      userCountry,
+      teamCountry: teamProfile?.country ?? null,
+    });
+    const roundedDistanceScore = roundScore(distanceResult.score);
+
+    const matchScore = roundScore(
+      WEIGHTS.tags * roundedTagScore +
+      WEIGHTS.badges * roundedBadgeScore +
+      WEIGHTS.distance * roundedDistanceScore,
+    );
+
+    result.set(teamId, {
+      matchScore,
+      tagScore: roundedTagScore,
+      badgeScore: roundedBadgeScore,
+      distanceScore: roundedDistanceScore,
+      sharedTagCount,
+      sharedBadgeCount,
+      totalUniqueTeamTags: teamTagIds.size,
+      totalUniqueTeamBadges: teamBadgeIds.size,
+      distanceKm:
+        distanceResult.distanceKm !== null
+          ? Math.round(distanceResult.distanceKm * 10) / 10
+          : null,
+    });
+  }
+
+  return result;
+}
 
 /**
  * Compute tag overlap scores between a user and all teams.
@@ -403,6 +619,7 @@ module.exports = {
   computeDistanceScore,
   scoreUserAgainstRole,
   computeTeamMatchScores,
+  computeTeamProfileMatchScores,
   computeTeamTagOverlap,
   computeUserProfileOverlap,
 };
