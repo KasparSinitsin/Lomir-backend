@@ -28,6 +28,7 @@ function createRequest({
   invitationId = "77",
   userId = 7,
   body = {},
+  query = {},
   io = null,
 } = {}) {
   return {
@@ -37,6 +38,7 @@ function createRequest({
     },
     user: { id: userId },
     body,
+    query,
     app: {
       get() {
         return io;
@@ -749,6 +751,66 @@ test("respondToInvitation keeps the decline flow unchanged", async () => {
   assert.ok(declineSocketEvent);
 });
 
+test("getTeamsWhereUserCanInvite includes teams where the invitee is already a member", async () => {
+  db.pool.query = async (sql, params = []) => {
+    assert.match(sql, /EXISTS \(/);
+    assert.equal(params[0], 7);
+    assert.equal(params[1], "99");
+
+    return {
+      rows: [
+        {
+          id: 42,
+          name: "Alpha",
+          teamavatar_url: "https://example.com/alpha.png",
+          max_members: 3,
+          current_members_count: "3",
+          is_invitee_member: true,
+        },
+        {
+          id: 43,
+          name: "Beta",
+          teamavatar_url: "https://example.com/beta.png",
+          max_members: 4,
+          current_members_count: "2",
+          is_invitee_member: false,
+        },
+      ],
+    };
+  };
+
+  const req = createRequest({
+    userId: 7,
+    query: { inviteeId: "99" },
+  });
+  const res = createResponse();
+
+  await invitationController.getTeamsWhereUserCanInvite(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.success, true);
+  assert.deepEqual(res.body.data, [
+    {
+      id: 42,
+      name: "Alpha",
+      teamavatar_url: "https://example.com/alpha.png",
+      max_members: 3,
+      current_members_count: 3,
+      available_spots: 0,
+      is_invitee_member: true,
+    },
+    {
+      id: 43,
+      name: "Beta",
+      teamavatar_url: "https://example.com/beta.png",
+      max_members: 4,
+      current_members_count: 2,
+      available_spots: 2,
+      is_invitee_member: false,
+    },
+  ]);
+});
+
 test("sendTeamInvitation allows existing member when roleId is provided (internal role invite)", async () => {
   const { query, calls } = buildSendInvitationPoolQueryStub({ isMember: true });
 
@@ -917,10 +979,11 @@ test("respondToInvitation accept for internal role invite does not re-add member
   assert.ok(roleAssignedNotification);
 });
 
-test("respondToInvitation accept for internal role invite with fill_role false does not fill role", async () => {
+test("respondToInvitation accept for internal role invite with fill_role false still fills role", async () => {
   const { query: poolQuery } = buildRespondInvitationPoolQueryStub({ roleId: 9 });
   const { client, calls: clientCalls } = buildRespondInvitationClientStub({
     isInternalMember: true,
+    roleUpdateRows: [{ id: 9, role_name: "Backend Developer" }],
   });
   const { query: notificationQuery } = buildNotificationQueryStub();
 
@@ -939,8 +1002,8 @@ test("respondToInvitation accept for internal role invite with fill_role false d
 
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.success, true);
-  assert.equal(res.body.data.roleFilled, false);
-  assert.equal(res.body.data.filledRoleName, null);
+  assert.equal(res.body.data.roleFilled, true);
+  assert.equal(res.body.data.filledRoleName, "Backend Developer");
 
   // Must NOT insert into team_members
   assert.equal(
@@ -948,16 +1011,18 @@ test("respondToInvitation accept for internal role invite with fill_role false d
     false,
   );
 
-  // Must NOT update vacant role
-  assert.equal(
-    clientCalls.some(({ sql }) => sql.includes("UPDATE team_vacant_roles")),
-    false,
+  const roleUpdateCall = clientCalls.find(({ sql }) =>
+    sql.includes("UPDATE team_vacant_roles"),
   );
+  assert.ok(roleUpdateCall);
 
-  // Chat message should still use 🎯 format (internal accept without role fill)
+  // Chat message should reflect the auto-filled internal role
   const teamMessageCall = clientCalls.find(({ sql }) =>
     sql.includes("INSERT INTO messages (sender_id, team_id, content, sent_at)"),
   );
   assert.ok(teamMessageCall);
-  assert.equal(teamMessageCall.params[2], "🎯 Jamie Doe accepted a role invitation!");
+  assert.equal(
+    teamMessageCall.params[2],
+    "🎯 Jamie Doe was assigned the role Backend Developer!",
+  );
 });

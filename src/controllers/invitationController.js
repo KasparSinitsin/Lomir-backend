@@ -769,8 +769,8 @@ const respondToInvitation = async (req, res) => {
           [invitationId],
         );
 
-        // Auto-fill the associated vacant role if requested
-        if (invitation.role_id && fillRole) {
+        // Internal role accepts always fill the linked role; external accepts remain opt-in.
+        if (invitation.role_id && (fillRole || isInternalAccept)) {
           const roleUpdateResult = await client.query(
             `UPDATE team_vacant_roles
              SET status = 'filled', filled_by = $1, updated_at = NOW()
@@ -1109,51 +1109,68 @@ const cancelInvitation = async (req, res) => {
 const getTeamsWhereUserCanInvite = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { inviteeId } = req.query; // Optional: filter out teams where this user is already a member
+    const { inviteeId } = req.query;
 
     let query = `
       SELECT t.id, t.name, t.teamavatar_url, t.max_members,
              (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count
+    `;
+
+    const params = [userId];
+
+    if (inviteeId) {
+      query += `
+        , EXISTS (
+          SELECT 1 FROM team_members
+          WHERE team_id = t.id AND user_id = $2
+        ) as is_invitee_member
+      `;
+      params.push(inviteeId);
+    }
+
+    query += `
       FROM teams t
       JOIN team_members tm ON t.id = tm.team_id
       WHERE tm.user_id = $1 AND tm.role IN ('owner', 'admin')
       AND t.archived_at IS NULL
     `;
 
-    const params = [userId];
-
-    // If inviteeId is provided, exclude teams where they're already a member
-    if (inviteeId) {
-      query += `
-        AND t.id NOT IN (
-          SELECT team_id FROM team_members WHERE user_id = $2
-        )
-      `;
-      params.push(inviteeId);
-    }
-
     query += ` ORDER BY t.name ASC`;
 
     const teamsResult = await db.pool.query(query, params);
 
-    // Filter out teams that are at capacity (skip check if unlimited)
     const availableTeams = teamsResult.rows
-      .filter(
-        (team) =>
+      .filter((team) => {
+        const isInviteeMember =
+          inviteeId &&
+          (team.is_invitee_member === true || team.is_invitee_member === "true");
+
+        return (
           team.max_members === null ||
-          parseInt(team.current_members_count) < team.max_members,
-      )
-      .map((team) => ({
-        id: team.id,
-        name: team.name,
-        teamavatar_url: team.teamavatar_url,
-        max_members: team.max_members,
-        current_members_count: parseInt(team.current_members_count),
-        available_spots:
-          team.max_members === null
-            ? null // unlimited
-            : team.max_members - parseInt(team.current_members_count),
-      }));
+          isInviteeMember ||
+          parseInt(team.current_members_count) < team.max_members
+        );
+      })
+      .map((team) => {
+        const mappedTeam = {
+          id: team.id,
+          name: team.name,
+          teamavatar_url: team.teamavatar_url,
+          max_members: team.max_members,
+          current_members_count: parseInt(team.current_members_count),
+          available_spots:
+            team.max_members === null
+              ? null
+              : team.max_members - parseInt(team.current_members_count),
+        };
+
+        if (inviteeId) {
+          mappedTeam.is_invitee_member =
+            team.is_invitee_member === true || team.is_invitee_member === "true";
+        }
+
+        return mappedTeam;
+      });
 
     res.status(200).json({
       success: true,
