@@ -754,6 +754,7 @@ const getUserPendingApplications = async (req, res) => {
     fu.username AS role_filled_by_user_username,
     fu.avatar_url AS role_filled_by_user_avatar_url,
     t.name, t.description, t.teamavatar_url, t.max_members, t.is_public,
+    t.latitude, t.longitude, t.is_remote, t.city, t.country, t.state, t.postal_code,
     (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count,
     owner.id as owner_id,
     owner.username as owner_username,
@@ -777,56 +778,118 @@ const getUserPendingApplications = async (req, res) => {
       [userId],
     );
 
-    // Batch-fetch role tags and badges for applications that reference a vacant role
+    if (applicationsResult.rows.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: [],
+      });
+    }
+
+    const teamIds = [...new Set(
+      applicationsResult.rows.map((r) => r.team_id).filter(Boolean)
+    )];
+
     const roleIds = [...new Set(
       applicationsResult.rows.map((r) => r.role_id).filter(Boolean)
     )];
 
+    let teamTagsByTeamId = {};
+    let teamBadgesByTeamId = {};
     let roleTagsByRole = {};
     let roleBadgesByRole = {};
     let userTagIds = new Set();
     let userBadgeIds = new Set();
 
-    if (roleIds.length > 0) {
-      const [roleTagsResult, roleBadgesResult, userTagsResult, userBadgesResult] =
-        await Promise.all([
-          db.pool.query(
+    const [
+      teamTagsResult,
+      teamBadgesResult,
+      roleTagsResult,
+      roleBadgesResult,
+      userTagsResult,
+      userBadgesResult,
+    ] = await Promise.all([
+      db.pool.query(
+        `SELECT tt.team_id, t.id AS tag_id, t.name, t.category, t.supercategory
+         FROM team_tags tt
+         JOIN tags t ON tt.tag_id = t.id
+         WHERE tt.team_id = ANY($1::int[])
+         ORDER BY t.supercategory, t.category, t.name`,
+        [teamIds]
+      ),
+      db.pool.query(
+        `SELECT DISTINCT tm.team_id, b.id AS badge_id, b.name, b.category, b.color, b.image_url, b.cat_image_url
+         FROM team_members tm
+         JOIN badge_awards ba ON ba.awarded_to_user_id = tm.user_id
+         JOIN badges b ON ba.badge_id = b.id
+         WHERE tm.team_id = ANY($1::int[])
+         ORDER BY tm.team_id, b.category, b.name`,
+        [teamIds]
+      ),
+      roleIds.length > 0
+        ? db.pool.query(
             `SELECT vrt.role_id, t.id AS tag_id, t.name, t.category, t.supercategory
              FROM team_vacant_role_tags vrt
              JOIN tags t ON vrt.tag_id = t.id
              WHERE vrt.role_id = ANY($1)
              ORDER BY t.supercategory, t.category, t.name`,
             [roleIds]
-          ),
-          db.pool.query(
+          )
+        : Promise.resolve({ rows: [] }),
+      roleIds.length > 0
+        ? db.pool.query(
             `SELECT vrb.role_id, b.id AS badge_id, b.name, b.category, b.color, b.image_url, b.cat_image_url
              FROM team_vacant_role_badges vrb
              JOIN badges b ON vrb.badge_id = b.id
              WHERE vrb.role_id = ANY($1)
              ORDER BY b.category, b.name`,
             [roleIds]
-          ),
-          db.pool.query(
+          )
+        : Promise.resolve({ rows: [] }),
+      roleIds.length > 0
+        ? db.pool.query(
             `SELECT tag_id FROM user_tags WHERE user_id = $1`,
             [userId]
-          ),
-          db.pool.query(
+          )
+        : Promise.resolve({ rows: [] }),
+      roleIds.length > 0
+        ? db.pool.query(
             `SELECT DISTINCT badge_id FROM badge_awards WHERE awarded_to_user_id = $1`,
             [userId]
-          ),
-        ]);
+          )
+        : Promise.resolve({ rows: [] }),
+    ]);
 
-      for (const tag of roleTagsResult.rows) {
-        if (!roleTagsByRole[tag.role_id]) roleTagsByRole[tag.role_id] = [];
-        roleTagsByRole[tag.role_id].push(tag);
-      }
-      for (const badge of roleBadgesResult.rows) {
-        if (!roleBadgesByRole[badge.role_id]) roleBadgesByRole[badge.role_id] = [];
-        roleBadgesByRole[badge.role_id].push(badge);
-      }
-      userTagIds = new Set(userTagsResult.rows.map((r) => r.tag_id));
-      userBadgeIds = new Set(userBadgesResult.rows.map((r) => r.badge_id));
+    for (const tag of teamTagsResult.rows) {
+      if (!teamTagsByTeamId[tag.team_id]) teamTagsByTeamId[tag.team_id] = [];
+      teamTagsByTeamId[tag.team_id].push({
+        id: tag.tag_id,
+        name: tag.name,
+        category: tag.category,
+        supercategory: tag.supercategory,
+      });
     }
+    for (const badge of teamBadgesResult.rows) {
+      if (!teamBadgesByTeamId[badge.team_id]) teamBadgesByTeamId[badge.team_id] = [];
+      teamBadgesByTeamId[badge.team_id].push({
+        id: badge.badge_id,
+        name: badge.name,
+        category: badge.category,
+        color: badge.color,
+        image_url: badge.image_url,
+        cat_image_url: badge.cat_image_url,
+      });
+    }
+
+    for (const tag of roleTagsResult.rows) {
+      if (!roleTagsByRole[tag.role_id]) roleTagsByRole[tag.role_id] = [];
+      roleTagsByRole[tag.role_id].push(tag);
+    }
+    for (const badge of roleBadgesResult.rows) {
+      if (!roleBadgesByRole[badge.role_id]) roleBadgesByRole[badge.role_id] = [];
+      roleBadgesByRole[badge.role_id].push(badge);
+    }
+    userTagIds = new Set(userTagsResult.rows.map((r) => r.tag_id));
+    userBadgeIds = new Set(userBadgesResult.rows.map((r) => r.badge_id));
 
     const applications = applicationsResult.rows.map((row) => ({
       id: row.id,
@@ -890,6 +953,15 @@ const getUserPendingApplications = async (req, res) => {
         max_members: row.max_members,
         is_public: row.is_public === true || row.is_public === "true",
         current_members_count: parseInt(row.current_members_count),
+        latitude: row.latitude,
+        longitude: row.longitude,
+        is_remote: row.is_remote,
+        city: row.city,
+        country: row.country,
+        state: row.state,
+        postal_code: row.postal_code,
+        tags: teamTagsByTeamId[row.team_id] || [],
+        badges: teamBadgesByTeamId[row.team_id] || [],
       },
       // Owner (receiver) info
       owner: {
