@@ -350,9 +350,9 @@ const searchController = {
       if (badgeIds.length > 0) {
         teamCountQuery += `
           AND t.id IN (
-            SELECT tm_badge.team_id FROM team_members tm_badge
-            JOIN user_badges ub_badge ON tm_badge.user_id = ub_badge.user_id
-            WHERE ub_badge.badge_id = ANY($${teamCountParams.length + 1}::int[])
+            SELECT DISTINCT tm_badge.team_id FROM team_members tm_badge
+            JOIN badge_awards ba_badge ON tm_badge.user_id = ba_badge.awarded_to_user_id
+            WHERE ba_badge.badge_id = ANY($${teamCountParams.length + 1}::int[])
           )
         `;
         teamCountParams.push(badgeIds);
@@ -534,9 +534,9 @@ const searchController = {
       if (badgeIds.length > 0) {
         teamQuery += `
           AND t.id IN (
-            SELECT tm_badge.team_id FROM team_members tm_badge
-            JOIN user_badges ub_badge ON tm_badge.user_id = ub_badge.user_id
-            WHERE ub_badge.badge_id = ANY($${teamParamIndex}::int[])
+            SELECT DISTINCT tm_badge.team_id FROM team_members tm_badge
+            JOIN badge_awards ba_badge ON tm_badge.user_id = ba_badge.awarded_to_user_id
+            WHERE ba_badge.badge_id = ANY($${teamParamIndex}::int[])
           )
         `;
         teamParams.push(badgeIds);
@@ -696,8 +696,9 @@ const searchController = {
       if (badgeIds.length > 0) {
         userCountQuery += `
           AND u.id IN (
-            SELECT ub_filter.user_id FROM user_badges ub_filter
-            WHERE ub_filter.badge_id = ANY($${userCountParams.length + 1}::int[])
+            SELECT DISTINCT ba_filter.awarded_to_user_id
+            FROM badge_awards ba_filter
+            WHERE ba_filter.badge_id = ANY($${userCountParams.length + 1}::int[])
           )
         `;
         userCountParams.push(badgeIds);
@@ -901,8 +902,9 @@ const searchController = {
       if (badgeIds.length > 0) {
         userQuery += `
           AND u.id IN (
-            SELECT ub_filter.user_id FROM user_badges ub_filter
-            WHERE ub_filter.badge_id = ANY($${userParamIndex}::int[])
+            SELECT DISTINCT ba_filter.awarded_to_user_id
+            FROM badge_awards ba_filter
+            WHERE ba_filter.badge_id = ANY($${userParamIndex}::int[])
           )
         `;
         userParams.push(badgeIds);
@@ -1109,7 +1111,9 @@ const searchController = {
                   [userIds],
                 ),
                 db.pool.query(
-                  `SELECT DISTINCT user_id, badge_id FROM user_badges WHERE user_id = ANY($1)`,
+                  `SELECT DISTINCT awarded_to_user_id AS user_id, badge_id
+                   FROM badge_awards
+                   WHERE awarded_to_user_id = ANY($1)`,
                   [userIds],
                 ),
               ]);
@@ -1394,9 +1398,9 @@ const searchController = {
               WHERE tt_filter.tag_id = ANY(${tagParam}::int[])
             )
             OR t.id IN (
-              SELECT tm_badge.team_id FROM team_members tm_badge
-              JOIN user_badges ub_badge ON tm_badge.user_id = ub_badge.user_id
-              WHERE ub_badge.badge_id = ANY(${badgeParam}::int[])
+              SELECT DISTINCT tm_badge.team_id FROM team_members tm_badge
+              JOIN badge_awards ba_badge ON tm_badge.user_id = ba_badge.awarded_to_user_id
+              WHERE ba_badge.badge_id = ANY(${badgeParam}::int[])
             )
           )
         `;
@@ -1415,9 +1419,9 @@ const searchController = {
         if (badgeIds.length > 0) {
           teamCountQuery += `
             AND t.id IN (
-              SELECT tm_badge.team_id FROM team_members tm_badge
-              JOIN user_badges ub_badge ON tm_badge.user_id = ub_badge.user_id
-              WHERE ub_badge.badge_id = ANY($${teamCountParams.length + 1}::int[])
+              SELECT DISTINCT tm_badge.team_id FROM team_members tm_badge
+              JOIN badge_awards ba_badge ON tm_badge.user_id = ba_badge.awarded_to_user_id
+              WHERE ba_badge.badge_id = ANY($${teamCountParams.length + 1}::int[])
             )
           `;
           teamCountParams.push(badgeIds);
@@ -1563,9 +1567,9 @@ const searchController = {
               WHERE tt_filter.tag_id = ANY(${tagParam2}::int[])
             )
             OR t.id IN (
-              SELECT tm_badge.team_id FROM team_members tm_badge
-              JOIN user_badges ub_badge ON tm_badge.user_id = ub_badge.user_id
-              WHERE ub_badge.badge_id = ANY(${badgeParam2}::int[])
+              SELECT DISTINCT tm_badge.team_id FROM team_members tm_badge
+              JOIN badge_awards ba_badge ON tm_badge.user_id = ba_badge.awarded_to_user_id
+              WHERE ba_badge.badge_id = ANY(${badgeParam2}::int[])
             )
           )
         `;
@@ -1586,9 +1590,9 @@ const searchController = {
         if (badgeIds.length > 0) {
           teamQuery += `
             AND t.id IN (
-              SELECT tm_badge.team_id FROM team_members tm_badge
-              JOIN user_badges ub_badge ON tm_badge.user_id = ub_badge.user_id
-              WHERE ub_badge.badge_id = ANY($${teamParamIndex}::int[])
+              SELECT DISTINCT tm_badge.team_id FROM team_members tm_badge
+              JOIN badge_awards ba_badge ON tm_badge.user_id = ba_badge.awarded_to_user_id
+              WHERE ba_badge.badge_id = ANY($${teamParamIndex}::int[])
             )
           `;
           teamParams.push(badgeIds);
@@ -1705,8 +1709,9 @@ const searchController = {
               WHERE ut_filter.tag_id = ANY(${tagParam}::int[])
             )
             OR u.id IN (
-              SELECT ub_filter.user_id FROM user_badges ub_filter
-              WHERE ub_filter.badge_id = ANY(${badgeParam}::int[])
+              SELECT DISTINCT ba_filter.awarded_to_user_id
+              FROM badge_awards ba_filter
+              WHERE ba_filter.badge_id = ANY(${badgeParam}::int[])
             )
           )
         `;
@@ -1725,8 +1730,9 @@ const searchController = {
         if (badgeIds.length > 0) {
           userCountQuery += `
             AND u.id IN (
-              SELECT ub_filter.user_id FROM user_badges ub_filter
-              WHERE ub_filter.badge_id = ANY($${userCountParams.length + 1}::int[])
+              SELECT DISTINCT ba_filter.awarded_to_user_id
+              FROM badge_awards ba_filter
+              WHERE ba_filter.badge_id = ANY($${userCountParams.length + 1}::int[])
             )
           `;
           userCountParams.push(badgeIds);
@@ -1886,8 +1892,9 @@ const searchController = {
               WHERE ut_filter.tag_id = ANY(${tagParam2}::int[])
             )
             OR u.id IN (
-              SELECT ub_filter.user_id FROM user_badges ub_filter
-              WHERE ub_filter.badge_id = ANY(${badgeParam2}::int[])
+              SELECT DISTINCT ba_filter.awarded_to_user_id
+              FROM badge_awards ba_filter
+              WHERE ba_filter.badge_id = ANY(${badgeParam2}::int[])
             )
           )
         `;
@@ -1908,8 +1915,9 @@ const searchController = {
         if (badgeIds.length > 0) {
           userQuery += `
             AND u.id IN (
-              SELECT ub_filter.user_id FROM user_badges ub_filter
-              WHERE ub_filter.badge_id = ANY($${userParamIndex}::int[])
+              SELECT DISTINCT ba_filter.awarded_to_user_id
+              FROM badge_awards ba_filter
+              WHERE ba_filter.badge_id = ANY($${userParamIndex}::int[])
             )
           `;
           userParams.push(badgeIds);
@@ -2115,7 +2123,9 @@ const searchController = {
                   [userIds],
                 ),
                 db.pool.query(
-                  `SELECT DISTINCT user_id, badge_id FROM user_badges WHERE user_id = ANY($1)`,
+                  `SELECT DISTINCT awarded_to_user_id AS user_id, badge_id
+                   FROM badge_awards
+                   WHERE awarded_to_user_id = ANY($1)`,
                   [userIds],
                 ),
               ]);

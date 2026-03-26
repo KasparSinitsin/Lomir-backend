@@ -113,7 +113,7 @@ test("getTeamApplications includes filled_by and filled_by_user on embedded role
       };
     }
 
-    if (sql.includes("SELECT DISTINCT ub.user_id, ub.badge_id")) {
+    if (sql.includes("SELECT DISTINCT ba.awarded_to_user_id AS user_id, ba.badge_id")) {
       return {
         rows: [{ user_id: 55, badge_id: 401 }],
       };
