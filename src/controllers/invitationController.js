@@ -65,7 +65,7 @@ const sendTeamInvitation = async (req, res) => {
 
     if (finalRoleId !== null) {
       const roleCheck = await db.pool.query(
-        `SELECT id, status
+        `SELECT id, status, role_name
          FROM team_vacant_roles
          WHERE id = $1 AND team_id = $2`,
         [finalRoleId, teamId],
@@ -84,6 +84,9 @@ const sendTeamInvitation = async (req, res) => {
           message: "Vacant role is no longer open",
         });
       }
+
+      // Store role name for notifications
+      var roleName = roleCheck.rows[0].role_name;
     }
 
     // Check if invitee exists
@@ -105,62 +108,84 @@ const sendTeamInvitation = async (req, res) => {
       [teamId, finalInviteeId],
     );
 
-    if (memberCheck.rows.length > 0) {
+    const isInternalInvite = memberCheck.rows.length > 0;
+
+    if (isInternalInvite && !finalRoleId) {
       return res.status(400).json({
         success: false,
         message: "User is already a member of this team",
       });
     }
 
-    // Check if team is full
-    const memberCount = await db.pool.query(
-      `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
-      [teamId],
-    );
+    if (!isInternalInvite) {
+      // Check if team is full
+      const memberCount = await db.pool.query(
+        `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
+        [teamId],
+      );
 
-    if (
-      team.max_members !== null &&
-      parseInt(memberCount.rows[0].count) >= team.max_members
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Team is already at maximum capacity",
-      });
+      if (
+        team.max_members !== null &&
+        parseInt(memberCount.rows[0].count) >= team.max_members
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Team is already at maximum capacity",
+        });
+      }
     }
 
-    // Check if there's already a pending invitation
-    const existingInvitation = await db.pool.query(
-      `SELECT id FROM team_invitations 
-       WHERE team_id = $1 AND invitee_id = $2 AND status = 'pending'`,
-      [teamId, finalInviteeId],
-    );
+    // Check if there's already a pending invitation (scope differs for internal vs external)
+    if (isInternalInvite) {
+      // For internal role invites, only block if there's already a pending invite for the same role
+      const existingRoleInvitation = await db.pool.query(
+        `SELECT id FROM team_invitations
+         WHERE team_id = $1 AND invitee_id = $2 AND role_id = $3 AND status = 'pending'`,
+        [teamId, finalInviteeId, finalRoleId],
+      );
 
-    if (existingInvitation.rows.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: "An invitation is already pending for this user",
-      });
+      if (existingRoleInvitation.rows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: "A pending invitation for this role already exists for this member",
+        });
+      }
+    } else {
+      const existingInvitation = await db.pool.query(
+        `SELECT id FROM team_invitations
+         WHERE team_id = $1 AND invitee_id = $2 AND status = 'pending'`,
+        [teamId, finalInviteeId],
+      );
+
+      if (existingInvitation.rows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: "An invitation is already pending for this user",
+        });
+      }
     }
 
     // Remove any previous invitations that were accepted/declined/canceled
     await db.pool.query(
-      `DELETE FROM team_invitations 
+      `DELETE FROM team_invitations
    WHERE team_id = $1 AND invitee_id = $2 AND status != 'pending'`,
       [teamId, finalInviteeId],
     );
 
-    // Check if user has a pending application
-    const existingApplication = await db.pool.query(
-      `SELECT id FROM team_applications 
-       WHERE team_id = $1 AND applicant_id = $2 AND status = 'pending'`,
-      [teamId, finalInviteeId],
-    );
+    if (!isInternalInvite) {
+      // Check if user has a pending application
+      const existingApplication = await db.pool.query(
+        `SELECT id FROM team_applications
+         WHERE team_id = $1 AND applicant_id = $2 AND status = 'pending'`,
+        [teamId, finalInviteeId],
+      );
 
-    if (existingApplication.rows.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: "This user already has a pending application for this team.",
-      });
+      if (existingApplication.rows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: "This user already has a pending application for this team.",
+        });
+      }
     }
 
     // Create the invitation
@@ -184,24 +209,45 @@ const sendTeamInvitation = async (req, res) => {
           ? `${inviter.first_name} ${inviter.last_name}`
           : inviter.username;
 
-      await createNotification({
-        userId: finalInviteeId,
-        type: "invitation_received",
-        title: `${inviterName} invited you to join ${team.name}`,
-        message: message || null,
-        referenceType: "team_invitation",
-        referenceId: invitationResult.rows[0].id,
-        teamId: parseInt(teamId),
-        actorId: inviterId,
-      });
-
-      // Emit socket event for real-time notification
       const io = req.app.get("io");
-      if (io) {
-        io.to(`user:${finalInviteeId}`).emit("notification:new", {
-          type: "invitation_received",
+
+      if (isInternalInvite) {
+        await createNotification({
+          userId: finalInviteeId,
+          type: "role_invitation",
+          title: `You've been invited to fill the role '${roleName}' in ${team.name}`,
+          message: message || null,
+          referenceType: "team_invitation",
+          referenceId: invitationResult.rows[0].id,
           teamId: parseInt(teamId),
+          actorId: inviterId,
         });
+
+        if (io) {
+          io.to(`user:${finalInviteeId}`).emit("notification:new", {
+            type: "role_invitation",
+            teamId: parseInt(teamId),
+            roleId: finalRoleId,
+          });
+        }
+      } else {
+        await createNotification({
+          userId: finalInviteeId,
+          type: "invitation_received",
+          title: `${inviterName} invited you to join ${team.name}`,
+          message: message || null,
+          referenceType: "team_invitation",
+          referenceId: invitationResult.rows[0].id,
+          teamId: parseInt(teamId),
+          actorId: inviterId,
+        });
+
+        if (io) {
+          io.to(`user:${finalInviteeId}`).emit("notification:new", {
+            type: "invitation_received",
+            teamId: parseInt(teamId),
+          });
+        }
       }
     } catch (notificationError) {
       console.error(
@@ -251,7 +297,11 @@ const getUserReceivedInvitations = async (req, res) => {
         vr.status as role_status,
         u.id as inviter_id, u.username as inviter_username,
         u.first_name as inviter_first_name, u.last_name as inviter_last_name,
-        u.avatar_url as inviter_avatar_url
+        u.avatar_url as inviter_avatar_url,
+        EXISTS (
+          SELECT 1 FROM team_members tm
+          WHERE tm.team_id = t.id AND tm.user_id = $1
+        ) as is_internal
        FROM team_invitations ti
        JOIN teams t ON ti.team_id = t.id
        LEFT JOIN team_vacant_roles vr ON ti.role_id = vr.id
@@ -259,10 +309,6 @@ const getUserReceivedInvitations = async (req, res) => {
        WHERE ti.invitee_id = $1
        AND ti.status = 'pending'
        AND t.archived_at IS NULL
-       AND NOT EXISTS (
-         SELECT 1 FROM team_members tm
-         WHERE tm.team_id = t.id AND tm.user_id = $1
-       )
        ORDER BY ti.created_at DESC`,
       [userId],
     );
@@ -402,6 +448,7 @@ const getUserReceivedInvitations = async (req, res) => {
         last_name: row.inviter_last_name,
         avatar_url: row.inviter_avatar_url,
       },
+      is_internal: row.is_internal === true || row.is_internal === "true",
     }));
 
     res.status(200).json({
@@ -457,7 +504,11 @@ const getTeamSentInvitations = async (req, res) => {
     inv.username as inviter_username,
     inv.first_name as inviter_first_name,
     inv.last_name as inviter_last_name,
-    inv.avatar_url as inviter_avatar_url
+    inv.avatar_url as inviter_avatar_url,
+    EXISTS (
+      SELECT 1 FROM team_members tm
+      WHERE tm.team_id = ti.team_id AND tm.user_id = ti.invitee_id
+    ) as is_internal
    FROM team_invitations ti
    LEFT JOIN team_vacant_roles vr ON ti.role_id = vr.id
    JOIN users u ON ti.invitee_id = u.id
@@ -614,6 +665,7 @@ const getTeamSentInvitations = async (req, res) => {
         avatar_url: row.inviter_avatar_url,
       },
       inviter_username: row.inviter_username,
+      is_internal: row.is_internal === true || row.is_internal === "true",
     }));
 
     res.status(200).json({
@@ -676,29 +728,38 @@ const respondToInvitation = async (req, res) => {
       let filledRoleName = null;
 
       if (action === "accept") {
-        // Check if team is still not full
-        const memberCount = await client.query(
-          `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
-          [invitation.team_id],
-        );
-
-        if (
-          invitation.max_members !== null &&
-          parseInt(memberCount.rows[0].count) >= invitation.max_members
-        ) {
-          await client.query("ROLLBACK");
-          return res.status(400).json({
-            success: false,
-            message: "Team is now at maximum capacity",
-          });
-        }
-
-        // Add user to team
-        await client.query(
-          `INSERT INTO team_members (team_id, user_id, role, joined_at)
-           VALUES ($1, $2, 'member', NOW())`,
+        // Check if user is already a team member (internal role invite)
+        const existingMember = await client.query(
+          `SELECT id FROM team_members WHERE team_id = $1 AND user_id = $2`,
           [invitation.team_id, userId],
         );
+        const isInternalAccept = existingMember.rows.length > 0;
+
+        if (!isInternalAccept) {
+          // Check if team is still not full
+          const memberCount = await client.query(
+            `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
+            [invitation.team_id],
+          );
+
+          if (
+            invitation.max_members !== null &&
+            parseInt(memberCount.rows[0].count) >= invitation.max_members
+          ) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({
+              success: false,
+              message: "Team is now at maximum capacity",
+            });
+          }
+
+          // Add user to team
+          await client.query(
+            `INSERT INTO team_members (team_id, user_id, role, joined_at)
+             VALUES ($1, $2, 'member', NOW())`,
+            [invitation.team_id, userId],
+          );
+        }
 
         // Update invitation status
         await client.query(
@@ -728,9 +789,16 @@ const respondToInvitation = async (req, res) => {
             ? `${invitation.invitee_first_name} ${invitation.invitee_last_name}`
             : invitation.invitee_username;
 
-        const joinLine = roleFilled
-          ? `👋 ${inviteeName} joined the team as ${filledRoleName}!`
-          : `👋 ${inviteeName} joined the team!`;
+        let joinLine;
+        if (isInternalAccept && roleFilled) {
+          joinLine = `🎯 ${inviteeName} was assigned the role ${filledRoleName}!`;
+        } else if (isInternalAccept) {
+          joinLine = `🎯 ${inviteeName} accepted a role invitation!`;
+        } else if (roleFilled) {
+          joinLine = `👋 ${inviteeName} joined the team as ${filledRoleName}!`;
+        } else {
+          joinLine = `👋 ${inviteeName} joined the team!`;
+        }
         const formattedMessage =
           response_message && response_message.trim()
             ? `${joinLine}\n\n"${response_message.trim()}"`
@@ -744,11 +812,16 @@ const respondToInvitation = async (req, res) => {
 
         // === CREATE NOTIFICATIONS FOR TEAM MEMBERS ===
         try {
+          const notificationType = isInternalAccept ? "role_assigned" : "member_joined";
+          const notificationTitle = isInternalAccept
+            ? `${inviteeName} was assigned a role in ${invitation.team_name}`
+            : `${inviteeName} joined ${invitation.team_name}`;
+
           await notifyTeamMembers({
             teamId: invitation.team_id,
             excludeUserId: userId,
-            type: "member_joined",
-            title: `${inviteeName} joined ${invitation.team_name}`,
+            type: notificationType,
+            title: notificationTitle,
             referenceType: "team_member",
             referenceId: userId,
             actorId: userId,
@@ -758,7 +831,7 @@ const respondToInvitation = async (req, res) => {
           const io = req.app.get("io");
           if (io) {
             io.to(`team:${invitation.team_id}`).emit("notification:new", {
-              type: "member_joined",
+              type: notificationType,
               teamId: invitation.team_id,
             });
           }

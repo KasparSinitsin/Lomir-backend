@@ -62,7 +62,10 @@ function createIoRecorder() {
   };
 }
 
-function buildSendInvitationPoolQueryStub({ roleRows = [{ id: 9, status: "open" }] } = {}) {
+function buildSendInvitationPoolQueryStub({
+  roleRows = [{ id: 9, status: "open", role_name: "Backend Developer" }],
+  isMember = false,
+} = {}) {
   const calls = [];
 
   const query = async (sql, params = []) => {
@@ -90,7 +93,7 @@ function buildSendInvitationPoolQueryStub({ roleRows = [{ id: 9, status: "open" 
     }
 
     if (sql.includes("SELECT id FROM team_members WHERE team_id = $1 AND user_id = $2")) {
-      return { rows: [] };
+      return { rows: isMember ? [{ id: 1 }] : [] };
     }
 
     if (sql.includes("COUNT(*) as count FROM team_members")) {
@@ -168,6 +171,7 @@ function buildRespondInvitationPoolQueryStub({ roleId = 9 } = {}) {
 function buildRespondInvitationClientStub({
   memberCount = "2",
   roleUpdateRows = [{ id: 9, role_name: "Backend Developer" }],
+  isInternalMember = false,
 } = {}) {
   const calls = [];
 
@@ -177,6 +181,10 @@ function buildRespondInvitationClientStub({
 
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
         return { rows: [] };
+      }
+
+      if (sql.includes("SELECT id FROM team_members WHERE team_id = $1 AND user_id = $2")) {
+        return { rows: isInternalMember ? [{ id: 1 }] : [] };
       }
 
       if (sql.includes("COUNT(*) as count FROM team_members")) {
@@ -401,6 +409,7 @@ test("getUserReceivedInvitations includes optional role_id, role_name, and full 
             inviter_first_name: "Alice",
             inviter_last_name: "Admin",
             inviter_avatar_url: "https://example.com/alice.png",
+            is_internal: false,
           },
         ],
       };
@@ -489,6 +498,7 @@ test("getTeamSentInvitations includes optional role_id, role_name, and full role
             inviter_first_name: "Alice",
             inviter_last_name: "Admin",
             inviter_avatar_url: "https://example.com/alice.png",
+            is_internal: false,
           },
         ],
       };
@@ -737,4 +747,217 @@ test("respondToInvitation keeps the decline flow unchanged", async () => {
       payload.type === "invitation_declined",
   );
   assert.ok(declineSocketEvent);
+});
+
+test("sendTeamInvitation allows existing member when roleId is provided (internal role invite)", async () => {
+  const { query, calls } = buildSendInvitationPoolQueryStub({ isMember: true });
+
+  db.pool.query = query;
+  db.query = async (sql) => {
+    if (sql.includes("INSERT INTO notifications")) {
+      return { rows: [{ id: 502 }] };
+    }
+    throw new Error(`Unexpected db SQL: ${sql}`);
+  };
+
+  const req = createRequest({
+    body: {
+      inviteeId: 99,
+      message: "We'd love you to take this role.",
+      roleId: 9,
+    },
+  });
+  const res = createResponse();
+
+  await invitationController.sendTeamInvitation(req, res);
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(res.body.success, true);
+
+  const insertCall = calls.find(({ sql }) =>
+    sql.includes("INSERT INTO team_invitations"),
+  );
+  assert.ok(insertCall);
+  assert.equal(insertCall.params[4], 9);
+
+  // Should NOT have checked capacity (member already on team)
+  assert.equal(
+    calls.some(({ sql }) => sql.includes("COUNT(*) as count FROM team_members")),
+    false,
+  );
+});
+
+test("sendTeamInvitation still rejects existing member when no roleId is provided", async () => {
+  const { query } = buildSendInvitationPoolQueryStub({ isMember: true });
+
+  db.pool.query = query;
+
+  const req = createRequest({
+    body: {
+      inviteeId: 99,
+      message: "Join us!",
+    },
+  });
+  const res = createResponse();
+
+  await invitationController.sendTeamInvitation(req, res);
+
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.success, false);
+  assert.equal(res.body.message, "User is already a member of this team");
+});
+
+test("sendTeamInvitation rejects duplicate pending internal role invite for the same role", async () => {
+  const calls = [];
+
+  db.pool.query = async (sql, params = []) => {
+    calls.push({ sql, params });
+
+    if (sql.includes("FROM teams WHERE id = $1 AND archived_at IS NULL")) {
+      return { rows: [{ id: 42, name: "Alpha", max_members: 5 }] };
+    }
+
+    if (sql.includes("FROM team_members") && sql.includes("role IN ('owner', 'admin')")) {
+      return { rows: [{ role: "owner" }] };
+    }
+
+    if (sql.includes("FROM team_vacant_roles")) {
+      return { rows: [{ id: 9, status: "open", role_name: "Backend Developer" }] };
+    }
+
+    if (sql.includes("SELECT id, username FROM users WHERE id = $1")) {
+      return { rows: [{ id: 99, username: "invitee99" }] };
+    }
+
+    if (sql.includes("SELECT id FROM team_members WHERE team_id = $1 AND user_id = $2")) {
+      return { rows: [{ id: 1 }] }; // already a member
+    }
+
+    if (sql.includes("SELECT id FROM team_invitations") && sql.includes("role_id = $3") && sql.includes("status = 'pending'")) {
+      return { rows: [{ id: 55 }] }; // duplicate pending role invite
+    }
+
+    throw new Error(`Unexpected SQL: ${sql}`);
+  };
+
+  const req = createRequest({
+    body: { inviteeId: 99, roleId: 9 },
+  });
+  const res = createResponse();
+
+  await invitationController.sendTeamInvitation(req, res);
+
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.success, false);
+  assert.equal(res.body.message, "A pending invitation for this role already exists for this member");
+});
+
+test("respondToInvitation accept for internal role invite does not re-add member and fills role", async () => {
+  const { query: poolQuery } = buildRespondInvitationPoolQueryStub({ roleId: 9 });
+  const { client, calls: clientCalls } = buildRespondInvitationClientStub({
+    isInternalMember: true,
+    roleUpdateRows: [{ id: 9, role_name: "Backend Developer" }],
+  });
+  const { query: notificationQuery, calls: notificationCalls } =
+    buildNotificationQueryStub({ teamMemberIds: [10, 11] });
+  const { io, emits } = createIoRecorder();
+
+  db.pool.query = poolQuery;
+  db.pool.connect = async () => client;
+  db.query = notificationQuery;
+
+  const req = createRequest({
+    invitationId: "77",
+    userId: 7,
+    body: { action: "accept", fill_role: true },
+    io,
+  });
+  const res = createResponse();
+
+  await invitationController.respondToInvitation(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.success, true);
+  assert.equal(res.body.data.roleFilled, true);
+  assert.equal(res.body.data.filledRoleName, "Backend Developer");
+
+  // Must NOT insert the user into team_members again
+  assert.equal(
+    clientCalls.some(({ sql }) => sql.includes("INSERT INTO team_members")),
+    false,
+  );
+
+  // Must NOT check team capacity
+  assert.equal(
+    clientCalls.some(({ sql }) => sql.includes("COUNT(*) as count FROM team_members")),
+    false,
+  );
+
+  // Role should still be filled
+  const roleUpdateCall = clientCalls.find(({ sql }) =>
+    sql.includes("UPDATE team_vacant_roles"),
+  );
+  assert.ok(roleUpdateCall);
+
+  // Chat message should use the 🎯 format
+  const teamMessageCall = clientCalls.find(({ sql }) =>
+    sql.includes("INSERT INTO messages (sender_id, team_id, content, sent_at)"),
+  );
+  assert.ok(teamMessageCall);
+  assert.equal(
+    teamMessageCall.params[2],
+    "🎯 Jamie Doe was assigned the role Backend Developer!",
+  );
+
+  // Team notification type should be role_assigned
+  const roleAssignedNotification = notificationCalls.find(
+    ({ sql, params }) =>
+      sql.includes("INSERT INTO notifications") && params[1] === "role_assigned",
+  );
+  assert.ok(roleAssignedNotification);
+});
+
+test("respondToInvitation accept for internal role invite with fill_role false does not fill role", async () => {
+  const { query: poolQuery } = buildRespondInvitationPoolQueryStub({ roleId: 9 });
+  const { client, calls: clientCalls } = buildRespondInvitationClientStub({
+    isInternalMember: true,
+  });
+  const { query: notificationQuery } = buildNotificationQueryStub();
+
+  db.pool.query = poolQuery;
+  db.pool.connect = async () => client;
+  db.query = notificationQuery;
+
+  const req = createRequest({
+    invitationId: "77",
+    userId: 7,
+    body: { action: "accept", fill_role: false },
+  });
+  const res = createResponse();
+
+  await invitationController.respondToInvitation(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.success, true);
+  assert.equal(res.body.data.roleFilled, false);
+  assert.equal(res.body.data.filledRoleName, null);
+
+  // Must NOT insert into team_members
+  assert.equal(
+    clientCalls.some(({ sql }) => sql.includes("INSERT INTO team_members")),
+    false,
+  );
+
+  // Must NOT update vacant role
+  assert.equal(
+    clientCalls.some(({ sql }) => sql.includes("UPDATE team_vacant_roles")),
+    false,
+  );
+
+  // Chat message should still use 🎯 format (internal accept without role fill)
+  const teamMessageCall = clientCalls.find(({ sql }) =>
+    sql.includes("INSERT INTO messages (sender_id, team_id, content, sent_at)"),
+  );
+  assert.ok(teamMessageCall);
+  assert.equal(teamMessageCall.params[2], "🎯 Jamie Doe accepted a role invitation!");
 });
