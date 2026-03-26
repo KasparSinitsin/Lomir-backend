@@ -165,7 +165,10 @@ const getVacantRoles = async (req, res) => {
     if (req.user) {
       const [userTagsResult, userBadgesResult, userLocationResult] = await Promise.all([
         db.pool.query(`SELECT tag_id FROM user_tags WHERE user_id = $1`, [req.user.id]),
-        db.pool.query(`SELECT DISTINCT badge_id FROM user_badges WHERE user_id = $1`, [req.user.id]),
+        db.pool.query(
+          `SELECT DISTINCT badge_id FROM badge_awards WHERE awarded_to_user_id = $1`,
+          [req.user.id],
+        ),
         db.pool.query(`SELECT latitude, longitude FROM users WHERE id = $1`, [req.user.id]),
       ]);
       userTagIds = new Set(userTagsResult.rows.map((r) => r.tag_id));

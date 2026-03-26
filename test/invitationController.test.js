@@ -433,7 +433,7 @@ test("getUserReceivedInvitations includes optional role_id, role_name, and full 
       return { rows: [{ tag_id: 1 }] };
     }
 
-    if (sql.includes("SELECT DISTINCT badge_id FROM user_badges")) {
+    if (sql.includes("SELECT DISTINCT badge_id FROM badge_awards")) {
       return { rows: [] };
     }
 
@@ -518,7 +518,7 @@ test("getTeamSentInvitations includes optional role_id, role_name, and full role
       return { rows: [] };
     }
 
-    if (sql.includes("SELECT DISTINCT ub.user_id, ub.badge_id")) {
+    if (sql.includes("SELECT DISTINCT ba.awarded_to_user_id AS user_id, ba.badge_id")) {
       return { rows: [] };
     }
 

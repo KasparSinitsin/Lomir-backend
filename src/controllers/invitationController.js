@@ -352,7 +352,7 @@ const getUserReceivedInvitations = async (req, res) => {
           [userId]
         ),
         db.pool.query(
-          `SELECT DISTINCT badge_id FROM user_badges WHERE user_id = $1`,
+          `SELECT DISTINCT badge_id FROM badge_awards WHERE awarded_to_user_id = $1`,
           [userId]
         ),
       ]);
@@ -573,9 +573,9 @@ const getTeamSentInvitations = async (req, res) => {
           [inviteeIds]
         ),
         db.pool.query(
-          `SELECT DISTINCT ub.user_id, ub.badge_id
-           FROM user_badges ub
-           WHERE ub.user_id = ANY($1)`,
+          `SELECT DISTINCT ba.awarded_to_user_id AS user_id, ba.badge_id
+           FROM badge_awards ba
+           WHERE ba.awarded_to_user_id = ANY($1)`,
           [inviteeIds]
         ),
       ]);

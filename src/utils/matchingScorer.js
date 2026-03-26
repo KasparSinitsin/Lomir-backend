@@ -134,7 +134,7 @@ async function computeTeamMatchScores(db, userId) {
   const [userTagsRes, userBadgesRes] = await Promise.all([
     db.pool.query(`SELECT tag_id FROM user_tags WHERE user_id = $1`, [userId]),
     db.pool.query(
-      `SELECT DISTINCT badge_id FROM user_badges WHERE user_id = $1`,
+      `SELECT DISTINCT badge_id FROM badge_awards WHERE awarded_to_user_id = $1`,
       [userId],
     ),
   ]);
@@ -317,7 +317,7 @@ async function computeUserProfileOverlap(db, userId, otherUserIds) {
   const [userTagsRes, userBadgesRes] = await Promise.all([
     db.pool.query(`SELECT tag_id FROM user_tags WHERE user_id = $1`, [userId]),
     db.pool.query(
-      `SELECT DISTINCT badge_id FROM user_badges WHERE user_id = $1`,
+      `SELECT DISTINCT badge_id FROM badge_awards WHERE awarded_to_user_id = $1`,
       [userId],
     ),
   ]);
@@ -334,7 +334,9 @@ async function computeUserProfileOverlap(db, userId, otherUserIds) {
       [filteredIds],
     ),
     db.pool.query(
-      `SELECT DISTINCT user_id, badge_id FROM user_badges WHERE user_id = ANY($1)`,
+      `SELECT DISTINCT awarded_to_user_id AS user_id, badge_id
+       FROM badge_awards
+       WHERE awarded_to_user_id = ANY($1)`,
       [filteredIds],
     ),
   ]);
