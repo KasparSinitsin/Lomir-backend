@@ -5,8 +5,7 @@ const {
   validateBooleanQuery,
 } = require("../utils/booleanSearchParser");
 const {
-  computeTeamMatchScores,
-  computeTeamTagOverlap,
+  computeTeamProfileMatchScores,
   computeUserProfileOverlap,
   scoreUserAgainstRole,
 } = require("../utils/matchingScorer");
@@ -1064,14 +1063,26 @@ const searchController = {
           // --- Team scoring: always profile-based ---
           const teamIds = teamsWithFixedVisibility.map((t) => t.id);
 
-          const teamOverlap = await computeTeamTagOverlap(db, userId, teamIds);
+          const teamMatches = await computeTeamProfileMatchScores(db, userId, teamIds);
           finalTeams = teamsWithFixedVisibility.map((team) => {
-            const overlap = teamOverlap.get(team.id);
+            const match = teamMatches.get(team.id);
             return {
               ...team,
-              best_match_score: overlap ? overlap.overlapScore : 0,
-              shared_tag_count: overlap ? overlap.sharedCount : 0,
-              match_type: "tag_overlap",
+              match_score: match ? match.matchScore : 0,
+              best_match_score: match ? match.matchScore : 0,
+              match_details: {
+                tag_score: match ? match.tagScore : 0,
+                badge_score: match ? match.badgeScore : 0,
+                distance_score: match ? match.distanceScore : 0,
+                shared_tag_count: match ? match.sharedTagCount : 0,
+                total_team_tags: match ? match.totalUniqueTeamTags : 0,
+                shared_badge_count: match ? match.sharedBadgeCount : 0,
+                total_team_badges: match ? match.totalUniqueTeamBadges : 0,
+                distance_km: match ? match.distanceKm : null,
+              },
+              shared_tag_count: match ? match.sharedTagCount : 0,
+              shared_badge_count: match ? match.sharedBadgeCount : 0,
+              match_type: "team_profile_match",
             };
           });
 
@@ -2076,14 +2087,26 @@ const searchController = {
           // --- Team scoring: always profile-based ---
           const teamIds = teamsWithFixedVisibility.map((t) => t.id);
 
-          const teamOverlap = await computeTeamTagOverlap(db, userId, teamIds);
+          const teamMatches = await computeTeamProfileMatchScores(db, userId, teamIds);
           finalTeams = teamsWithFixedVisibility.map((team) => {
-            const overlap = teamOverlap.get(team.id);
+            const match = teamMatches.get(team.id);
             return {
               ...team,
-              best_match_score: overlap ? overlap.overlapScore : 0,
-              shared_tag_count: overlap ? overlap.sharedCount : 0,
-              match_type: "tag_overlap",
+              match_score: match ? match.matchScore : 0,
+              best_match_score: match ? match.matchScore : 0,
+              match_details: {
+                tag_score: match ? match.tagScore : 0,
+                badge_score: match ? match.badgeScore : 0,
+                distance_score: match ? match.distanceScore : 0,
+                shared_tag_count: match ? match.sharedTagCount : 0,
+                total_team_tags: match ? match.totalUniqueTeamTags : 0,
+                shared_badge_count: match ? match.sharedBadgeCount : 0,
+                total_team_badges: match ? match.totalUniqueTeamBadges : 0,
+                distance_km: match ? match.distanceKm : null,
+              },
+              shared_tag_count: match ? match.sharedTagCount : 0,
+              shared_badge_count: match ? match.sharedBadgeCount : 0,
+              match_type: "team_profile_match",
             };
           });
 
