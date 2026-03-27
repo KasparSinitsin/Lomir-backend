@@ -10,7 +10,8 @@ const {
   scoreUserAgainstRole,
 } = require("../utils/matchingScorer");
 
-const VALID_SEARCH_TYPES = ["all", "teams", "users"];
+const VALID_SEARCH_TYPES = ["all", "teams", "users", "roles"];
+const VALID_ROLE_SORTS = ["recent", "newest", "name", "match"];
 
 function parseSearchType(value) {
   if (typeof value !== "string") return "all";
@@ -21,6 +22,297 @@ function parseSearchType(value) {
 
 function parseBooleanFlag(value) {
   return typeof value === "string" && value.toLowerCase() === "true";
+}
+
+function parseRoleSort(value) {
+  if (typeof value !== "string") return "newest";
+
+  const normalized = value.toLowerCase();
+  return VALID_ROLE_SORTS.includes(normalized) ? normalized : "newest";
+}
+
+function getRolesSortDir(sort, direction) {
+  if (sort === "name") {
+    return direction === "DESC" ? "desc" : "asc";
+  }
+
+  return "desc";
+}
+
+function roundOverlapScore(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function normalizeNullableNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeRoleSearchRow(role) {
+  return {
+    ...role,
+    latitude: normalizeNullableNumber(role.latitude),
+    longitude: normalizeNullableNumber(role.longitude),
+    max_distance_km: normalizeNullableNumber(role.max_distance_km),
+    is_remote: role.is_remote === true || role.is_remote === "true",
+    team_is_remote:
+      role.team_is_remote === true || role.team_is_remote === "true",
+  };
+}
+
+function buildRoleOrderBy(sort, direction) {
+  if (sort === "name") {
+    return direction === "DESC"
+      ? "vr.role_name DESC, vr.created_at DESC"
+      : "vr.role_name ASC, vr.created_at DESC";
+  }
+
+  return "vr.created_at DESC";
+}
+
+function computeJaccardOverlap(baseSet, candidateIds) {
+  const candidateSet = new Set(
+    candidateIds.map((id) => Number(id)).filter(Number.isFinite),
+  );
+
+  let sharedCount = 0;
+  for (const id of candidateSet) {
+    if (baseSet.has(id)) sharedCount++;
+  }
+
+  const unionSize = new Set([...baseSet, ...candidateSet]).size;
+  const score = unionSize > 0 ? sharedCount / unionSize : 0;
+
+  return {
+    sharedCount,
+    score: roundOverlapScore(score),
+  };
+}
+
+async function enrichRolesWithTagsAndBadges(roles) {
+  if (!roles || roles.length === 0) return [];
+
+  const roleIds = roles
+    .map((role) => Number(role.id))
+    .filter(Number.isFinite);
+
+  if (roleIds.length === 0) {
+    return roles.map((role) => ({
+      ...normalizeRoleSearchRow(role),
+      tags: [],
+      badges: [],
+    }));
+  }
+
+  const [tagsResult, badgesResult] = await Promise.all([
+    db.pool.query(
+      `SELECT
+         vrt.role_id,
+         t.id AS id,
+         t.id AS tag_id,
+         t.name,
+         t.category,
+         t.supercategory
+       FROM team_vacant_role_tags vrt
+       JOIN tags t ON vrt.tag_id = t.id
+       WHERE vrt.role_id = ANY($1)
+       ORDER BY t.supercategory, t.category, t.name`,
+      [roleIds],
+    ),
+    db.pool.query(
+      `SELECT
+         vrb.role_id,
+         b.id AS id,
+         b.id AS badge_id,
+         b.name,
+         b.category,
+         b.color,
+         b.image_url,
+         b.cat_image_url
+       FROM team_vacant_role_badges vrb
+       JOIN badges b ON vrb.badge_id = b.id
+       WHERE vrb.role_id = ANY($1)
+       ORDER BY b.category, b.name`,
+      [roleIds],
+    ),
+  ]);
+
+  const tagsByRole = new Map();
+  const badgesByRole = new Map();
+
+  for (const tag of tagsResult.rows) {
+    const roleId = Number(tag.role_id);
+    if (!tagsByRole.has(roleId)) tagsByRole.set(roleId, []);
+    tagsByRole.get(roleId).push(tag);
+  }
+
+  for (const badge of badgesResult.rows) {
+    const roleId = Number(badge.role_id);
+    if (!badgesByRole.has(roleId)) badgesByRole.set(roleId, []);
+    badgesByRole.get(roleId).push(badge);
+  }
+
+  return roles.map((role) => {
+    const normalizedRole = normalizeRoleSearchRow(role);
+    const roleId = Number(role.id);
+
+    return {
+      ...normalizedRole,
+      tags: tagsByRole.get(roleId) || [],
+      badges: badgesByRole.get(roleId) || [],
+    };
+  });
+}
+
+async function applyViewerRoleMatchScores(roles, userId) {
+  if (!userId || !roles || roles.length === 0) return roles || [];
+
+  const [viewerTagsResult, viewerBadgesResult] = await Promise.all([
+    db.pool.query(`SELECT tag_id FROM user_tags WHERE user_id = $1`, [userId]),
+    db.pool.query(
+      `SELECT DISTINCT badge_id FROM badge_awards WHERE awarded_to_user_id = $1`,
+      [userId],
+    ),
+  ]);
+
+  const viewerTagIds = new Set(
+    viewerTagsResult.rows
+      .map((row) => Number(row.tag_id))
+      .filter(Number.isFinite),
+  );
+  const viewerBadgeIds = new Set(
+    viewerBadgesResult.rows
+      .map((row) => Number(row.badge_id))
+      .filter(Number.isFinite),
+  );
+
+  return roles.map((role) => {
+    const roleTagIds = (role.tags || [])
+      .map((tag) => Number(tag.tag_id ?? tag.id))
+      .filter(Number.isFinite);
+    const roleBadgeIds = (role.badges || [])
+      .map((badge) => Number(badge.badge_id ?? badge.id))
+      .filter(Number.isFinite);
+
+    const tagOverlap = computeJaccardOverlap(viewerTagIds, roleTagIds);
+    const badgeOverlap = computeJaccardOverlap(viewerBadgeIds, roleBadgeIds);
+
+    return {
+      ...role,
+      sharedTagCount: tagOverlap.sharedCount,
+      best_match_score: tagOverlap.score,
+      match_details: {
+        tagScore: tagOverlap.score,
+        badgeScore: badgeOverlap.score,
+      },
+    };
+  });
+}
+
+async function fetchOpenRoleSearchResults({
+  query = null,
+  sort = "newest",
+  direction = "ASC",
+  page = 1,
+  limit = 20,
+  userId = null,
+}) {
+  const searchValue =
+    typeof query === "string" ? query.trim() : query;
+  const offset = (page - 1) * limit;
+  const isMatchSort = sort === "match" && !!userId;
+
+  const roleCountQuery = `
+    SELECT COUNT(DISTINCT vr.id) AS total
+    FROM team_vacant_roles vr
+    JOIN teams t ON vr.team_id = t.id
+    LEFT JOIN team_vacant_role_tags vrt ON vrt.role_id = vr.id
+    LEFT JOIN tags tg ON vrt.tag_id = tg.id
+    WHERE vr.status = 'open'
+      AND t.archived_at IS NULL
+      AND (
+        $1 = '' OR $1 IS NULL
+        OR vr.role_name ILIKE '%' || $1 || '%'
+        OR vr.bio ILIKE '%' || $1 || '%'
+        OR t.name ILIKE '%' || $1 || '%'
+        OR tg.name ILIKE '%' || $1 || '%'
+      )
+  `;
+
+  let roleDataQuery = `
+    SELECT
+      vr.id,
+      vr.role_name,
+      vr.bio,
+      vr.city,
+      vr.country,
+      vr.state,
+      vr.postal_code,
+      vr.latitude,
+      vr.longitude,
+      vr.max_distance_km,
+      vr.is_remote,
+      vr.status,
+      vr.created_at,
+      vr.team_id,
+      t.name AS team_name,
+      t.teamavatar_url AS team_avatar_url,
+      t.city AS team_city,
+      t.country AS team_country,
+      t.is_remote AS team_is_remote
+    FROM team_vacant_roles vr
+    JOIN teams t ON vr.team_id = t.id
+    WHERE vr.status = 'open'
+      AND t.archived_at IS NULL
+      AND (
+        $1 = '' OR $1 IS NULL
+        OR vr.role_name ILIKE '%' || $1 || '%'
+        OR vr.bio ILIKE '%' || $1 || '%'
+        OR t.name ILIKE '%' || $1 || '%'
+        OR EXISTS (
+          SELECT 1 FROM team_vacant_role_tags vrt2
+          JOIN tags tg2 ON vrt2.tag_id = tg2.id
+          WHERE vrt2.role_id = vr.id AND tg2.name ILIKE '%' || $1 || '%'
+        )
+      )
+    ORDER BY ${buildRoleOrderBy(sort, direction)}
+  `;
+
+  const roleDataParams = [searchValue];
+  if (!isMatchSort) {
+    roleDataQuery += `
+      LIMIT $2 OFFSET $3
+    `;
+    roleDataParams.push(limit, offset);
+  }
+
+  const [roleCountResult, roleDataResult] = await Promise.all([
+    db.pool.query(roleCountQuery, [searchValue]),
+    db.pool.query(roleDataQuery, roleDataParams),
+  ]);
+
+  const totalRoles =
+    parseInt(roleCountResult.rows[0]?.total, 10) || 0;
+
+  let roles = await enrichRolesWithTagsAndBadges(roleDataResult.rows);
+
+  if (isMatchSort) {
+    roles = await applyViewerRoleMatchScores(roles, userId);
+    roles.sort((a, b) => {
+      const scoreDiff = b.best_match_score - a.best_match_score;
+      if (scoreDiff !== 0) return scoreDiff;
+
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+    roles = roles.slice(offset, offset + limit);
+  }
+
+  return {
+    roles,
+    totalRoles,
+  };
 }
 
 const searchController = {
@@ -139,8 +431,9 @@ const searchController = {
       const { query, sortBy, sortDir } = req.query;
       const userId = req.user?.id;
       const searchType = parseSearchType(req.query.searchType);
-      const includeTeams = searchType !== "users";
-      const includeUsers = searchType !== "teams";
+      const includeTeams = searchType === "all" || searchType === "teams";
+      const includeUsers = searchType === "all" || searchType === "users";
+      const includeRoles = searchType === "roles";
       const openRolesOnly = parseBooleanFlag(req.query.openRolesOnly);
       const excludeOwnTeams = parseBooleanFlag(req.query.excludeOwnTeams) && !!userId;
       const excludeTeamId = req.query.excludeTeamId ? parseInt(req.query.excludeTeamId, 10) : null;
@@ -166,6 +459,7 @@ const searchController = {
         "match",
       ];
       const sort = validSortOptions.includes(sortBy) ? sortBy : "name";
+      const roleSort = parseRoleSort(sortBy);
 
       const validDirections = ["asc", "desc", "remote"];
       const direction = validDirections.includes(sortDir)
@@ -198,6 +492,41 @@ const searchController = {
         return res.status(400).json({
           success: false,
           message: "Search query must be at least 2 characters long",
+        });
+      }
+
+      if (includeRoles) {
+        const { roles, totalRoles } = await fetchOpenRoleSearchResults({
+          query,
+          sort: roleSort,
+          direction,
+          page,
+          limit,
+          userId,
+        });
+
+        return res.status(200).json({
+          success: true,
+          data: {
+            teams: [],
+            users: [],
+            roles,
+          },
+          pagination: {
+            page,
+            limit,
+            totalTeams: 0,
+            totalUsers: 0,
+            totalRoles,
+            totalItems: totalRoles,
+            totalPages: Math.ceil(totalRoles / limit),
+            hasNextPage: offset + limit < totalRoles,
+            hasPrevPage: page > 1,
+          },
+          sorting: {
+            sortBy: roleSort,
+            sortDir: getRolesSortDir(roleSort, direction),
+          },
         });
       }
 
@@ -1216,12 +1545,14 @@ const searchController = {
         data: {
           teams: paginatedTeams,
           users: paginatedUsers,
+          roles: [],
         },
         pagination: {
           page,
           limit,
           totalTeams,
           totalUsers,
+          totalRoles: 0,
           totalItems,
           totalPages: Math.ceil(paginationBaseItems / limit),
           hasNextPage: offset + limit < paginationBaseItems,
@@ -1263,8 +1594,9 @@ const searchController = {
       const { sortBy, sortDir } = req.query;
       const userId = req.user?.id;
       const searchType = parseSearchType(req.query.searchType);
-      const includeTeams = searchType !== "users";
-      const includeUsers = searchType !== "teams";
+      const includeTeams = searchType === "all" || searchType === "teams";
+      const includeUsers = searchType === "all" || searchType === "users";
+      const includeRoles = searchType === "roles";
       const openRolesOnly = parseBooleanFlag(req.query.openRolesOnly);
       const excludeOwnTeams = parseBooleanFlag(req.query.excludeOwnTeams) && !!userId;
       const excludeTeamId = req.query.excludeTeamId ? parseInt(req.query.excludeTeamId, 10) : null;
@@ -1293,6 +1625,7 @@ const searchController = {
         "match",
       ];
       const sort = validSortOptions.includes(sortBy) ? sortBy : "name";
+      const roleSort = parseRoleSort(sortBy);
 
       const validDirections = ["asc", "desc", "remote"];
       const direction = validDirections.includes(sortDir)
@@ -1316,6 +1649,40 @@ const searchController = {
       console.log(`Tag filter IDs: ${JSON.stringify(tagIds)}, Badge filter IDs: ${JSON.stringify(badgeIds)}`);
       console.log(`Match sort: roleId=${matchRoleId || 'none (profile-based)'}`);
       console.log(`Exclude team members: teamId=${excludeTeamId || 'none'}`);
+
+      if (includeRoles) {
+        const { roles, totalRoles } = await fetchOpenRoleSearchResults({
+          sort: roleSort,
+          direction,
+          page,
+          limit,
+          userId,
+        });
+
+        return res.status(200).json({
+          success: true,
+          data: {
+            teams: [],
+            users: [],
+            roles,
+          },
+          pagination: {
+            page,
+            limit,
+            totalTeams: 0,
+            totalUsers: 0,
+            totalRoles,
+            totalItems: totalRoles,
+            totalPages: Math.ceil(totalRoles / limit),
+            hasNextPage: offset + limit < totalRoles,
+            hasPrevPage: page > 1,
+          },
+          sorting: {
+            sortBy: roleSort,
+            sortDir: getRolesSortDir(roleSort, direction),
+          },
+        });
+      }
 
       let userLocation = null;
 
@@ -2240,12 +2607,14 @@ const searchController = {
         data: {
           teams: paginatedTeams,
           users: paginatedUsers,
+          roles: [],
         },
         pagination: {
           page,
           limit,
           totalTeams,
           totalUsers,
+          totalRoles: 0,
           totalItems,
           totalPages: Math.ceil(paginationBaseItems / limit),
           hasNextPage: offset + limit < paginationBaseItems,
