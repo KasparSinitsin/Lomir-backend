@@ -425,6 +425,17 @@ test("getUserReceivedInvitations includes optional role_id, role_name, and full 
       return { rows: [] };
     }
 
+    if (sql.includes("FROM team_tags tt")) {
+      return { rows: [] };
+    }
+
+    if (
+      sql.includes("SELECT DISTINCT tm.team_id, b.id AS badge_id") &&
+      sql.includes("FROM team_members tm")
+    ) {
+      return { rows: [] };
+    }
+
     if (sql.includes("SELECT latitude, longitude FROM users")) {
       return { rows: [{ latitude: 52.5, longitude: 13.4 }] };
     }
