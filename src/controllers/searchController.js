@@ -169,12 +169,13 @@ async function enrichRolesWithTagsAndBadges(roles) {
 async function applyViewerRoleMatchScores(roles, userId) {
   if (!userId || !roles || roles.length === 0) return roles || [];
 
-  const [viewerTagsResult, viewerBadgesResult] = await Promise.all([
+  const [viewerTagsResult, viewerBadgesResult, viewerLocationResult] = await Promise.all([
     db.pool.query(`SELECT tag_id FROM user_tags WHERE user_id = $1`, [userId]),
     db.pool.query(
       `SELECT DISTINCT badge_id FROM badge_awards WHERE awarded_to_user_id = $1`,
       [userId],
     ),
+    db.pool.query(`SELECT latitude, longitude FROM users WHERE id = $1`, [userId]),
   ]);
 
   const viewerTagIds = new Set(
@@ -187,6 +188,9 @@ async function applyViewerRoleMatchScores(roles, userId) {
       .map((row) => Number(row.badge_id))
       .filter(Number.isFinite),
   );
+  const viewerLocation = viewerLocationResult.rows[0] || {};
+  const viewerLat = normalizeNullableNumber(viewerLocation.latitude);
+  const viewerLng = normalizeNullableNumber(viewerLocation.longitude);
 
   return roles.map((role) => {
     const roleTagIds = (role.tags || [])
@@ -195,18 +199,26 @@ async function applyViewerRoleMatchScores(roles, userId) {
     const roleBadgeIds = (role.badges || [])
       .map((badge) => Number(badge.badge_id ?? badge.id))
       .filter(Number.isFinite);
-
-    const tagOverlap = computeJaccardOverlap(viewerTagIds, roleTagIds);
-    const badgeOverlap = computeJaccardOverlap(viewerBadgeIds, roleBadgeIds);
+    const scores = scoreUserAgainstRole({
+      userTagIds: viewerTagIds,
+      userBadgeIds: viewerBadgeIds,
+      userLat: viewerLat,
+      userLng: viewerLng,
+      roleTagIds,
+      roleBadgeIds,
+      role,
+    });
 
     return {
       ...role,
-      sharedTagCount: tagOverlap.sharedCount,
-      best_match_score: tagOverlap.score,
+      best_match_score: scores.matchScore,
       match_details: {
-        tagScore: tagOverlap.score,
-        badgeScore: badgeOverlap.score,
+        tag_score: scores.tagScore,
+        badge_score: scores.badgeScore,
+        distance_score: scores.distanceScore,
+        distance_km: scores.distanceKm,
       },
+      match_type: "role_match",
     };
   });
 }
