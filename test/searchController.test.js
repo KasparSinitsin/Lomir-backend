@@ -115,6 +115,20 @@ function buildQueryStub() {
       };
     }
 
+    if (
+      sql.includes("SELECT COUNT(DISTINCT vr.id) AS total") &&
+      sql.includes("FROM team_vacant_roles vr")
+    ) {
+      return { rows: [{ total: "0" }] };
+    }
+
+    if (
+      sql.includes("FROM team_vacant_roles vr") &&
+      sql.includes("t.teamavatar_url AS team_avatar_url")
+    ) {
+      return { rows: [] };
+    }
+
     throw new Error(`Unexpected SQL in test stub: ${sql}`);
   };
 
