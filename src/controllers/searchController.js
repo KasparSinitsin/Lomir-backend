@@ -1539,6 +1539,21 @@ const searchController = {
         ? finalUsers.slice(offset, offset + limit)
         : finalUsers;
 
+      let rolesForAll = [];
+      let totalRolesForAll = 0;
+
+      if (searchType === "all") {
+        ({ roles: rolesForAll, totalRoles: totalRolesForAll } =
+          await fetchOpenRoleSearchResults({
+            query,
+            sort: roleSort,
+            direction,
+            page,
+            limit,
+            userId,
+          }));
+      }
+
       const paginationBaseItems =
         searchType === "teams"
           ? totalTeams
@@ -1557,14 +1572,14 @@ const searchController = {
         data: {
           teams: paginatedTeams,
           users: paginatedUsers,
-          roles: [],
+          roles: rolesForAll,
         },
         pagination: {
           page,
           limit,
           totalTeams,
           totalUsers,
-          totalRoles: 0,
+          totalRoles: totalRolesForAll,
           totalItems,
           totalPages: Math.ceil(paginationBaseItems / limit),
           hasNextPage: offset + limit < paginationBaseItems,
@@ -2601,6 +2616,20 @@ const searchController = {
         ? finalUsers.slice(offset, offset + limit)
         : finalUsers;
 
+      let rolesForAll = [];
+      let totalRolesForAll = 0;
+
+      if (searchType === "all") {
+        ({ roles: rolesForAll, totalRoles: totalRolesForAll } =
+          await fetchOpenRoleSearchResults({
+            sort: roleSort,
+            direction,
+            page,
+            limit,
+            userId,
+          }));
+      }
+
       const paginationBaseItems =
         searchType === "teams"
           ? totalTeams
@@ -2619,14 +2648,14 @@ const searchController = {
         data: {
           teams: paginatedTeams,
           users: paginatedUsers,
-          roles: [],
+          roles: rolesForAll,
         },
         pagination: {
           page,
           limit,
           totalTeams,
           totalUsers,
-          totalRoles: 0,
+          totalRoles: totalRolesForAll,
           totalItems,
           totalPages: Math.ceil(paginationBaseItems / limit),
           hasNextPage: offset + limit < paginationBaseItems,
