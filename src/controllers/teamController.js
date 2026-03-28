@@ -3103,14 +3103,15 @@ const updateMemberRole = async (req, res) => {
     const teamId = req.params.teamId;
     const memberId = req.params.memberId;
     const userId = req.user.id;
-    const { newRole } = req.body;
+    const { new_role } = req.body;
 
     // Validate role
-    const validRoles = ["member", "admin"];
-    if (!validRoles.includes(newRole)) {
+    const validRoles = ["member", "admin", "owner"];
+    if (!validRoles.includes(new_role)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid role. Must be 'member' or 'admin'",
+        message: "Invalid role. Must be 'member', 'admin', or 'owner'",
+        received: new_role,
       });
     }
 
@@ -3155,28 +3156,158 @@ const updateMemberRole = async (req, res) => {
 
     const memberCurrentRole = memberCheck.rows[0].role;
 
-    // Only owners can change admin roles
-    if (memberCurrentRole === "admin" && userrole !== "owner") {
+    // Commented out restrictions for team role changes to enable more flexible role management
+
+    // // Only owners can change admin roles
+    // if (memberCurrentRole === "admin" && userRole !== "owner") {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: "Only team owners can change admin roles",
+    //   });
+    // }
+
+    // // Only owners can promote to admin
+    // if (new_role === "admin" && userRole !== "owner") {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: "Only team owners can promote members to admin",
+    //   });
+    // }
+
+    // Only owner can transfer ownership
+    if (new_role === "owner" && userRole !== "owner") {
       return res.status(403).json({
         success: false,
-        message: "Only team owners can change admin roles",
+        message: "Only the team owner can transfer ownership",
       });
     }
 
-    // Only owners can promote to admin
-    if (newRole === "admin" && userrole !== "owner") {
-      return res.status(403).json({
-        success: false,
-        message: "Only team owners can promote members to admin",
-      });
-    }
+    // Handle ownership transfer
+    if (new_role === "owner") {
+      const client = await db.pool.connect();
 
-    // Can't change owner role
-    if (memberCurrentrole === "owner") {
-      return res.status(403).json({
-        success: false,
-        message: "Cannot change owner role",
-      });
+      try {
+        await client.query("BEGIN");
+
+        // Demote current owner to admin
+        await client.query(
+          `UPDATE team_members
+       SET role = 'admin'
+       WHERE team_id = $1 AND role = 'owner'`,
+          [teamId],
+        );
+
+        // Promote target member to owner
+        await client.query(
+          `UPDATE team_members
+       SET role = 'owner'
+       WHERE team_id = $1 AND user_id = $2`,
+          [teamId, memberId],
+        );
+
+        // Update teams table owner_id
+        await client.query(
+          `UPDATE teams
+       SET owner_id = $1
+       WHERE id = $2`,
+          [memberId, teamId],
+        );
+
+        await client.query("COMMIT");
+
+        // === NOTIFICATION + SYSTEM MESSAGES ===
+        try {
+          // Team name
+          const teamResult = await db.pool.query(
+            `SELECT name FROM teams WHERE id = $1`,
+            [teamId],
+          );
+          const teamName = teamResult.rows[0]?.name || "the team";
+
+          // Previous owner name
+          const prevOwnerResult = await db.pool.query(
+            `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+            [userId],
+          );
+          const prevOwner = prevOwnerResult.rows[0];
+          const prevOwnerName =
+            prevOwner.first_name && prevOwner.last_name
+              ? `${prevOwner.first_name} ${prevOwner.last_name}`
+              : prevOwner.username;
+
+          // New owner name
+          const newOwnerResult = await db.pool.query(
+            `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+            [memberId],
+          );
+          const newOwner = newOwnerResult.rows[0];
+          const newOwnerName =
+            newOwner.first_name && newOwner.last_name
+              ? `${newOwner.first_name} ${newOwner.last_name}`
+              : newOwner.username;
+
+          // ✅ DM system message (tokenized team + users)
+          const teamToken = `${teamId}:${teamName}`;
+          const prevToken = `${userId}:${prevOwnerName}`;
+          const newToken = `${memberId}:${newOwnerName}`;
+
+          const ownershipMessage = `👑 OWNERSHIP_TRANSFERRED: ${teamToken} | ${prevToken} | ${newToken}`;
+
+          await db.pool.query(
+            `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+         VALUES ($1, $2, $3, NOW())`,
+            [userId, memberId, ownershipMessage],
+          );
+
+          // Notification for new owner
+          await createNotification({
+            userId: parseInt(memberId),
+            type: "ownership_transferred",
+            title: `You are now the owner of ${teamName}`,
+            message: null,
+            referenceType: "team_member",
+            referenceId: parseInt(teamId),
+            teamId: parseInt(teamId),
+            actorId: parseInt(userId),
+          });
+
+          // Socket event
+          const io = req.app.get("io");
+          if (io) {
+            io.to(`user:${memberId}`).emit("notification:new", {
+              type: "ownership_transferred",
+              teamId: parseInt(teamId),
+            });
+          }
+
+          // Team chat message for everyone
+          const teamChatMessage = `👑 OWNERSHIP_TEAM: ${prevOwnerName} | ${newOwnerName}`;
+          await db.pool.query(
+            `INSERT INTO messages (sender_id, team_id, content, sent_at)
+         VALUES ($1, $2, $3, NOW())`,
+            [userId, teamId, teamChatMessage],
+          );
+        } catch (notificationError) {
+          console.error(
+            "Error creating ownership transfer notification:",
+            notificationError,
+          );
+        }
+
+        return res.status(200).json({
+          success: true,
+          message: "Team ownership transferred successfully",
+        });
+      } catch (dbError) {
+        await client.query("ROLLBACK");
+        console.error("Database error during ownership transfer:", dbError);
+        return res.status(500).json({
+          success: false,
+          message: "Database error during ownership transfer",
+        });
+      } finally {
+        client.release();
+      }
     }
 
     // Update member role
@@ -3187,18 +3318,95 @@ const updateMemberRole = async (req, res) => {
 
       await client.query(
         `
-        UPDATE team_members 
-        SET role = $1 
-        WHERE team_id = $2 AND user_id = $3
-      `,
-        [newRole, teamId, memberId],
+          UPDATE team_members
+          SET role = $1
+          WHERE team_id = $2 AND user_id = $3
+        `,
+        [new_role, teamId, memberId],
       );
 
       await client.query("COMMIT");
 
+      // === CREATE NOTIFICATION FOR AFFECTED MEMBER ===
+      try {
+        // Get team name
+        const teamResult = await db.pool.query(
+          `SELECT name FROM teams WHERE id = $1`,
+          [teamId],
+        );
+        const teamName = teamResult.rows[0]?.name || "the team";
+
+        // Get changer's name (the admin/owner who made the change)
+        const changerResult = await db.pool.query(
+          `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+          [userId],
+        );
+        const changer = changerResult.rows[0];
+        const changerName =
+          changer.first_name && changer.last_name
+            ? `${changer.first_name} ${changer.last_name}`
+            : changer.username;
+
+        // Get affected member's name
+        const memberResult = await db.pool.query(
+          `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+          [memberId],
+        );
+        const member = memberResult.rows[0];
+        const memberName =
+          member.first_name && member.last_name
+            ? `${member.first_name} ${member.last_name}`
+            : member.username;
+
+        // Determine if promoted or demoted
+        const action = new_role === "admin" ? "promoted" : "demoted";
+
+        // Send system message to affected member via DM
+        const teamToken = `${teamId}:${teamName}`;
+
+        const roleChangeMessage =
+          `🔄 ROLE_CHANGED: ${teamToken} | ` +
+          `${userId}:${changerName} | ` +
+          `${memberId}:${memberName} | ` +
+          `${memberCurrentRole} | ${new_role}`;
+
+        await db.pool.query(
+          `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+             VALUES ($1, $2, $3, NOW())`,
+          [userId, memberId, roleChangeMessage],
+        );
+
+        // Create notification for affected member
+        await createNotification({
+          userId: parseInt(memberId),
+          type: "role_changed",
+          title: `You were ${action} to ${new_role} in ${teamName}`,
+          message: null,
+          referenceType: "team_member",
+          referenceId: parseInt(teamId),
+          teamId: parseInt(teamId),
+          actorId: parseInt(userId),
+        });
+
+        // Emit socket event to affected member
+        const io = req.app.get("io");
+        if (io) {
+          io.to(`user:${memberId}`).emit("notification:new", {
+            type: "role_changed",
+            teamId: parseInt(teamId),
+          });
+        }
+      } catch (notificationError) {
+        console.error(
+          "Error creating role change notification:",
+          notificationError,
+        );
+      }
+      // === END NOTIFICATION ===
+
       res.status(200).json({
         success: true,
-        message: `Member role updated to ${newRole} successfully`,
+        message: `Member role updated to ${new_role} successfully`,
       });
     } catch (dbError) {
       await client.query("ROLLBACK");

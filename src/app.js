@@ -67,16 +67,6 @@ if (process.env.NODE_ENV !== "production") {
 const apiRoutes = require("./routes");
 app.use("/api", apiRoutes);
 
-// Tag routes
-// *** CHECK THIS PATH: Ensure './routes/api/tags' is the correct location of your tag routes file. ***
-// If it's in './routes/tagRoutes.js', use require('./routes/tagRoutes') instead.
-const tagRoutes = require("./routes/api/tags");
-app.use("/api/tags", tagRoutes);
-
-// Geocoding routes
-const geocodingRoutes = require("./routes/geocodingRoutes");
-app.use("/api/geocoding", geocodingRoutes);
-
 // Simple Home route (Optional)
 app.get("/", (req, res) => {
   res.send("Lomir API is running...");

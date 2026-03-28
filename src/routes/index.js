@@ -21,5 +21,7 @@ router.use('/badges', badgeRoutes);
 router.use('/messages', messageRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/matching', matchingRoutes); 
+router.use('/tags', tagRoutes);
+router.use('/geocoding', geocodingRoutes);
 
 module.exports = router;
