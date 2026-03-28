@@ -1607,7 +1607,7 @@ const searchController = {
       res.status(500).json({
         success: false,
         message: "Error performing search",
-        error: error.message,
+        ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
     }
   },
@@ -2683,7 +2683,7 @@ const searchController = {
       res.status(500).json({
         success: false,
         message: "Error fetching data",
-        error: error.message,
+        ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
     }
   },
@@ -2765,7 +2765,7 @@ const searchController = {
       res.status(500).json({
         success: false,
         message: "Error performing search",
-        error: error.message,
+        ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
     }
   },
@@ -2827,7 +2827,7 @@ const searchController = {
       res.status(500).json({
         success: false,
         message: "Error searching by tag",
-        error: error.message,
+        ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
     }
   },
@@ -2917,7 +2917,7 @@ const searchController = {
       res.status(500).json({
         success: false,
         message: "Error searching by location",
-        error: error.message,
+        ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
     }
   },

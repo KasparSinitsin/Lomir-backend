@@ -198,7 +198,7 @@ const authController = {
       res.status(500).json({
         success: false,
         message: "Error registering user",
-        error: error.message,
+        ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
     }
   },
@@ -262,7 +262,7 @@ const authController = {
       res.status(500).json({
         success: false,
         message: "Error verifying email",
-        error: error.message,
+        ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
     }
   },
@@ -348,7 +348,7 @@ const authController = {
       res.status(500).json({
         success: false,
         message: "Error sending verification email",
-        error: error.message,
+        ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
     }
   },
@@ -426,7 +426,7 @@ const authController = {
       res.status(500).json({
         success: false,
         message: "Error logging in",
-        error: error.message,
+        ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
     }
   },
@@ -471,7 +471,7 @@ const authController = {
       res.status(500).json({
         success: false,
         message: "Error getting current user",
-        error: error.message,
+        ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
     }
   },
@@ -540,7 +540,7 @@ const authController = {
       res.status(500).json({
         success: false,
         message: "Error processing password reset request",
-        error: error.message,
+        ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
     }
   },
@@ -606,7 +606,7 @@ const authController = {
       res.status(500).json({
         success: false,
         message: "Error resetting password",
-        error: error.message,
+        ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
     }
   },
@@ -672,7 +672,7 @@ const authController = {
       res.status(500).json({
         success: false,
         message: "Error changing password",
-        error: error.message,
+        ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
     }
   },
@@ -749,7 +749,7 @@ const authController = {
       res.status(500).json({
         success: false,
         message: "Error changing email",
-        error: error.message,
+        ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
     }
   },

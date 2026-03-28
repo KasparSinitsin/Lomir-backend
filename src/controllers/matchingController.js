@@ -354,7 +354,7 @@ const getMatchingRoles = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error finding matching roles",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -553,7 +553,7 @@ const getMatchingCandidates = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error finding matching candidates",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };

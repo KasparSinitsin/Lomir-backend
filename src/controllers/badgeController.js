@@ -22,7 +22,7 @@ const getAllBadges = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching badges",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -382,7 +382,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
     res.status(500).json({
       success: false,
       message: "Error awarding badge",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   } finally {
     client.release();
@@ -438,7 +438,7 @@ const getSharedTeams = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching shared teams",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -497,7 +497,7 @@ const getUserBadges = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching user badges",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };

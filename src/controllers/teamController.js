@@ -214,7 +214,7 @@ const deleteTeamAvatar = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error deleting team avatar",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -459,7 +459,7 @@ const getAllTeams = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Database error while fetching teams", // More specific message
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -565,7 +565,7 @@ const getTeamById = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Database error while fetching team details",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -651,7 +651,7 @@ const getUserTeams = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Database error while fetching user teams",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -690,7 +690,7 @@ const getUserRoleInTeam = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Error fetching user role",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -942,7 +942,7 @@ const getUserPendingApplications = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching applications",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -1053,7 +1053,7 @@ const cancelApplication = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error canceling application",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -1325,7 +1325,7 @@ const updateTeam = async (req, res) => {
         res.status(500).json({
           success: false,
           message: "Error updating member role",
-          error: error.message,
+          ...(process.env.NODE_ENV === "development" && { error: error.message }),
         });
       }
     };
@@ -1610,7 +1610,7 @@ const updateTeam = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error updating team",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -1814,7 +1814,7 @@ const getTeamApplications = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching team applications",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -2153,7 +2153,7 @@ const handleTeamApplication = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error handling application",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -2284,7 +2284,7 @@ const deleteTeam = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error deleting team",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -2504,7 +2504,7 @@ const applyToJoinTeam = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error processing application",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -2695,7 +2695,7 @@ const addTeamMember = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error adding team member",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -3093,7 +3093,7 @@ const removeTeamMember = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Error removing team member",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -3424,7 +3424,7 @@ const updateMemberRole = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error updating member role",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -3499,7 +3499,7 @@ const getTeamBadgeAwards = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching team badge awards",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -3575,7 +3575,7 @@ const getTeamMemberBadges = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching team member badges",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -3647,7 +3647,7 @@ const getTeamMemberBadgeAwards = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching team member badge awards",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };

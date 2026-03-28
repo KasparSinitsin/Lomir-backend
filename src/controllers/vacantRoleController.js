@@ -248,7 +248,7 @@ const getVacantRoles = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching vacant roles",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -293,7 +293,7 @@ const getVacantRoleById = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching vacant role",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -487,7 +487,7 @@ const createVacantRole = async (req, res) => {
       res.status(500).json({
         success: false,
         message: "Database error while creating vacant role",
-        error: dbError.message,
+        ...(process.env.NODE_ENV === "development" && { error: dbError.message }),
       });
     } finally {
       client.release();
@@ -497,7 +497,7 @@ const createVacantRole = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error creating vacant role",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -715,7 +715,7 @@ const updateVacantRole = async (req, res) => {
       res.status(500).json({
         success: false,
         message: "Database error while updating vacant role",
-        error: dbError.message,
+        ...(process.env.NODE_ENV === "development" && { error: dbError.message }),
       });
     } finally {
       client.release();
@@ -725,7 +725,7 @@ const updateVacantRole = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error updating vacant role",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -776,7 +776,7 @@ const deleteVacantRole = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error deleting vacant role",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -854,7 +854,7 @@ const updateVacantRoleStatus = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error updating vacant role status",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };

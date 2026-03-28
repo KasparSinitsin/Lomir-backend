@@ -255,7 +255,7 @@ const getUnreadCount = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching unread notification count",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -323,7 +323,7 @@ const getNotifications = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching notifications",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -360,7 +360,7 @@ const markAsRead = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error marking notification as read",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -391,7 +391,7 @@ const markAllAsRead = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error marking all notifications as read",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -427,7 +427,7 @@ const deleteNotification = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error deleting notification",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };

@@ -270,7 +270,7 @@ const sendTeamInvitation = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error sending invitation",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -536,7 +536,7 @@ const getUserReceivedInvitations = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching invitations",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -753,7 +753,7 @@ const getTeamSentInvitations = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching team invitations",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -1045,7 +1045,7 @@ const respondToInvitation = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error responding to invitation",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -1173,7 +1173,7 @@ const cancelInvitation = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error canceling invitation",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -1257,7 +1257,7 @@ const getTeamsWhereUserCanInvite = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching teams",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
