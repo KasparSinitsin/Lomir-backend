@@ -61,7 +61,7 @@ const getUnreadCount = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching unread count",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -116,7 +116,7 @@ const startConversation = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error starting conversation",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -277,7 +277,7 @@ const getConversations = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching conversations",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -368,7 +368,7 @@ const getConversationById = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching conversation",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -508,7 +508,7 @@ const getMessages = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching messages",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -595,7 +595,7 @@ const sendMessage = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error sending message",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -636,7 +636,7 @@ const getMessageById = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching message",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };

@@ -45,9 +45,6 @@ const extractCloudinaryPublicId = (url) => {
           }
         }
 
-        console.log(
-          `Extracted Cloudinary public ID: ${publicId} from URL: ${url}`,
-        );
         return publicId;
       }
     }
@@ -98,11 +95,7 @@ const permanentlyDeleteTeam = async (teamId) => {
       try {
         const publicId = extractCloudinaryPublicId(teamAvatarUrl);
         if (publicId) {
-          console.log(
-            `Deleting team avatar from Cloudinary for permanently deleted team ${teamId}: ${publicId}`,
-          );
           const deleteResult = await cloudinary.uploader.destroy(publicId);
-          console.log("Cloudinary deletion result:", deleteResult);
 
           if (
             deleteResult.result !== "ok" &&
@@ -190,9 +183,7 @@ const deleteTeamAvatar = async (req, res) => {
       try {
         const publicId = extractCloudinaryPublicId(currentAvatarUrl);
         if (publicId) {
-          console.log(`Deleting team avatar from Cloudinary: ${publicId}`);
           const deleteResult = await cloudinary.uploader.destroy(publicId);
-          console.log("Cloudinary deletion result:", deleteResult);
 
           if (
             deleteResult.result !== "ok" &&
@@ -223,7 +214,7 @@ const deleteTeamAvatar = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error deleting team avatar",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -282,10 +273,7 @@ const teamCreationSchema = Joi.object({
 const createTeam = async (req, res) => {
   const client = await db.pool.connect();
   try {
-    console.log("--> Entering createTeam function");
     const ownerId = req.user.id;
-    console.log("--> Received team creation request:", req.body);
-    console.log("--> Owner ID:", ownerId);
 
     const { error, value } = teamCreationSchema.validate(req.body);
     if (error) {
@@ -297,13 +285,6 @@ const createTeam = async (req, res) => {
         errors: error.details.map((detail) => detail.message),
       });
     }
-    console.log("--> Joi validation successful");
-
-    console.log(
-      "--> After Joi validation, value.max_members:",
-      value.max_members,
-    );
-
     if (
       !value.is_remote &&
       (value.postal_code || value.city) &&
@@ -327,7 +308,6 @@ const createTeam = async (req, res) => {
       value.max_members === undefined ? null : value.max_members;
 
     await client.query("BEGIN");
-    console.log("--> Transaction started");
 
     // Ensure is_public is a proper boolean
     const isPublicBoolean =
@@ -372,7 +352,6 @@ const createTeam = async (req, res) => {
     );
 
     const team = teamResult.rows[0];
-    console.log("--> Team inserted:", team);
 
     await client.query(
       `
@@ -381,11 +360,9 @@ const createTeam = async (req, res) => {
     `,
       [team.id, ownerId, "owner"],
     );
-    console.log("--> Owner added as member");
 
     if (value.tags && value.tags.length > 0) {
       const tagIdsToCheck = value.tags.map((tag) => tag.tag_id);
-      console.log("--> Checking tag IDs:", tagIdsToCheck);
       const tagsExistResult = await client.query(`
         SELECT id FROM tags WHERE id IN (${tagIdsToCheck.join(",")})
       `);
@@ -403,7 +380,6 @@ const createTeam = async (req, res) => {
           errors: ["One or more of the provided tag IDs do not exist."],
         });
       }
-      console.log("--> All tag IDs exist");
 
       const tagInserts = value.tags.map((tag) =>
         client.query(
@@ -415,18 +391,15 @@ const createTeam = async (req, res) => {
         ),
       );
       await Promise.all(tagInserts);
-      console.log("--> Tags inserted");
     }
 
     await client.query("COMMIT");
-    console.log("--> Transaction committed");
 
     res.status(201).json({
       success: true,
       message: "Team created successfully",
       data: team,
     });
-    console.log("--> Successful response sent");
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("--> Database error during team creation:", error); // More specific message
@@ -438,9 +411,7 @@ const createTeam = async (req, res) => {
     });
   } finally {
     client.release();
-    console.log("--> Client released");
   }
-  console.log("--> Exiting createTeam function");
 };
 
 const getAllTeams = async (req, res) => {
@@ -488,7 +459,7 @@ const getAllTeams = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Database error while fetching teams", // More specific message
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -585,15 +556,6 @@ const getTeamById = async (req, res) => {
     // Ensure boolean values (handle string "true" from DB)
     team.is_public = team.is_public === true || team.is_public === "true";
 
-    console.log(`Team ${teamId} details:`, {
-      id: team.id,
-      name: team.name,
-      current_members_count: team.current_members_count,
-      max_members: team.max_members,
-      members_length: team.members.length,
-      is_public: team.is_public,
-    });
-
     res.status(200).json({
       success: true,
       data: team,
@@ -603,7 +565,7 @@ const getTeamById = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Database error while fetching team details",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -624,8 +586,6 @@ const getUserTeams = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
-
-    console.log(`getUserTeams: userId=${userId}, page=${page}, limit=${limit}`);
 
     // === COUNT QUERY - Get total teams for pagination metadata ===
     const countResult = await db.pool.query(
@@ -691,7 +651,7 @@ const getUserTeams = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Database error while fetching user teams",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -730,7 +690,7 @@ const getUserRoleInTeam = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Error fetching user role",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -982,7 +942,7 @@ const getUserPendingApplications = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching applications",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -1093,7 +1053,7 @@ const cancelApplication = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error canceling application",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -1170,17 +1130,9 @@ const updateTeam = async (req, res) => {
         const { newRole, new_role } = req.body;
         const roleToUpdate = newRole || new_role;
 
-        console.log("Extracted values:");
-        console.log("- newRole:", newRole);
-        console.log("- new_role:", new_role);
-        console.log("- roleToUpdate:", roleToUpdate);
-        console.log("- roleToUpdate type:", typeof roleToUpdate);
-        console.log("=========================");
-
         // Validate role
         const validRoles = ["member", "admin"];
         if (!validRoles.includes(roleToUpdate)) {
-          console.log("❌ Role validation failed for:", roleToUpdate);
           return res.status(400).json({
             success: false,
             message: "Invalid role. Must be 'member' or 'admin'",
@@ -1191,8 +1143,6 @@ const updateTeam = async (req, res) => {
             },
           });
         }
-
-        console.log("✅ Role validation passed for:", roleToUpdate);
 
         // Check if the user making the request is authorized (owner or admin)
         const authCheck = await db.pool.query(
@@ -1375,7 +1325,7 @@ const updateTeam = async (req, res) => {
         res.status(500).json({
           success: false,
           message: "Error updating member role",
-          error: error.message,
+          ...(process.env.NODE_ENV === "development" && { error: error.message }),
         });
       }
     };
@@ -1448,17 +1398,6 @@ const updateTeam = async (req, res) => {
       value.longitude = null;
     }
 
-    // After geocoding block, before transaction:
-    console.log("--> Location data to insert:", {
-      is_remote: value.is_remote,
-      postal_code: value.postal_code,
-      city: value.city,
-      country: value.country,
-      state: value.state,
-      latitude: value.latitude,
-      longitude: value.longitude,
-    });
-
     // Begin transaction
     const client = await db.pool.connect();
 
@@ -1485,11 +1424,7 @@ const updateTeam = async (req, res) => {
           try {
             const publicId = extractCloudinaryPublicId(oldAvatarUrl);
             if (publicId) {
-              console.log(
-                `Attempting to delete old team avatar from Cloudinary: ${publicId}`,
-              );
               const deleteResult = await cloudinary.uploader.destroy(publicId);
-              console.log("Cloudinary deletion result:", deleteResult);
             }
           } catch (cloudinaryError) {
             console.error(
@@ -1675,7 +1610,7 @@ const updateTeam = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error updating team",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -1879,7 +1814,7 @@ const getTeamApplications = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching team applications",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -2111,12 +2046,6 @@ const handleTeamApplication = async (req, res) => {
 
         await client.query("COMMIT");
 
-        if (roleFilled) {
-          console.log(
-            `✅ Auto-filled vacant role "${filledRoleName}" (${application.role_id}) with user ${application.applicant_id} in team ${application.team_id}`,
-          );
-        }
-
         return res.status(200).json({
           success: true,
           message: "Application approved successfully",
@@ -2224,7 +2153,7 @@ const handleTeamApplication = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error handling application",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -2355,7 +2284,7 @@ const deleteTeam = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error deleting team",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -2553,12 +2482,6 @@ const applyToJoinTeam = async (req, res) => {
       }
       // === END NOTIFICATION ===
 
-      if (isAlreadyMember) {
-        console.log(
-          `📋 Internal role application: user ${applicantId} applied for role ${normalizedRoleId} in team ${teamId}`
-        );
-      }
-
       res.status(201).json({
         success: true,
         message: isAlreadyMember
@@ -2581,7 +2504,7 @@ const applyToJoinTeam = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error processing application",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -2772,7 +2695,7 @@ const addTeamMember = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error adding team member",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -3170,7 +3093,7 @@ const removeTeamMember = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Error removing team member",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -3180,14 +3103,15 @@ const updateMemberRole = async (req, res) => {
     const teamId = req.params.teamId;
     const memberId = req.params.memberId;
     const userId = req.user.id;
-    const { newRole } = req.body;
+    const { new_role } = req.body;
 
     // Validate role
-    const validRoles = ["member", "admin"];
-    if (!validRoles.includes(newRole)) {
+    const validRoles = ["member", "admin", "owner"];
+    if (!validRoles.includes(new_role)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid role. Must be 'member' or 'admin'",
+        message: "Invalid role. Must be 'member', 'admin', or 'owner'",
+        received: new_role,
       });
     }
 
@@ -3232,28 +3156,158 @@ const updateMemberRole = async (req, res) => {
 
     const memberCurrentRole = memberCheck.rows[0].role;
 
-    // Only owners can change admin roles
-    if (memberCurrentRole === "admin" && userrole !== "owner") {
+    // Commented out restrictions for team role changes to enable more flexible role management
+
+    // // Only owners can change admin roles
+    // if (memberCurrentRole === "admin" && userRole !== "owner") {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: "Only team owners can change admin roles",
+    //   });
+    // }
+
+    // // Only owners can promote to admin
+    // if (new_role === "admin" && userRole !== "owner") {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: "Only team owners can promote members to admin",
+    //   });
+    // }
+
+    // Only owner can transfer ownership
+    if (new_role === "owner" && userRole !== "owner") {
       return res.status(403).json({
         success: false,
-        message: "Only team owners can change admin roles",
+        message: "Only the team owner can transfer ownership",
       });
     }
 
-    // Only owners can promote to admin
-    if (newRole === "admin" && userrole !== "owner") {
-      return res.status(403).json({
-        success: false,
-        message: "Only team owners can promote members to admin",
-      });
-    }
+    // Handle ownership transfer
+    if (new_role === "owner") {
+      const client = await db.pool.connect();
 
-    // Can't change owner role
-    if (memberCurrentrole === "owner") {
-      return res.status(403).json({
-        success: false,
-        message: "Cannot change owner role",
-      });
+      try {
+        await client.query("BEGIN");
+
+        // Demote current owner to admin
+        await client.query(
+          `UPDATE team_members
+       SET role = 'admin'
+       WHERE team_id = $1 AND role = 'owner'`,
+          [teamId],
+        );
+
+        // Promote target member to owner
+        await client.query(
+          `UPDATE team_members
+       SET role = 'owner'
+       WHERE team_id = $1 AND user_id = $2`,
+          [teamId, memberId],
+        );
+
+        // Update teams table owner_id
+        await client.query(
+          `UPDATE teams
+       SET owner_id = $1
+       WHERE id = $2`,
+          [memberId, teamId],
+        );
+
+        await client.query("COMMIT");
+
+        // === NOTIFICATION + SYSTEM MESSAGES ===
+        try {
+          // Team name
+          const teamResult = await db.pool.query(
+            `SELECT name FROM teams WHERE id = $1`,
+            [teamId],
+          );
+          const teamName = teamResult.rows[0]?.name || "the team";
+
+          // Previous owner name
+          const prevOwnerResult = await db.pool.query(
+            `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+            [userId],
+          );
+          const prevOwner = prevOwnerResult.rows[0];
+          const prevOwnerName =
+            prevOwner.first_name && prevOwner.last_name
+              ? `${prevOwner.first_name} ${prevOwner.last_name}`
+              : prevOwner.username;
+
+          // New owner name
+          const newOwnerResult = await db.pool.query(
+            `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+            [memberId],
+          );
+          const newOwner = newOwnerResult.rows[0];
+          const newOwnerName =
+            newOwner.first_name && newOwner.last_name
+              ? `${newOwner.first_name} ${newOwner.last_name}`
+              : newOwner.username;
+
+          // ✅ DM system message (tokenized team + users)
+          const teamToken = `${teamId}:${teamName}`;
+          const prevToken = `${userId}:${prevOwnerName}`;
+          const newToken = `${memberId}:${newOwnerName}`;
+
+          const ownershipMessage = `👑 OWNERSHIP_TRANSFERRED: ${teamToken} | ${prevToken} | ${newToken}`;
+
+          await db.pool.query(
+            `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+         VALUES ($1, $2, $3, NOW())`,
+            [userId, memberId, ownershipMessage],
+          );
+
+          // Notification for new owner
+          await createNotification({
+            userId: parseInt(memberId),
+            type: "ownership_transferred",
+            title: `You are now the owner of ${teamName}`,
+            message: null,
+            referenceType: "team_member",
+            referenceId: parseInt(teamId),
+            teamId: parseInt(teamId),
+            actorId: parseInt(userId),
+          });
+
+          // Socket event
+          const io = req.app.get("io");
+          if (io) {
+            io.to(`user:${memberId}`).emit("notification:new", {
+              type: "ownership_transferred",
+              teamId: parseInt(teamId),
+            });
+          }
+
+          // Team chat message for everyone
+          const teamChatMessage = `👑 OWNERSHIP_TEAM: ${prevOwnerName} | ${newOwnerName}`;
+          await db.pool.query(
+            `INSERT INTO messages (sender_id, team_id, content, sent_at)
+         VALUES ($1, $2, $3, NOW())`,
+            [userId, teamId, teamChatMessage],
+          );
+        } catch (notificationError) {
+          console.error(
+            "Error creating ownership transfer notification:",
+            notificationError,
+          );
+        }
+
+        return res.status(200).json({
+          success: true,
+          message: "Team ownership transferred successfully",
+        });
+      } catch (dbError) {
+        await client.query("ROLLBACK");
+        console.error("Database error during ownership transfer:", dbError);
+        return res.status(500).json({
+          success: false,
+          message: "Database error during ownership transfer",
+        });
+      } finally {
+        client.release();
+      }
     }
 
     // Update member role
@@ -3264,18 +3318,95 @@ const updateMemberRole = async (req, res) => {
 
       await client.query(
         `
-        UPDATE team_members 
-        SET role = $1 
-        WHERE team_id = $2 AND user_id = $3
-      `,
-        [newRole, teamId, memberId],
+          UPDATE team_members
+          SET role = $1
+          WHERE team_id = $2 AND user_id = $3
+        `,
+        [new_role, teamId, memberId],
       );
 
       await client.query("COMMIT");
 
+      // === CREATE NOTIFICATION FOR AFFECTED MEMBER ===
+      try {
+        // Get team name
+        const teamResult = await db.pool.query(
+          `SELECT name FROM teams WHERE id = $1`,
+          [teamId],
+        );
+        const teamName = teamResult.rows[0]?.name || "the team";
+
+        // Get changer's name (the admin/owner who made the change)
+        const changerResult = await db.pool.query(
+          `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+          [userId],
+        );
+        const changer = changerResult.rows[0];
+        const changerName =
+          changer.first_name && changer.last_name
+            ? `${changer.first_name} ${changer.last_name}`
+            : changer.username;
+
+        // Get affected member's name
+        const memberResult = await db.pool.query(
+          `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+          [memberId],
+        );
+        const member = memberResult.rows[0];
+        const memberName =
+          member.first_name && member.last_name
+            ? `${member.first_name} ${member.last_name}`
+            : member.username;
+
+        // Determine if promoted or demoted
+        const action = new_role === "admin" ? "promoted" : "demoted";
+
+        // Send system message to affected member via DM
+        const teamToken = `${teamId}:${teamName}`;
+
+        const roleChangeMessage =
+          `🔄 ROLE_CHANGED: ${teamToken} | ` +
+          `${userId}:${changerName} | ` +
+          `${memberId}:${memberName} | ` +
+          `${memberCurrentRole} | ${new_role}`;
+
+        await db.pool.query(
+          `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+             VALUES ($1, $2, $3, NOW())`,
+          [userId, memberId, roleChangeMessage],
+        );
+
+        // Create notification for affected member
+        await createNotification({
+          userId: parseInt(memberId),
+          type: "role_changed",
+          title: `You were ${action} to ${new_role} in ${teamName}`,
+          message: null,
+          referenceType: "team_member",
+          referenceId: parseInt(teamId),
+          teamId: parseInt(teamId),
+          actorId: parseInt(userId),
+        });
+
+        // Emit socket event to affected member
+        const io = req.app.get("io");
+        if (io) {
+          io.to(`user:${memberId}`).emit("notification:new", {
+            type: "role_changed",
+            teamId: parseInt(teamId),
+          });
+        }
+      } catch (notificationError) {
+        console.error(
+          "Error creating role change notification:",
+          notificationError,
+        );
+      }
+      // === END NOTIFICATION ===
+
       res.status(200).json({
         success: true,
-        message: `Member role updated to ${newRole} successfully`,
+        message: `Member role updated to ${new_role} successfully`,
       });
     } catch (dbError) {
       await client.query("ROLLBACK");
@@ -3293,7 +3424,7 @@ const updateMemberRole = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error updating member role",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -3359,10 +3490,6 @@ const getTeamBadgeAwards = async (req, res) => {
       [teamId],
     );
 
-    console.log(
-      `🏅 Team ${teamId} focus-area badge awards: ${result.rows.length} rows`,
-    );
-
     res.status(200).json({
       success: true,
       data: result.rows,
@@ -3372,7 +3499,7 @@ const getTeamBadgeAwards = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching team badge awards",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -3433,10 +3560,6 @@ const getTeamMemberBadges = async (req, res) => {
       [teamId],
     );
 
-    console.log(
-      `🏅 Team ${teamId} aggregated member badges: ${result.rows.length} distinct badges`,
-    );
-
     const grandTotalCredits = result.rows.reduce(
       (sum, row) => sum + Number(row.total_credits || 0),
       0,
@@ -3452,7 +3575,7 @@ const getTeamMemberBadges = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching team member badges",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -3515,10 +3638,6 @@ const getTeamMemberBadgeAwards = async (req, res) => {
       [teamId],
     );
 
-    console.log(
-      `🏅 Team ${teamId} all member badge awards: ${result.rows.length} rows`,
-    );
-
     res.status(200).json({
       success: true,
       data: result.rows,
@@ -3528,7 +3647,7 @@ const getTeamMemberBadgeAwards = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching team member badge awards",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
