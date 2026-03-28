@@ -160,10 +160,4 @@ router.get("/:id", teamController.getTeamById);
 router.put("/:id", auth.authenticateToken, teamController.updateTeam);
 router.delete("/:id", auth.authenticateToken, teamController.deleteTeam);
 
-// Test route for debugging purposes
-router.put("/:teamId/test-role", auth.authenticateToken, (req, res) => {
-  console.log("🧪 TEST ROUTE CALLED!");
-  res.json({ message: "Test route works!" });
-});
-
 module.exports = router;
