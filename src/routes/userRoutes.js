@@ -2,6 +2,7 @@ const express = require("express");
 const userController = require("../controllers/userController");
 // Import your authentication middleware
 const auth = require("../middlewares/auth"); // Assuming '../middlewares/auth' is the correct path
+const { upload, uploadToCloudinary } = require('../middlewares/uploadMiddleware');
 
 const router = express.Router();
 
@@ -29,6 +30,24 @@ router.delete(
   "/:id/avatar",
   auth.authenticateToken,
   userController.deleteAvatar,
+);
+
+// POST /api/users/:id/avatar - Upload user avatar
+router.post(
+  '/:id/avatar',
+  auth.authenticateToken,
+  upload.single('avatar'),
+  async (req, res) => {
+    try {
+      const result = await uploadToCloudinary(req.file.buffer, {
+        folder: 'lomir/avatars',
+        transformation: [{ width: 500, height: 500, crop: 'limit' }]
+      });
+      res.json({ url: result.secure_url });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  }
 );
 
 // === User-Specific Sub-Resources ===

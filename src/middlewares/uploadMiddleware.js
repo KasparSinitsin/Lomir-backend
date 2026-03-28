@@ -1,26 +1,10 @@
 const multer = require('multer');
 const cloudinary = require('../config/cloudinary');
-const { CloudinaryStorage } = require('multer-storage-cloudinary');
 
-const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: 'lomir/avatars',
-    allowed_formats: ['jpg', 'png', 'jpeg', 'gif', 'webp'],
-    transformation: [{ width: 500, height: 500, crop: 'limit' }],
-    public_id: (req, file) => {
-      // Optional: create a unique filename
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      return file.fieldname + '-' + uniqueSuffix;
-    }
-  }
-});
-
-const upload = multer({ 
-  storage: storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB file size limit
-  },
+// Use memory storage — we'll pipe the buffer to Cloudinary ourselves
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
     if (allowedTypes.includes(file.mimetype)) {
@@ -31,4 +15,14 @@ const upload = multer({
   }
 });
 
-module.exports = upload;
+const uploadToCloudinary = (fileBuffer, options = {}) => {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(options, (error, result) => {
+      if (error) reject(error);
+      else resolve(result);
+    });
+    stream.end(fileBuffer);
+  });
+};
+
+module.exports = { upload, uploadToCloudinary };

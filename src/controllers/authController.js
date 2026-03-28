@@ -51,12 +51,23 @@ const authController = {
         }
       }
 
-      // Prepare user data
-      const userData = {
-        ...req.body,
-        tags: tags || [],
-        avatar_url: req.file ? req.file.path : req.body.avatar_url || null,
-      };
+    // Handle avatar upload if file was provided
+let avatarUrl = req.body.avatar_url || null;
+if (req.file) {
+  const { uploadToCloudinary } = require('../middlewares/uploadMiddleware');
+  const result = await uploadToCloudinary(req.file.buffer, {
+    folder: 'lomir/avatars',
+    transformation: [{ width: 500, height: 500, crop: 'limit' }]
+  });
+  avatarUrl = result.secure_url;
+}
+
+// Prepare user data
+const userData = {
+  ...req.body,
+  tags: tags || [],
+  avatar_url: avatarUrl,
+};
 
       // Validate the payload
       const { error, value } = registerSchema.validate(userData);
