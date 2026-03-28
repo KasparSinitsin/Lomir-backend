@@ -6,31 +6,6 @@ const db = require("../config/database");
 const invitationController = require("../controllers/invitationController");
 const vacantRoleController = require("../controllers/vacantRoleController");
 
-// Debugging middleware to log incoming requests
-router.use((req, res, next) => {
-  console.log(`🔍 teamRoutes Debug: ${req.method} ${req.originalUrl}`);
-  console.log(`🔍 Route path: ${req.path}`);
-  console.log(`🔍 Route params:`, req.params);
-  next();
-});
-
-router.put(
-  "/test-role-update/:teamId/:memberId",
-  auth.authenticateToken,
-  (req, res) => {
-    console.log("🎯 TEST ROLE ROUTE HIT!");
-    console.log("Params:", req.params);
-    console.log("Body:", req.body);
-
-    res.json({
-      success: true,
-      message: "Test route works!",
-      params: req.params,
-      body: req.body,
-    });
-  },
-);
-
 // Team routes
 router.post("/", auth.authenticateToken, teamController.createTeam);
 router.get("/", teamController.getAllTeams);
@@ -148,17 +123,9 @@ router.put(
   auth.authenticateToken,
   async (req, res) => {
     try {
-      console.log("🔥 ROLE UPDATE ROUTE HIT!");
       const { teamId, memberId } = req.params;
       const userId = req.user.id;
       const { new_role } = req.body;
-
-      console.log("Extracted:", {
-        teamId,
-        memberId,
-        role: new_role,
-        requesterId: userId,
-      });
 
       // Validate role
       const validRoles = ["member", "admin", "owner"];
@@ -269,10 +236,6 @@ router.put(
           );
 
           await client.query("COMMIT");
-
-          console.log(
-            `✅ Ownership transferred to user ${memberId} in team ${teamId}`,
-          );
 
           // === NOTIFICATION + SYSTEM MESSAGES ===
           try {
@@ -389,10 +352,6 @@ router.put(
         );
 
         await client.query("COMMIT");
-
-        console.log(
-          `✅ Successfully updated user ${memberId} to role ${new_role} in team ${teamId}`,
-        );
 
         // === CREATE NOTIFICATION FOR AFFECTED MEMBER ===
         try {
@@ -542,22 +501,6 @@ router.delete("/:id", auth.authenticateToken, teamController.deleteTeam);
 router.put("/:teamId/test-role", auth.authenticateToken, (req, res) => {
   console.log("🧪 TEST ROUTE CALLED!");
   res.json({ message: "Test route works!" });
-});
-
-// Debugging catch-all route for unmatched paths
-router.all("*", (req, res) => {
-  console.log("🚨 CATCH-ALL ROUTE HIT");
-  console.log("Method:", req.method);
-  console.log("Path:", req.path);
-  console.log("Params:", req.params);
-  console.log("Body:", req.body);
-
-  res.status(404).json({
-    message: "Route not found in teamRoutes",
-    method: req.method,
-    path: req.path,
-    originalUrl: req.originalUrl,
-  });
 });
 
 module.exports = router;

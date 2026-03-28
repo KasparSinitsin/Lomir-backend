@@ -45,9 +45,6 @@ const extractCloudinaryPublicId = (url) => {
           }
         }
 
-        console.log(
-          `Extracted Cloudinary public ID: ${publicId} from URL: ${url}`,
-        );
         return publicId;
       }
     }
@@ -98,11 +95,7 @@ const permanentlyDeleteTeam = async (teamId) => {
       try {
         const publicId = extractCloudinaryPublicId(teamAvatarUrl);
         if (publicId) {
-          console.log(
-            `Deleting team avatar from Cloudinary for permanently deleted team ${teamId}: ${publicId}`,
-          );
           const deleteResult = await cloudinary.uploader.destroy(publicId);
-          console.log("Cloudinary deletion result:", deleteResult);
 
           if (
             deleteResult.result !== "ok" &&
@@ -190,9 +183,7 @@ const deleteTeamAvatar = async (req, res) => {
       try {
         const publicId = extractCloudinaryPublicId(currentAvatarUrl);
         if (publicId) {
-          console.log(`Deleting team avatar from Cloudinary: ${publicId}`);
           const deleteResult = await cloudinary.uploader.destroy(publicId);
-          console.log("Cloudinary deletion result:", deleteResult);
 
           if (
             deleteResult.result !== "ok" &&
@@ -282,10 +273,7 @@ const teamCreationSchema = Joi.object({
 const createTeam = async (req, res) => {
   const client = await db.pool.connect();
   try {
-    console.log("--> Entering createTeam function");
     const ownerId = req.user.id;
-    console.log("--> Received team creation request:", req.body);
-    console.log("--> Owner ID:", ownerId);
 
     const { error, value } = teamCreationSchema.validate(req.body);
     if (error) {
@@ -297,13 +285,6 @@ const createTeam = async (req, res) => {
         errors: error.details.map((detail) => detail.message),
       });
     }
-    console.log("--> Joi validation successful");
-
-    console.log(
-      "--> After Joi validation, value.max_members:",
-      value.max_members,
-    );
-
     if (
       !value.is_remote &&
       (value.postal_code || value.city) &&
@@ -327,7 +308,6 @@ const createTeam = async (req, res) => {
       value.max_members === undefined ? null : value.max_members;
 
     await client.query("BEGIN");
-    console.log("--> Transaction started");
 
     // Ensure is_public is a proper boolean
     const isPublicBoolean =
@@ -372,7 +352,6 @@ const createTeam = async (req, res) => {
     );
 
     const team = teamResult.rows[0];
-    console.log("--> Team inserted:", team);
 
     await client.query(
       `
@@ -381,11 +360,9 @@ const createTeam = async (req, res) => {
     `,
       [team.id, ownerId, "owner"],
     );
-    console.log("--> Owner added as member");
 
     if (value.tags && value.tags.length > 0) {
       const tagIdsToCheck = value.tags.map((tag) => tag.tag_id);
-      console.log("--> Checking tag IDs:", tagIdsToCheck);
       const tagsExistResult = await client.query(`
         SELECT id FROM tags WHERE id IN (${tagIdsToCheck.join(",")})
       `);
@@ -403,7 +380,6 @@ const createTeam = async (req, res) => {
           errors: ["One or more of the provided tag IDs do not exist."],
         });
       }
-      console.log("--> All tag IDs exist");
 
       const tagInserts = value.tags.map((tag) =>
         client.query(
@@ -415,18 +391,15 @@ const createTeam = async (req, res) => {
         ),
       );
       await Promise.all(tagInserts);
-      console.log("--> Tags inserted");
     }
 
     await client.query("COMMIT");
-    console.log("--> Transaction committed");
 
     res.status(201).json({
       success: true,
       message: "Team created successfully",
       data: team,
     });
-    console.log("--> Successful response sent");
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("--> Database error during team creation:", error); // More specific message
@@ -438,9 +411,7 @@ const createTeam = async (req, res) => {
     });
   } finally {
     client.release();
-    console.log("--> Client released");
   }
-  console.log("--> Exiting createTeam function");
 };
 
 const getAllTeams = async (req, res) => {
@@ -585,15 +556,6 @@ const getTeamById = async (req, res) => {
     // Ensure boolean values (handle string "true" from DB)
     team.is_public = team.is_public === true || team.is_public === "true";
 
-    console.log(`Team ${teamId} details:`, {
-      id: team.id,
-      name: team.name,
-      current_members_count: team.current_members_count,
-      max_members: team.max_members,
-      members_length: team.members.length,
-      is_public: team.is_public,
-    });
-
     res.status(200).json({
       success: true,
       data: team,
@@ -624,8 +586,6 @@ const getUserTeams = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
-
-    console.log(`getUserTeams: userId=${userId}, page=${page}, limit=${limit}`);
 
     // === COUNT QUERY - Get total teams for pagination metadata ===
     const countResult = await db.pool.query(
@@ -1170,17 +1130,9 @@ const updateTeam = async (req, res) => {
         const { newRole, new_role } = req.body;
         const roleToUpdate = newRole || new_role;
 
-        console.log("Extracted values:");
-        console.log("- newRole:", newRole);
-        console.log("- new_role:", new_role);
-        console.log("- roleToUpdate:", roleToUpdate);
-        console.log("- roleToUpdate type:", typeof roleToUpdate);
-        console.log("=========================");
-
         // Validate role
         const validRoles = ["member", "admin"];
         if (!validRoles.includes(roleToUpdate)) {
-          console.log("❌ Role validation failed for:", roleToUpdate);
           return res.status(400).json({
             success: false,
             message: "Invalid role. Must be 'member' or 'admin'",
@@ -1191,8 +1143,6 @@ const updateTeam = async (req, res) => {
             },
           });
         }
-
-        console.log("✅ Role validation passed for:", roleToUpdate);
 
         // Check if the user making the request is authorized (owner or admin)
         const authCheck = await db.pool.query(
@@ -1448,17 +1398,6 @@ const updateTeam = async (req, res) => {
       value.longitude = null;
     }
 
-    // After geocoding block, before transaction:
-    console.log("--> Location data to insert:", {
-      is_remote: value.is_remote,
-      postal_code: value.postal_code,
-      city: value.city,
-      country: value.country,
-      state: value.state,
-      latitude: value.latitude,
-      longitude: value.longitude,
-    });
-
     // Begin transaction
     const client = await db.pool.connect();
 
@@ -1485,11 +1424,7 @@ const updateTeam = async (req, res) => {
           try {
             const publicId = extractCloudinaryPublicId(oldAvatarUrl);
             if (publicId) {
-              console.log(
-                `Attempting to delete old team avatar from Cloudinary: ${publicId}`,
-              );
               const deleteResult = await cloudinary.uploader.destroy(publicId);
-              console.log("Cloudinary deletion result:", deleteResult);
             }
           } catch (cloudinaryError) {
             console.error(
@@ -2111,12 +2046,6 @@ const handleTeamApplication = async (req, res) => {
 
         await client.query("COMMIT");
 
-        if (roleFilled) {
-          console.log(
-            `✅ Auto-filled vacant role "${filledRoleName}" (${application.role_id}) with user ${application.applicant_id} in team ${application.team_id}`,
-          );
-        }
-
         return res.status(200).json({
           success: true,
           message: "Application approved successfully",
@@ -2552,12 +2481,6 @@ const applyToJoinTeam = async (req, res) => {
         }
       }
       // === END NOTIFICATION ===
-
-      if (isAlreadyMember) {
-        console.log(
-          `📋 Internal role application: user ${applicantId} applied for role ${normalizedRoleId} in team ${teamId}`
-        );
-      }
 
       res.status(201).json({
         success: true,
@@ -3359,10 +3282,6 @@ const getTeamBadgeAwards = async (req, res) => {
       [teamId],
     );
 
-    console.log(
-      `🏅 Team ${teamId} focus-area badge awards: ${result.rows.length} rows`,
-    );
-
     res.status(200).json({
       success: true,
       data: result.rows,
@@ -3431,10 +3350,6 @@ const getTeamMemberBadges = async (req, res) => {
       ORDER BY bt.category, bt.total_credits DESC, bt.name
       `,
       [teamId],
-    );
-
-    console.log(
-      `🏅 Team ${teamId} aggregated member badges: ${result.rows.length} distinct badges`,
     );
 
     const grandTotalCredits = result.rows.reduce(
@@ -3513,10 +3428,6 @@ const getTeamMemberBadgeAwards = async (req, res) => {
       ORDER BY ba.created_at DESC, ba.id DESC
       `,
       [teamId],
-    );
-
-    console.log(
-      `🏅 Team ${teamId} all member badge awards: ${result.rows.length} rows`,
     );
 
     res.status(200).json({

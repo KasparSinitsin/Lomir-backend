@@ -42,19 +42,19 @@ app.use(cors(corsOptions));
 // but explicit handling can sometimes be necessary depending on setup.
 // app.options('*', cors(corsOptions)); // Uncomment if preflight issues persist
 
-// --- DEBUGGING: Log incoming requests (Placed BEFORE API routes) ---
-app.use((req, res, next) => {
-  console.log(
-    `[${new Date().toISOString()}] Incoming request: ${req.method} ${
-      req.originalUrl
-    }`
-  );
-  // Optional: Log body or headers if needed for deep debugging
-  // if (req.body && Object.keys(req.body).length > 0) console.log('Request Body:', req.body);
-  // console.log('Request Headers:', req.headers);
-  next(); // Pass control to the next middleware/route handler
-});
-// --- END DEBUGGING ---
+if (process.env.NODE_ENV !== "production") {
+  app.use((req, res, next) => {
+    console.log(
+      `[${new Date().toISOString()}] Incoming request: ${req.method} ${
+        req.originalUrl
+      }`
+    );
+    // Optional: Log body or headers if needed for deep debugging
+    // if (req.body && Object.keys(req.body).length > 0) console.log('Request Body:', req.body);
+    // console.log('Request Headers:', req.headers);
+    next(); // Pass control to the next middleware/route handler
+  });
+}
 
 // --- API Routes ---
 // Define specific API routes first. Order matters.
@@ -66,33 +66,6 @@ app.use((req, res, next) => {
 */
 const apiRoutes = require("./routes");
 app.use("/api", apiRoutes);
-
-/*
-|--------------------------------------------------------------------------
-| OLD: Direct API route mounting (disabled)
-| Reason: We now mount all API routes centrally via routes/index.js
-|--------------------------------------------------------------------------
-*/
-
-// Auth routes
-// const authRoutes = require("./routes/authRoutes");
-// app.use("/api/auth", authRoutes);
-
-// Search routes
-// const searchRoutes = require("./routes/searchRoutes");
-// app.use("/api/search", searchRoutes);
-
-// Team routes
-// const teamRoutes = require("./routes/teamRoutes");
-// app.use("/api/teams", teamRoutes);
-
-// User routes
-// const userRoutes = require("./routes/userRoutes");
-// app.use("/api/users", userRoutes);
-
-// Message routes
-// const messageRoutes = require("./routes/messageRoutes");
-// app.use("/api/messages", messageRoutes);
 
 // Tag routes
 // *** CHECK THIS PATH: Ensure './routes/api/tags' is the correct location of your tag routes file. ***
