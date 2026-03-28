@@ -4,68 +4,50 @@ const getUnreadCount = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Get total unread count for direct messages
-    const directUnreadResult = await db.query(
-      `SELECT COUNT(*) as count 
-       FROM messages 
-       WHERE receiver_id = $1 AND read_at IS NULL AND team_id IS NULL`,
+    const unreadResult = await db.query(
+      `WITH direct_unread AS (
+         SELECT
+           sender_id AS conversation_id,
+           'direct' AS type,
+           COUNT(*) AS cnt,
+           MAX(sent_at) AS latest
+         FROM messages
+         WHERE receiver_id = $1 AND read_at IS NULL AND team_id IS NULL
+         GROUP BY sender_id
+       ),
+       team_unread AS (
+         SELECT
+           m.team_id AS conversation_id,
+           'team' AS type,
+           COUNT(*) AS cnt,
+           MAX(m.sent_at) AS latest
+         FROM messages m
+         JOIN team_members tm ON m.team_id = tm.team_id AND tm.user_id = $1
+         WHERE m.sender_id != $1 AND m.read_at IS NULL AND m.team_id IS NOT NULL
+         GROUP BY m.team_id
+       ),
+       combined AS (
+         SELECT * FROM direct_unread
+         UNION ALL
+         SELECT * FROM team_unread
+       )
+       SELECT
+         COALESCE(SUM(cnt), 0)::int AS total_count,
+         (SELECT conversation_id FROM combined ORDER BY latest DESC LIMIT 1) AS first_conversation_id,
+         (SELECT type FROM combined ORDER BY latest DESC LIMIT 1) AS first_type
+       FROM combined`,
       [userId],
     );
 
-    // Get total unread count for team messages (messages in teams user is a member of, not sent by user)
-    const teamUnreadResult = await db.query(
-      `SELECT COUNT(*) as count 
-       FROM messages m
-       JOIN team_members tm ON m.team_id = tm.team_id
-       WHERE tm.user_id = $1 
-         AND m.sender_id != $1 
-         AND m.read_at IS NULL 
-         AND m.team_id IS NOT NULL`,
-      [userId],
-    );
-
-    const directUnreadCount = parseInt(directUnreadResult.rows[0].count) || 0;
-    const teamUnreadCount = parseInt(teamUnreadResult.rows[0].count) || 0;
-    const totalUnreadCount = directUnreadCount + teamUnreadCount;
-
-    // Find the most recent unread message across both direct and team conversations
-    const mostRecentUnreadQuery = await db.query(
-      `(
-        SELECT 
-          sender_id as conversation_id,
-          'direct' as type,
-          MAX(sent_at) as latest_unread
-        FROM messages 
-        WHERE receiver_id = $1 AND read_at IS NULL AND team_id IS NULL
-        GROUP BY sender_id
-      )
-      UNION ALL
-      (
-        SELECT 
-          m.team_id as conversation_id,
-          'team' as type,
-          MAX(m.sent_at) as latest_unread
-        FROM messages m
-        JOIN team_members tm ON m.team_id = tm.team_id
-        WHERE tm.user_id = $1 
-          AND m.sender_id != $1 
-          AND m.read_at IS NULL 
-          AND m.team_id IS NOT NULL
-        GROUP BY m.team_id
-      )
-      ORDER BY latest_unread DESC
-      LIMIT 1`,
-      [userId],
-    );
-
-    let firstUnread = null;
-
-    if (mostRecentUnreadQuery.rows.length > 0) {
-      firstUnread = {
-        conversationId: mostRecentUnreadQuery.rows[0].conversation_id,
-        type: mostRecentUnreadQuery.rows[0].type,
-      };
-    }
+    const unreadRow = unreadResult.rows[0] || {};
+    const totalUnreadCount = parseInt(unreadRow.total_count, 10) || 0;
+    const firstUnread =
+      totalUnreadCount > 0
+        ? {
+            conversationId: unreadRow.first_conversation_id,
+            type: unreadRow.first_type,
+          }
+        : null;
 
     res.status(200).json({
       success: true,
@@ -79,7 +61,7 @@ const getUnreadCount = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching unread count",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -134,7 +116,7 @@ const startConversation = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error starting conversation",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -295,7 +277,7 @@ const getConversations = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching conversations",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -386,7 +368,7 @@ const getConversationById = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching conversation",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -397,6 +379,16 @@ const getMessages = async (req, res) => {
     const userId = req.user.id;
     const conversationId = req.params.id;
     const type = req.query.type || "direct";
+    const parsedLimit = parseInt(req.query.limit, 10);
+    const limit = Math.max(
+      1,
+      Math.min(Number.isNaN(parsedLimit) ? 50 : parsedLimit, 200),
+    );
+    const parsedBefore = req.query.before
+      ? parseInt(req.query.before, 10)
+      : null;
+    const before =
+      Number.isInteger(parsedBefore) && parsedBefore > 0 ? parsedBefore : null;
 
     let messagesQuery;
     let queryParams;
@@ -438,9 +430,13 @@ const getMessages = async (req, res) => {
     FROM messages m
     JOIN users u ON m.sender_id = u.id
     WHERE m.team_id = $1
-    ORDER BY m.sent_at ASC
+    ${before ? "AND m.id < $2" : ""}
+    ORDER BY m.sent_at DESC, m.id DESC
+    LIMIT $${before ? "3" : "2"}
   `;
-      queryParams = [conversationId];
+      queryParams = before
+        ? [conversationId, before, limit]
+        : [conversationId, limit];
     } else {
       messagesQuery = `
     SELECT 
@@ -467,12 +463,18 @@ const getMessages = async (req, res) => {
     WHERE ((m.sender_id = $1 AND m.receiver_id = $2) 
        OR (m.sender_id = $2 AND m.receiver_id = $1))
       AND m.team_id IS NULL
-    ORDER BY m.sent_at ASC
+      ${before ? "AND m.id < $3" : ""}
+    ORDER BY m.sent_at DESC, m.id DESC
+    LIMIT $${before ? "4" : "3"}
   `;
-      queryParams = [userId, conversationId];
+      queryParams = before
+        ? [userId, conversationId, before, limit]
+        : [userId, conversationId, limit];
     }
 
     const result = await db.query(messagesQuery, queryParams);
+    const hasMore = result.rows.length === limit;
+    result.rows.reverse();
 
     const messages = result.rows.map((row) => ({
       id: row.id,
@@ -499,13 +501,14 @@ const getMessages = async (req, res) => {
     res.status(200).json({
       success: true,
       data: messages,
+      hasMore,
     });
   } catch (error) {
     console.error("Error fetching messages:", error);
     res.status(500).json({
       success: false,
       message: "Error fetching messages",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -592,7 +595,7 @@ const sendMessage = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error sending message",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -633,7 +636,7 @@ const getMessageById = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching message",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };

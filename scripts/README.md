@@ -52,6 +52,19 @@ After running, check:
 badges_used: 30
 ```
 
+### `add_team_application_role_id.sql`
+
+**Purpose:** Adds optional vacant-role linking to team applications.
+
+**What it does:**
+- Adds nullable `team_applications.role_id`
+- Adds a foreign key to `team_vacant_roles(id)` with `ON DELETE SET NULL`
+- Adds an index on `role_id`
+
+**When to use:**
+- Before deploying the backend change that accepts `roleId` on team applications
+- When upgrading an existing database that already has `team_applications`
+
 ---
 
 ## Script Categories

@@ -10,6 +10,8 @@ const {
   notifyTeamMembers,
   notifyTeamAdmins,
 } = require("./notificationController");
+const { computeDistanceScore, WEIGHTS } = require("./matchingController");
+const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer");
 
 // Helper function to extract Cloudinary public ID from URL
 const extractCloudinaryPublicId = (url) => {
@@ -43,9 +45,6 @@ const extractCloudinaryPublicId = (url) => {
           }
         }
 
-        console.log(
-          `Extracted Cloudinary public ID: ${publicId} from URL: ${url}`,
-        );
         return publicId;
       }
     }
@@ -96,11 +95,7 @@ const permanentlyDeleteTeam = async (teamId) => {
       try {
         const publicId = extractCloudinaryPublicId(teamAvatarUrl);
         if (publicId) {
-          console.log(
-            `Deleting team avatar from Cloudinary for permanently deleted team ${teamId}: ${publicId}`,
-          );
           const deleteResult = await cloudinary.uploader.destroy(publicId);
-          console.log("Cloudinary deletion result:", deleteResult);
 
           if (
             deleteResult.result !== "ok" &&
@@ -188,9 +183,7 @@ const deleteTeamAvatar = async (req, res) => {
       try {
         const publicId = extractCloudinaryPublicId(currentAvatarUrl);
         if (publicId) {
-          console.log(`Deleting team avatar from Cloudinary: ${publicId}`);
           const deleteResult = await cloudinary.uploader.destroy(publicId);
-          console.log("Cloudinary deletion result:", deleteResult);
 
           if (
             deleteResult.result !== "ok" &&
@@ -221,7 +214,7 @@ const deleteTeamAvatar = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error deleting team avatar",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -280,10 +273,7 @@ const teamCreationSchema = Joi.object({
 const createTeam = async (req, res) => {
   const client = await db.pool.connect();
   try {
-    console.log("--> Entering createTeam function");
     const ownerId = req.user.id;
-    console.log("--> Received team creation request:", req.body);
-    console.log("--> Owner ID:", ownerId);
 
     const { error, value } = teamCreationSchema.validate(req.body);
     if (error) {
@@ -295,13 +285,6 @@ const createTeam = async (req, res) => {
         errors: error.details.map((detail) => detail.message),
       });
     }
-    console.log("--> Joi validation successful");
-
-    console.log(
-      "--> After Joi validation, value.max_members:",
-      value.max_members,
-    );
-
     if (
       !value.is_remote &&
       (value.postal_code || value.city) &&
@@ -325,7 +308,6 @@ const createTeam = async (req, res) => {
       value.max_members === undefined ? null : value.max_members;
 
     await client.query("BEGIN");
-    console.log("--> Transaction started");
 
     // Ensure is_public is a proper boolean
     const isPublicBoolean =
@@ -370,7 +352,6 @@ const createTeam = async (req, res) => {
     );
 
     const team = teamResult.rows[0];
-    console.log("--> Team inserted:", team);
 
     await client.query(
       `
@@ -379,11 +360,9 @@ const createTeam = async (req, res) => {
     `,
       [team.id, ownerId, "owner"],
     );
-    console.log("--> Owner added as member");
 
     if (value.tags && value.tags.length > 0) {
       const tagIdsToCheck = value.tags.map((tag) => tag.tag_id);
-      console.log("--> Checking tag IDs:", tagIdsToCheck);
       const tagsExistResult = await client.query(`
         SELECT id FROM tags WHERE id IN (${tagIdsToCheck.join(",")})
       `);
@@ -401,7 +380,6 @@ const createTeam = async (req, res) => {
           errors: ["One or more of the provided tag IDs do not exist."],
         });
       }
-      console.log("--> All tag IDs exist");
 
       const tagInserts = value.tags.map((tag) =>
         client.query(
@@ -413,18 +391,15 @@ const createTeam = async (req, res) => {
         ),
       );
       await Promise.all(tagInserts);
-      console.log("--> Tags inserted");
     }
 
     await client.query("COMMIT");
-    console.log("--> Transaction committed");
 
     res.status(201).json({
       success: true,
       message: "Team created successfully",
       data: team,
     });
-    console.log("--> Successful response sent");
   } catch (error) {
     await client.query("ROLLBACK");
     console.error("--> Database error during team creation:", error); // More specific message
@@ -436,9 +411,7 @@ const createTeam = async (req, res) => {
     });
   } finally {
     client.release();
-    console.log("--> Client released");
   }
-  console.log("--> Exiting createTeam function");
 };
 
 const getAllTeams = async (req, res) => {
@@ -486,7 +459,7 @@ const getAllTeams = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Database error while fetching teams", // More specific message
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -498,8 +471,9 @@ const getTeamById = async (req, res) => {
     // Fetch team details with member count
     const teamResult = await db.pool.query(
       `
-      SELECT t.*, 
-             COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count
+      SELECT t.*,
+             COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
+             (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count
       FROM teams t
       LEFT JOIN team_members tm ON t.id = tm.team_id
       WHERE t.id = $1
@@ -538,13 +512,38 @@ const getTeamById = async (req, res) => {
       [teamId],
     );
 
-    // Get team tags
+    // Get team tags — enriched with aggregated badge credits from team members
     const tagsResult = await db.pool.query(
       `
-      SELECT tt.tag_id, t.name, t.category, t.supercategory
+      SELECT
+        tt.tag_id,
+        t.name,
+        t.category,
+        t.supercategory,
+        COALESCE(SUM(ba.credits), 0)::int AS badge_credits,
+        COUNT(ba.id)::int AS linked_badge_count,
+        COUNT(DISTINCT ba.awarded_to_user_id)::int AS awardee_count,
+        (
+          SELECT b2.category
+          FROM badge_awards ba2
+          JOIN badges b2 ON ba2.badge_id = b2.id
+          WHERE ba2.tag_id = t.id
+            AND ba2.awarded_to_user_id IN (
+              SELECT user_id FROM team_members WHERE team_id = $1
+            )
+          GROUP BY b2.category
+          ORDER BY SUM(ba2.credits) DESC
+          LIMIT 1
+        ) AS dominant_badge_category
       FROM team_tags tt
       JOIN tags t ON tt.tag_id = t.id
+      LEFT JOIN badge_awards ba
+        ON ba.tag_id = t.id
+        AND ba.awarded_to_user_id IN (
+          SELECT user_id FROM team_members WHERE team_id = $1
+        )
       WHERE tt.team_id = $1
+      GROUP BY tt.tag_id, t.id, t.name, t.category, t.supercategory
       ORDER BY t.supercategory, t.category, t.name
       `,
       [teamId],
@@ -557,15 +556,6 @@ const getTeamById = async (req, res) => {
     // Ensure boolean values (handle string "true" from DB)
     team.is_public = team.is_public === true || team.is_public === "true";
 
-    console.log(`Team ${teamId} details:`, {
-      id: team.id,
-      name: team.name,
-      current_members_count: team.current_members_count,
-      max_members: team.max_members,
-      members_length: team.members.length,
-      is_public: team.is_public,
-    });
-
     res.status(200).json({
       success: true,
       data: team,
@@ -575,7 +565,7 @@ const getTeamById = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Database error while fetching team details",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -596,8 +586,6 @@ const getUserTeams = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
-
-    console.log(`getUserTeams: userId=${userId}, page=${page}, limit=${limit}`);
 
     // === COUNT QUERY - Get total teams for pagination metadata ===
     const countResult = await db.pool.query(
@@ -626,6 +614,7 @@ const getUserTeams = async (req, res) => {
              t.updated_at, 
              t.postal_code,
              COALESCE(COUNT(DISTINCT tm.user_id), 0) AS current_members_count,
+             (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count,
              tmr.role as user_role
       FROM teams t
       JOIN team_members tmr ON t.id = tmr.team_id AND tmr.user_id = $1
@@ -662,7 +651,7 @@ const getUserTeams = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Database error while fetching user teams",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -701,7 +690,7 @@ const getUserRoleInTeam = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Error fetching user role",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -712,29 +701,210 @@ const getUserPendingApplications = async (req, res) => {
 
     // Get user's pending applications with team details
     const applicationsResult = await db.pool.query(
-      `SELECT 
-    ta.id, ta.team_id, ta.message, ta.status, ta.created_at,
+      `SELECT
+    ta.id, ta.team_id, ta.role_id, ta.message, ta.status, ta.created_at,
+    vr.role_name, vr.bio AS role_bio, vr.city AS role_city, vr.country AS role_country,
+    vr.state AS role_state, vr.is_remote AS role_is_remote,
+    vr.latitude AS role_latitude, vr.longitude AS role_longitude,
+    vr.max_distance_km AS role_max_distance_km, vr.status AS role_status,
+    vr.filled_by AS role_filled_by,
+    fu.id AS role_filled_by_user_id,
+    fu.first_name AS role_filled_by_user_first_name,
+    fu.last_name AS role_filled_by_user_last_name,
+    fu.username AS role_filled_by_user_username,
+    fu.avatar_url AS role_filled_by_user_avatar_url,
     t.name, t.description, t.teamavatar_url, t.max_members, t.is_public,
+    t.latitude, t.longitude, t.is_remote, t.city, t.country, t.state, t.postal_code,
     (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count,
     owner.id as owner_id,
     owner.username as owner_username,
     owner.first_name as owner_first_name,
     owner.last_name as owner_last_name,
-    owner.avatar_url as owner_avatar_url
+    owner.avatar_url as owner_avatar_url,
+    u.latitude AS applicant_latitude, u.longitude AS applicant_longitude,
+    EXISTS (
+      SELECT 1 FROM team_members
+      WHERE team_id = t.id AND user_id = $1
+    ) AS is_team_member
    FROM team_applications ta
    JOIN teams t ON ta.team_id = t.id
+   LEFT JOIN team_vacant_roles vr ON ta.role_id = vr.id
+   LEFT JOIN users fu ON vr.filled_by = fu.id
    JOIN team_members tm ON t.id = tm.team_id AND tm.role = 'owner'
    JOIN users owner ON tm.user_id = owner.id
+   JOIN users u ON ta.applicant_id = u.id
    WHERE ta.applicant_id = $1 AND ta.status = 'pending'
    ORDER BY ta.created_at DESC`,
       [userId],
     );
+
+    if (applicationsResult.rows.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: [],
+      });
+    }
+
+    const teamIds = [...new Set(
+      applicationsResult.rows.map((r) => r.team_id).filter(Boolean)
+    )];
+
+    const roleIds = [...new Set(
+      applicationsResult.rows.map((r) => r.role_id).filter(Boolean)
+    )];
+
+    let teamTagsByTeamId = {};
+    let teamBadgesByTeamId = {};
+    let roleTagsByRole = {};
+    let roleBadgesByRole = {};
+    let userTagIds = new Set();
+    let userBadgeIds = new Set();
+
+    const [
+      teamTagsResult,
+      teamBadgesResult,
+      roleTagsResult,
+      roleBadgesResult,
+      userTagsResult,
+      userBadgesResult,
+    ] = await Promise.all([
+      db.pool.query(
+        `SELECT tt.team_id, t.id AS tag_id, t.name, t.category, t.supercategory
+         FROM team_tags tt
+         JOIN tags t ON tt.tag_id = t.id
+         WHERE tt.team_id = ANY($1::int[])
+         ORDER BY t.supercategory, t.category, t.name`,
+        [teamIds]
+      ),
+      db.pool.query(
+        `SELECT DISTINCT tm.team_id, b.id AS badge_id, b.name, b.category, b.color, b.image_url, b.cat_image_url
+         FROM team_members tm
+         JOIN badge_awards ba ON ba.awarded_to_user_id = tm.user_id
+         JOIN badges b ON ba.badge_id = b.id
+         WHERE tm.team_id = ANY($1::int[])
+         ORDER BY tm.team_id, b.category, b.name`,
+        [teamIds]
+      ),
+      roleIds.length > 0
+        ? db.pool.query(
+            `SELECT vrt.role_id, t.id AS tag_id, t.name, t.category, t.supercategory
+             FROM team_vacant_role_tags vrt
+             JOIN tags t ON vrt.tag_id = t.id
+             WHERE vrt.role_id = ANY($1)
+             ORDER BY t.supercategory, t.category, t.name`,
+            [roleIds]
+          )
+        : Promise.resolve({ rows: [] }),
+      roleIds.length > 0
+        ? db.pool.query(
+            `SELECT vrb.role_id, b.id AS badge_id, b.name, b.category, b.color, b.image_url, b.cat_image_url
+             FROM team_vacant_role_badges vrb
+             JOIN badges b ON vrb.badge_id = b.id
+             WHERE vrb.role_id = ANY($1)
+             ORDER BY b.category, b.name`,
+            [roleIds]
+          )
+        : Promise.resolve({ rows: [] }),
+      roleIds.length > 0
+        ? db.pool.query(
+            `SELECT tag_id FROM user_tags WHERE user_id = $1`,
+            [userId]
+          )
+        : Promise.resolve({ rows: [] }),
+      roleIds.length > 0
+        ? db.pool.query(
+            `SELECT DISTINCT badge_id FROM badge_awards WHERE awarded_to_user_id = $1`,
+            [userId]
+          )
+        : Promise.resolve({ rows: [] }),
+    ]);
+
+    for (const tag of teamTagsResult.rows) {
+      if (!teamTagsByTeamId[tag.team_id]) teamTagsByTeamId[tag.team_id] = [];
+      teamTagsByTeamId[tag.team_id].push({
+        id: tag.tag_id,
+        name: tag.name,
+        category: tag.category,
+        supercategory: tag.supercategory,
+      });
+    }
+    for (const badge of teamBadgesResult.rows) {
+      if (!teamBadgesByTeamId[badge.team_id]) teamBadgesByTeamId[badge.team_id] = [];
+      teamBadgesByTeamId[badge.team_id].push({
+        id: badge.badge_id,
+        name: badge.name,
+        category: badge.category,
+        color: badge.color,
+        image_url: badge.image_url,
+        cat_image_url: badge.cat_image_url,
+      });
+    }
+
+    for (const tag of roleTagsResult.rows) {
+      if (!roleTagsByRole[tag.role_id]) roleTagsByRole[tag.role_id] = [];
+      roleTagsByRole[tag.role_id].push(tag);
+    }
+    for (const badge of roleBadgesResult.rows) {
+      if (!roleBadgesByRole[badge.role_id]) roleBadgesByRole[badge.role_id] = [];
+      roleBadgesByRole[badge.role_id].push(badge);
+    }
+    userTagIds = new Set(userTagsResult.rows.map((r) => r.tag_id));
+    userBadgeIds = new Set(userBadgesResult.rows.map((r) => r.badge_id));
 
     const applications = applicationsResult.rows.map((row) => ({
       id: row.id,
       message: row.message,
       status: row.status,
       created_at: row.created_at,
+      isInternalRoleApplication: row.is_team_member === true && row.role_id != null,
+      role: row.role_id
+        ? (() => {
+            const roleTags = roleTagsByRole[row.role_id] || [];
+            const roleBadges = roleBadgesByRole[row.role_id] || [];
+            const roleTagIds = roleTags.map((t) => t.tag_id);
+            const roleBadgeIds = roleBadges.map((b) => b.badge_id);
+
+            const tagScore = roleTagIds.length > 0
+              ? roleTagIds.filter((id) => userTagIds.has(id)).length / roleTagIds.length
+              : 0.5;
+
+            const badgeScore = roleBadgeIds.length > 0
+              ? roleBadgeIds.filter((id) => userBadgeIds.has(id)).length / roleBadgeIds.length
+              : 0.5;
+
+            const { score: distanceScore, distanceKm, isWithinRange } = computeDistanceScore({
+              isRemote: row.role_is_remote,
+              userLat: row.applicant_latitude,
+              userLng: row.applicant_longitude,
+              roleLat: row.role_latitude,
+              roleLng: row.role_longitude,
+              maxDistKm: row.role_max_distance_km,
+            });
+
+            const matchScore =
+              WEIGHTS.tags * tagScore +
+              WEIGHTS.badges * badgeScore +
+              WEIGHTS.distance * distanceScore;
+
+            return serializeEmbeddedVacantRole(row, {
+              tags: roleTags,
+              badges: roleBadges,
+              match_score: Math.round(matchScore * 100) / 100,
+              match_details: {
+                tag_score: Math.round(tagScore * 100) / 100,
+                badge_score: Math.round(badgeScore * 100) / 100,
+                distance_score: Math.round(distanceScore * 100) / 100,
+                matching_tags: roleTagIds.filter((id) => userTagIds.has(id)).length,
+                total_required_tags: roleTagIds.length,
+                matching_badges: roleBadgeIds.filter((id) => userBadgeIds.has(id)).length,
+                total_required_badges: roleBadgeIds.length,
+                distance_km: distanceKm !== null ? Math.round(distanceKm) : null,
+                max_distance_km: row.role_max_distance_km,
+                is_within_range: isWithinRange,
+              },
+            });
+          })()
+        : null,
       team: {
         id: row.team_id,
         name: row.name,
@@ -743,6 +913,15 @@ const getUserPendingApplications = async (req, res) => {
         max_members: row.max_members,
         is_public: row.is_public === true || row.is_public === "true",
         current_members_count: parseInt(row.current_members_count),
+        latitude: row.latitude,
+        longitude: row.longitude,
+        is_remote: row.is_remote,
+        city: row.city,
+        country: row.country,
+        state: row.state,
+        postal_code: row.postal_code,
+        tags: teamTagsByTeamId[row.team_id] || [],
+        badges: teamBadgesByTeamId[row.team_id] || [],
       },
       // Owner (receiver) info
       owner: {
@@ -763,7 +942,7 @@ const getUserPendingApplications = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching applications",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -874,7 +1053,7 @@ const cancelApplication = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error canceling application",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -951,17 +1130,9 @@ const updateTeam = async (req, res) => {
         const { newRole, new_role } = req.body;
         const roleToUpdate = newRole || new_role;
 
-        console.log("Extracted values:");
-        console.log("- newRole:", newRole);
-        console.log("- new_role:", new_role);
-        console.log("- roleToUpdate:", roleToUpdate);
-        console.log("- roleToUpdate type:", typeof roleToUpdate);
-        console.log("=========================");
-
         // Validate role
         const validRoles = ["member", "admin"];
         if (!validRoles.includes(roleToUpdate)) {
-          console.log("❌ Role validation failed for:", roleToUpdate);
           return res.status(400).json({
             success: false,
             message: "Invalid role. Must be 'member' or 'admin'",
@@ -972,8 +1143,6 @@ const updateTeam = async (req, res) => {
             },
           });
         }
-
-        console.log("✅ Role validation passed for:", roleToUpdate);
 
         // Check if the user making the request is authorized (owner or admin)
         const authCheck = await db.pool.query(
@@ -1156,7 +1325,7 @@ const updateTeam = async (req, res) => {
         res.status(500).json({
           success: false,
           message: "Error updating member role",
-          error: error.message,
+          ...(process.env.NODE_ENV === "development" && { error: error.message }),
         });
       }
     };
@@ -1229,17 +1398,6 @@ const updateTeam = async (req, res) => {
       value.longitude = null;
     }
 
-    // After geocoding block, before transaction:
-    console.log("--> Location data to insert:", {
-      is_remote: value.is_remote,
-      postal_code: value.postal_code,
-      city: value.city,
-      country: value.country,
-      state: value.state,
-      latitude: value.latitude,
-      longitude: value.longitude,
-    });
-
     // Begin transaction
     const client = await db.pool.connect();
 
@@ -1266,11 +1424,7 @@ const updateTeam = async (req, res) => {
           try {
             const publicId = extractCloudinaryPublicId(oldAvatarUrl);
             if (publicId) {
-              console.log(
-                `Attempting to delete old team avatar from Cloudinary: ${publicId}`,
-              );
               const deleteResult = await cloudinary.uploader.destroy(publicId);
-              console.log("Cloudinary deletion result:", deleteResult);
             }
           } catch (cloudinaryError) {
             console.error(
@@ -1456,7 +1610,7 @@ const updateTeam = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error updating team",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -1485,22 +1639,161 @@ const getTeamApplications = async (req, res) => {
 
     // Get pending applications with applicant details
     const applicationsResult = await db.pool.query(
-      `SELECT 
-        ta.id, ta.message, ta.status, ta.created_at,
-        u.id as applicant_id, u.username, u.first_name, u.last_name, 
-        u.bio, u.avatar_url, u.postal_code, u.city, u.country, u.state
+      `SELECT
+        ta.id, ta.role_id, ta.message, ta.status, ta.created_at,
+        vr.role_name, vr.bio AS role_bio, vr.city AS role_city, vr.country AS role_country,
+        vr.state AS role_state, vr.is_remote AS role_is_remote,
+        vr.latitude AS role_latitude, vr.longitude AS role_longitude,
+        vr.max_distance_km AS role_max_distance_km, vr.status AS role_status,
+        vr.filled_by AS role_filled_by,
+        fu.id AS role_filled_by_user_id,
+        fu.first_name AS role_filled_by_user_first_name,
+        fu.last_name AS role_filled_by_user_last_name,
+        fu.username AS role_filled_by_user_username,
+        fu.avatar_url AS role_filled_by_user_avatar_url,
+        u.id as applicant_id, u.username, u.first_name, u.last_name,
+        u.bio, u.avatar_url, u.postal_code, u.city, u.country, u.state,
+        u.latitude AS applicant_latitude, u.longitude AS applicant_longitude
        FROM team_applications ta
        JOIN users u ON ta.applicant_id = u.id
+       LEFT JOIN team_vacant_roles vr ON ta.role_id = vr.id
+       LEFT JOIN users fu ON vr.filled_by = fu.id
        WHERE ta.team_id = $1 AND ta.status = 'pending'
        ORDER BY ta.created_at ASC`,
       [teamId],
     );
+
+    // Batch-fetch role tags and badges for applications that reference a vacant role
+    const roleIds = [...new Set(
+      applicationsResult.rows
+        .map((r) => r.role_id)
+        .filter(Boolean)
+    )];
+
+    let roleTagsByRole = {};
+    let roleBadgesByRole = {};
+
+    if (roleIds.length > 0) {
+      const [roleTagsResult, roleBadgesResult] = await Promise.all([
+        db.pool.query(
+          `SELECT vrt.role_id, t.id AS tag_id, t.name, t.category, t.supercategory
+           FROM team_vacant_role_tags vrt
+           JOIN tags t ON vrt.tag_id = t.id
+           WHERE vrt.role_id = ANY($1)
+           ORDER BY t.supercategory, t.category, t.name`,
+          [roleIds]
+        ),
+        db.pool.query(
+          `SELECT vrb.role_id, b.id AS badge_id, b.name, b.category, b.color, b.image_url, b.cat_image_url
+           FROM team_vacant_role_badges vrb
+           JOIN badges b ON vrb.badge_id = b.id
+           WHERE vrb.role_id = ANY($1)
+           ORDER BY b.category, b.name`,
+          [roleIds]
+        ),
+      ]);
+
+      for (const tag of roleTagsResult.rows) {
+        if (!roleTagsByRole[tag.role_id]) roleTagsByRole[tag.role_id] = [];
+        roleTagsByRole[tag.role_id].push(tag);
+      }
+      for (const badge of roleBadgesResult.rows) {
+        if (!roleBadgesByRole[badge.role_id]) roleBadgesByRole[badge.role_id] = [];
+        roleBadgesByRole[badge.role_id].push(badge);
+      }
+    }
+
+    // Also batch-fetch applicant tags and badges for match scoring
+    const applicantIds = [...new Set(
+      applicationsResult.rows.map((r) => r.applicant_id)
+    )];
+
+    let applicantTagsByUser = {};
+    let applicantBadgesByUser = {};
+
+    if (applicantIds.length > 0 && roleIds.length > 0) {
+      const [appTagsResult, appBadgesResult] = await Promise.all([
+        db.pool.query(
+          `SELECT user_id, tag_id FROM user_tags WHERE user_id = ANY($1)`,
+          [applicantIds]
+        ),
+        db.pool.query(
+          `SELECT DISTINCT ba.awarded_to_user_id AS user_id, ba.badge_id
+           FROM badge_awards ba
+           WHERE ba.awarded_to_user_id = ANY($1)`,
+          [applicantIds]
+        ),
+      ]);
+
+      for (const row of appTagsResult.rows) {
+        if (!applicantTagsByUser[row.user_id]) applicantTagsByUser[row.user_id] = new Set();
+        applicantTagsByUser[row.user_id].add(row.tag_id);
+      }
+      for (const row of appBadgesResult.rows) {
+        if (!applicantBadgesByUser[row.user_id]) applicantBadgesByUser[row.user_id] = new Set();
+        applicantBadgesByUser[row.user_id].add(row.badge_id);
+      }
+    }
 
     const applications = applicationsResult.rows.map((row) => ({
       id: row.id,
       message: row.message,
       status: row.status,
       created_at: row.created_at,
+      role: row.role_id
+        ? (() => {
+            const roleTags = roleTagsByRole[row.role_id] || [];
+            const roleBadges = roleBadgesByRole[row.role_id] || [];
+            const roleTagIds = roleTags.map((t) => t.tag_id);
+            const roleBadgeIds = roleBadges.map((b) => b.badge_id);
+
+            const userTags = applicantTagsByUser[row.applicant_id] || new Set();
+            const userBadges = applicantBadgesByUser[row.applicant_id] || new Set();
+
+            // Tag score
+            let tagScore = roleTagIds.length > 0
+              ? roleTagIds.filter((id) => userTags.has(id)).length / roleTagIds.length
+              : 0.5;
+
+            // Badge score
+            let badgeScore = roleBadgeIds.length > 0
+              ? roleBadgeIds.filter((id) => userBadges.has(id)).length / roleBadgeIds.length
+              : 0.5;
+
+            // Distance score
+            const { score: distanceScore, distanceKm, isWithinRange } = computeDistanceScore({
+              isRemote: row.role_is_remote,
+              userLat: row.applicant_latitude,
+              userLng: row.applicant_longitude,
+              roleLat: row.role_latitude,
+              roleLng: row.role_longitude,
+              maxDistKm: row.role_max_distance_km,
+            });
+
+            const matchScore =
+              WEIGHTS.tags * tagScore +
+              WEIGHTS.badges * badgeScore +
+              WEIGHTS.distance * distanceScore;
+
+            return serializeEmbeddedVacantRole(row, {
+              tags: roleTags,
+              badges: roleBadges,
+              match_score: Math.round(matchScore * 100) / 100,
+              match_details: {
+                tag_score: Math.round(tagScore * 100) / 100,
+                badge_score: Math.round(badgeScore * 100) / 100,
+                distance_score: Math.round(distanceScore * 100) / 100,
+                matching_tags: roleTagIds.filter((id) => userTags.has(id)).length,
+                total_required_tags: roleTagIds.length,
+                matching_badges: roleBadgeIds.filter((id) => userBadges.has(id)).length,
+                total_required_badges: roleBadgeIds.length,
+                distance_km: distanceKm !== null ? Math.round(distanceKm) : null,
+                max_distance_km: row.role_max_distance_km,
+                is_within_range: isWithinRange,
+              },
+            });
+          })()
+        : null,
       applicant: {
         id: row.applicant_id,
         username: row.username,
@@ -1521,7 +1814,7 @@ const getTeamApplications = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching team applications",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -1530,6 +1823,7 @@ const handleTeamApplication = async (req, res) => {
   try {
     const applicationId = req.params.applicationId;
     const { action, response } = req.body; // action: 'approve' or 'decline'
+    const fillRole = req.body.fillRole ?? req.body.fill_role ?? false;
     const userId = req.user.id;
 
     // Get application details
@@ -1563,6 +1857,13 @@ const handleTeamApplication = async (req, res) => {
       });
     }
 
+    if (userId === application.applicant_id) {
+      return res.status(403).json({
+        success: false,
+        message: "You cannot approve or decline your own application. Another team owner or admin must review it.",
+      });
+    }
+
     // Get approver's name
     const approverResult = await db.pool.query(
       `SELECT first_name, last_name, username FROM users WHERE id = $1`,
@@ -1576,41 +1877,51 @@ const handleTeamApplication = async (req, res) => {
       await client.query("BEGIN");
 
       if (action === "approve") {
-        // Check if team is full
-        const memberCountResult = await client.query(
-          `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
-          [application.team_id],
+        // Check if applicant is already a member (internal role application)
+        const existingMember = await client.query(
+          `SELECT id FROM team_members WHERE team_id = $1 AND user_id = $2`,
+          [application.team_id, application.applicant_id]
         );
 
-        if (
-          application.max_members !== null &&
-          parseInt(memberCountResult.rows[0].count) >= application.max_members
-        ) {
-          await client.query("ROLLBACK");
-          return res.status(400).json({
-            success: false,
-            message: "Team is already at maximum capacity",
-          });
+        const isInternalRoleApp = existingMember.rows.length > 0;
+
+        if (!isInternalRoleApp) {
+          // External application — check capacity and add to team
+          const memberCountResult = await client.query(
+            `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
+            [application.team_id],
+          );
+
+          if (
+            application.max_members !== null &&
+            parseInt(memberCountResult.rows[0].count) >= application.max_members
+          ) {
+            await client.query("ROLLBACK");
+            return res.status(400).json({
+              success: false,
+              message: "Team is already at maximum capacity",
+            });
+          }
+
+          // Add user to team
+          await client.query(
+            `INSERT INTO team_members (team_id, user_id, role, joined_at)
+     VALUES ($1, $2, 'member', NOW())`,
+            [application.team_id, application.applicant_id],
+          );
+
+          // Clean up any pending invitations for this user to this team
+          await client.query(
+            `UPDATE team_invitations
+     SET status = 'accepted', responded_at = NOW()
+     WHERE team_id = $1 AND invitee_id = $2 AND status = 'pending'`,
+            [application.team_id, application.applicant_id],
+          );
         }
 
-        // Add user to team
+        // Update application status — runs for both internal and external
         await client.query(
-          `INSERT INTO team_members (team_id, user_id, role, joined_at)
-   VALUES ($1, $2, 'member', NOW())`,
-          [application.team_id, application.applicant_id],
-        );
-
-        // Clean up any pending invitations for this user to this team
-        await client.query(
-          `UPDATE team_invitations 
-   SET status = 'accepted', responded_at = NOW()
-   WHERE team_id = $1 AND invitee_id = $2 AND status = 'pending'`,
-          [application.team_id, application.applicant_id],
-        );
-
-        // Update application status
-        await client.query(
-          `UPDATE team_applications 
+          `UPDATE team_applications
    SET status = 'approved', reviewed_at = NOW(), reviewed_by = $1
    WHERE id = $2`,
           [userId, applicationId],
@@ -1627,7 +1938,18 @@ const handleTeamApplication = async (req, res) => {
             ? `${approver.first_name} ${approver.last_name}`
             : approver.username;
 
-        const systemMessage = `🎉 ${applicantName} has applied successfully to your team and has been added as a team member by ${approverName}. Say hello to them!`;
+        let roleName = null;
+        if (application.role_id) {
+          const roleResult = await client.query(
+            `SELECT role_name FROM team_vacant_roles WHERE id = $1`,
+            [application.role_id]
+          );
+          roleName = roleResult.rows[0]?.role_name ?? null;
+        }
+
+        const systemMessage = isInternalRoleApp && roleName
+          ? `${applicantName}'s application for ${roleName} was approved`
+          : `🎉 ${applicantName} has applied successfully to your team and has been added as a team member by ${approverName}. Say hello to them!`;
 
         await client.query(
           `INSERT INTO messages (sender_id, team_id, content, sent_at)
@@ -1705,6 +2027,35 @@ const handleTeamApplication = async (req, res) => {
           );
         }
         // === END NOTIFICATION ===
+
+        // Auto-fill the associated vacant role if the application targets one
+        let roleFilled = false;
+        let filledRoleName = null;
+
+        if (application.role_id && fillRole) {
+          const roleUpdateResult = await client.query(
+            `UPDATE team_vacant_roles
+             SET status = 'filled', filled_by = $1, updated_at = NOW()
+             WHERE id = $2 AND team_id = $3 AND status = 'open'
+             RETURNING id, role_name`,
+            [application.applicant_id, application.role_id, application.team_id],
+          );
+          roleFilled = roleUpdateResult.rows.length > 0;
+          filledRoleName = roleFilled ? roleUpdateResult.rows[0].role_name : null;
+        }
+
+        await client.query("COMMIT");
+
+        return res.status(200).json({
+          success: true,
+          message: "Application approved successfully",
+          data: {
+            applicationId: parseInt(applicationId),
+            status: "approved",
+            roleFilled,
+            filledRoleName,
+          },
+        });
       } else if (action === "decline") {
         // Get approver's name for the decline message
         const approverName =
@@ -1802,7 +2153,7 @@ const handleTeamApplication = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error handling application",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -1933,7 +2284,7 @@ const deleteTeam = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error deleting team",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -1942,7 +2293,11 @@ const applyToJoinTeam = async (req, res) => {
   try {
     const teamId = req.params.id;
     const applicantId = req.user.id;
-    const { message, isDraft = false } = req.body;
+    const message = req.body.message;
+    const isDraft = req.body.isDraft ?? req.body.is_draft ?? false;
+    const roleId = req.body.roleId ?? req.body.role_id ?? null;
+    const hasRoleId = roleId !== undefined && roleId !== null && roleId !== "";
+    const normalizedRoleId = hasRoleId ? Number(roleId) : null;
 
     // Validation
     if (!message || message.trim().length === 0) {
@@ -1956,6 +2311,16 @@ const applyToJoinTeam = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Message cannot exceed 500 characters",
+      });
+    }
+
+    if (
+      hasRoleId &&
+      (!Number.isInteger(normalizedRoleId) || normalizedRoleId <= 0)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "roleId must be a positive integer when provided",
       });
     }
 
@@ -1975,61 +2340,101 @@ const applyToJoinTeam = async (req, res) => {
 
     const team = teamCheck.rows[0];
 
+    if (normalizedRoleId !== null) {
+      const roleCheck = await db.pool.query(
+        `SELECT id
+         FROM team_vacant_roles
+         WHERE id = $1 AND team_id = $2 AND status = 'open'`,
+        [normalizedRoleId, teamId],
+      );
+
+      if (roleCheck.rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Vacant role not found or is no longer open for this team",
+        });
+      }
+    }
+
     // Check if user is already a member
     const memberCheck = await db.pool.query(
       `SELECT id FROM team_members WHERE team_id = $1 AND user_id = $2`,
       [teamId, applicantId],
     );
 
-    if (memberCheck.rows.length > 0) {
+    const isAlreadyMember = memberCheck.rows.length > 0;
+
+    if (isAlreadyMember && !normalizedRoleId) {
       return res.status(400).json({
         success: false,
-        message: "You are already a member of this team",
+        message: "You are already a member of this team. To apply for a role, please select a specific vacant role.",
       });
     }
 
-    // Check if team is full
-    const memberCount = await db.pool.query(
-      `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
-      [teamId],
-    );
+    if (!isAlreadyMember) {
+      // Check if team is full
+      const memberCount = await db.pool.query(
+        `SELECT COUNT(*) as count FROM team_members WHERE team_id = $1`,
+        [teamId],
+      );
 
-    if (
-      team.max_members !== null &&
-      parseInt(memberCount.rows[0].count) >= team.max_members
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: "Team is already at maximum capacity",
-      });
+      if (
+        team.max_members !== null &&
+        parseInt(memberCount.rows[0].count) >= team.max_members
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Team is already at maximum capacity",
+        });
+      }
     }
 
-    // Check if user already has a pending application
-    const existingApplicationCheck = await db.pool.query(
-      `SELECT id FROM team_applications 
-       WHERE team_id = $1 AND applicant_id = $2 AND status = 'pending'`,
-      [teamId, applicantId],
-    );
+    if (isAlreadyMember && normalizedRoleId) {
+      // Internal role application — check for duplicate role-specific application
+      const existingRoleAppCheck = await db.pool.query(
+        `SELECT id FROM team_applications
+         WHERE team_id = $1 AND applicant_id = $2 AND role_id = $3 AND status = 'pending'`,
+        [teamId, applicantId, normalizedRoleId],
+      );
 
-    if (existingApplicationCheck.rows.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: "You already have a pending application for this team",
-      });
+      if (existingRoleAppCheck.rows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: "You already have a pending application for this role",
+        });
+      }
+    } else if (!isAlreadyMember) {
+      // External application — keep existing general duplicate check
+      const existingApplicationCheck = await db.pool.query(
+        `SELECT id FROM team_applications
+         WHERE team_id = $1 AND applicant_id = $2 AND status = 'pending'`,
+        [teamId, applicantId],
+      );
+
+      if (existingApplicationCheck.rows.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: "You already have a pending application for this team",
+        });
+      }
     }
 
     const client = await db.pool.connect();
     try {
       await client.query("BEGIN");
 
-      // Insert or update application
+      // Persist the optional role link when the application originates from a vacant role.
       const applicationResult = await client.query(
-        `INSERT INTO team_applications (team_id, applicant_id, message, status, created_at)
-         VALUES ($1, $2, $3, $4, NOW())
-         ON CONFLICT (team_id, applicant_id) 
-         DO UPDATE SET message = $3, status = $4, updated_at = NOW()
+        `INSERT INTO team_applications (team_id, applicant_id, message, status, role_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, NOW())
          RETURNING id`,
-        [teamId, applicantId, message.trim(), isDraft ? "draft" : "pending"],
+        [
+          teamId,
+          applicantId,
+          message.trim(),
+          isDraft ? "draft" : "pending",
+          normalizedRoleId,
+        ],
       );
 
       await client.query("COMMIT");
@@ -2051,7 +2456,9 @@ const applyToJoinTeam = async (req, res) => {
           await notifyTeamAdmins({
             teamId: parseInt(teamId),
             type: "application_received",
-            title: `${applicantName} applied to join ${team.name}`,
+            title: isAlreadyMember
+              ? `${applicantName} applied for a role in ${team.name}`
+              : `${applicantName} applied to join ${team.name}`,
             message: message || null,
             referenceType: "team_application",
             referenceId: applicationResult.rows[0].id,
@@ -2077,12 +2484,13 @@ const applyToJoinTeam = async (req, res) => {
 
       res.status(201).json({
         success: true,
-        message: isDraft
-          ? "Application draft saved successfully"
-          : "Application sent successfully",
+        message: isAlreadyMember
+          ? (isDraft ? "Role application draft saved" : "Role application sent to the team owner and admins")
+          : (isDraft ? "Application draft saved successfully" : "Application sent successfully"),
         data: {
           applicationId: applicationResult.rows[0].id,
           status: isDraft ? "draft" : "pending",
+          isInternalRoleApplication: isAlreadyMember,
         },
       });
     } catch (dbError) {
@@ -2096,7 +2504,7 @@ const applyToJoinTeam = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error processing application",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -2287,7 +2695,7 @@ const addTeamMember = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error adding team member",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -2685,7 +3093,7 @@ const removeTeamMember = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Error removing team member",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -2695,14 +3103,15 @@ const updateMemberRole = async (req, res) => {
     const teamId = req.params.teamId;
     const memberId = req.params.memberId;
     const userId = req.user.id;
-    const { newRole } = req.body;
+    const { new_role } = req.body;
 
     // Validate role
-    const validRoles = ["member", "admin"];
-    if (!validRoles.includes(newRole)) {
+    const validRoles = ["member", "admin", "owner"];
+    if (!validRoles.includes(new_role)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid role. Must be 'member' or 'admin'",
+        message: "Invalid role. Must be 'member', 'admin', or 'owner'",
+        received: new_role,
       });
     }
 
@@ -2747,28 +3156,158 @@ const updateMemberRole = async (req, res) => {
 
     const memberCurrentRole = memberCheck.rows[0].role;
 
-    // Only owners can change admin roles
-    if (memberCurrentRole === "admin" && userrole !== "owner") {
+    // Commented out restrictions for team role changes to enable more flexible role management
+
+    // // Only owners can change admin roles
+    // if (memberCurrentRole === "admin" && userRole !== "owner") {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: "Only team owners can change admin roles",
+    //   });
+    // }
+
+    // // Only owners can promote to admin
+    // if (new_role === "admin" && userRole !== "owner") {
+    //   return res.status(403).json({
+    //     success: false,
+    //     message: "Only team owners can promote members to admin",
+    //   });
+    // }
+
+    // Only owner can transfer ownership
+    if (new_role === "owner" && userRole !== "owner") {
       return res.status(403).json({
         success: false,
-        message: "Only team owners can change admin roles",
+        message: "Only the team owner can transfer ownership",
       });
     }
 
-    // Only owners can promote to admin
-    if (newRole === "admin" && userrole !== "owner") {
-      return res.status(403).json({
-        success: false,
-        message: "Only team owners can promote members to admin",
-      });
-    }
+    // Handle ownership transfer
+    if (new_role === "owner") {
+      const client = await db.pool.connect();
 
-    // Can't change owner role
-    if (memberCurrentrole === "owner") {
-      return res.status(403).json({
-        success: false,
-        message: "Cannot change owner role",
-      });
+      try {
+        await client.query("BEGIN");
+
+        // Demote current owner to admin
+        await client.query(
+          `UPDATE team_members
+       SET role = 'admin'
+       WHERE team_id = $1 AND role = 'owner'`,
+          [teamId],
+        );
+
+        // Promote target member to owner
+        await client.query(
+          `UPDATE team_members
+       SET role = 'owner'
+       WHERE team_id = $1 AND user_id = $2`,
+          [teamId, memberId],
+        );
+
+        // Update teams table owner_id
+        await client.query(
+          `UPDATE teams
+       SET owner_id = $1
+       WHERE id = $2`,
+          [memberId, teamId],
+        );
+
+        await client.query("COMMIT");
+
+        // === NOTIFICATION + SYSTEM MESSAGES ===
+        try {
+          // Team name
+          const teamResult = await db.pool.query(
+            `SELECT name FROM teams WHERE id = $1`,
+            [teamId],
+          );
+          const teamName = teamResult.rows[0]?.name || "the team";
+
+          // Previous owner name
+          const prevOwnerResult = await db.pool.query(
+            `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+            [userId],
+          );
+          const prevOwner = prevOwnerResult.rows[0];
+          const prevOwnerName =
+            prevOwner.first_name && prevOwner.last_name
+              ? `${prevOwner.first_name} ${prevOwner.last_name}`
+              : prevOwner.username;
+
+          // New owner name
+          const newOwnerResult = await db.pool.query(
+            `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+            [memberId],
+          );
+          const newOwner = newOwnerResult.rows[0];
+          const newOwnerName =
+            newOwner.first_name && newOwner.last_name
+              ? `${newOwner.first_name} ${newOwner.last_name}`
+              : newOwner.username;
+
+          // ✅ DM system message (tokenized team + users)
+          const teamToken = `${teamId}:${teamName}`;
+          const prevToken = `${userId}:${prevOwnerName}`;
+          const newToken = `${memberId}:${newOwnerName}`;
+
+          const ownershipMessage = `👑 OWNERSHIP_TRANSFERRED: ${teamToken} | ${prevToken} | ${newToken}`;
+
+          await db.pool.query(
+            `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+         VALUES ($1, $2, $3, NOW())`,
+            [userId, memberId, ownershipMessage],
+          );
+
+          // Notification for new owner
+          await createNotification({
+            userId: parseInt(memberId),
+            type: "ownership_transferred",
+            title: `You are now the owner of ${teamName}`,
+            message: null,
+            referenceType: "team_member",
+            referenceId: parseInt(teamId),
+            teamId: parseInt(teamId),
+            actorId: parseInt(userId),
+          });
+
+          // Socket event
+          const io = req.app.get("io");
+          if (io) {
+            io.to(`user:${memberId}`).emit("notification:new", {
+              type: "ownership_transferred",
+              teamId: parseInt(teamId),
+            });
+          }
+
+          // Team chat message for everyone
+          const teamChatMessage = `👑 OWNERSHIP_TEAM: ${prevOwnerName} | ${newOwnerName}`;
+          await db.pool.query(
+            `INSERT INTO messages (sender_id, team_id, content, sent_at)
+         VALUES ($1, $2, $3, NOW())`,
+            [userId, teamId, teamChatMessage],
+          );
+        } catch (notificationError) {
+          console.error(
+            "Error creating ownership transfer notification:",
+            notificationError,
+          );
+        }
+
+        return res.status(200).json({
+          success: true,
+          message: "Team ownership transferred successfully",
+        });
+      } catch (dbError) {
+        await client.query("ROLLBACK");
+        console.error("Database error during ownership transfer:", dbError);
+        return res.status(500).json({
+          success: false,
+          message: "Database error during ownership transfer",
+        });
+      } finally {
+        client.release();
+      }
     }
 
     // Update member role
@@ -2779,18 +3318,95 @@ const updateMemberRole = async (req, res) => {
 
       await client.query(
         `
-        UPDATE team_members 
-        SET role = $1 
-        WHERE team_id = $2 AND user_id = $3
-      `,
-        [newRole, teamId, memberId],
+          UPDATE team_members
+          SET role = $1
+          WHERE team_id = $2 AND user_id = $3
+        `,
+        [new_role, teamId, memberId],
       );
 
       await client.query("COMMIT");
 
+      // === CREATE NOTIFICATION FOR AFFECTED MEMBER ===
+      try {
+        // Get team name
+        const teamResult = await db.pool.query(
+          `SELECT name FROM teams WHERE id = $1`,
+          [teamId],
+        );
+        const teamName = teamResult.rows[0]?.name || "the team";
+
+        // Get changer's name (the admin/owner who made the change)
+        const changerResult = await db.pool.query(
+          `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+          [userId],
+        );
+        const changer = changerResult.rows[0];
+        const changerName =
+          changer.first_name && changer.last_name
+            ? `${changer.first_name} ${changer.last_name}`
+            : changer.username;
+
+        // Get affected member's name
+        const memberResult = await db.pool.query(
+          `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+          [memberId],
+        );
+        const member = memberResult.rows[0];
+        const memberName =
+          member.first_name && member.last_name
+            ? `${member.first_name} ${member.last_name}`
+            : member.username;
+
+        // Determine if promoted or demoted
+        const action = new_role === "admin" ? "promoted" : "demoted";
+
+        // Send system message to affected member via DM
+        const teamToken = `${teamId}:${teamName}`;
+
+        const roleChangeMessage =
+          `🔄 ROLE_CHANGED: ${teamToken} | ` +
+          `${userId}:${changerName} | ` +
+          `${memberId}:${memberName} | ` +
+          `${memberCurrentRole} | ${new_role}`;
+
+        await db.pool.query(
+          `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+             VALUES ($1, $2, $3, NOW())`,
+          [userId, memberId, roleChangeMessage],
+        );
+
+        // Create notification for affected member
+        await createNotification({
+          userId: parseInt(memberId),
+          type: "role_changed",
+          title: `You were ${action} to ${new_role} in ${teamName}`,
+          message: null,
+          referenceType: "team_member",
+          referenceId: parseInt(teamId),
+          teamId: parseInt(teamId),
+          actorId: parseInt(userId),
+        });
+
+        // Emit socket event to affected member
+        const io = req.app.get("io");
+        if (io) {
+          io.to(`user:${memberId}`).emit("notification:new", {
+            type: "role_changed",
+            teamId: parseInt(teamId),
+          });
+        }
+      } catch (notificationError) {
+        console.error(
+          "Error creating role change notification:",
+          notificationError,
+        );
+      }
+      // === END NOTIFICATION ===
+
       res.status(200).json({
         success: true,
-        message: `Member role updated to ${newRole} successfully`,
+        message: `Member role updated to ${new_role} successfully`,
       });
     } catch (dbError) {
       await client.query("ROLLBACK");
@@ -2808,7 +3424,230 @@ const updateMemberRole = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error updating member role",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
+/**
+ * @description Get all badge awards for team members, filtered to team focus areas
+ * @route GET /api/teams/:id/badge-awards
+ * @access Public
+ *
+ * Returns badge_awards rows in the same shape as GET /api/badges/user/:userId
+ * but for ALL members of the team, restricted to tags that are team focus areas.
+ * Includes an extra awarded_to_* set of fields so the frontend can show
+ * which member received each award.
+ */
+const getTeamBadgeAwards = async (req, res) => {
+  try {
+    const teamId = req.params.id;
+
+    const result = await db.pool.query(
+      `
+      SELECT
+        ba.id AS award_id,
+        b.id AS badge_id,
+        b.name AS badge_name,
+        b.description AS badge_description,
+        b.category AS badge_category,
+        b.image_url AS badge_image_url,
+        b.color AS badge_color,
+        b.cat_image_url AS badge_category_image_url,
+        ba.credits,
+        ba.created_at AS awarded_at,
+        ba.reason,
+        ba.context_type,
+        ba.context_id,
+        ba.custom_team_name,
+        ba.team_id,
+        COALESCE(t_ctx.name, ba.custom_team_name) AS team_name,
+        ba.tag_id,
+        tag.name AS tag_name,
+        tag.category AS tag_category,
+        ba.awarded_by_user_id,
+        awarder.username AS awarded_by_username,
+        awarder.first_name AS awarded_by_first_name,
+        awarder.last_name AS awarded_by_last_name,
+        awarder.avatar_url AS awarded_by_avatar_url,
+        -- Extra: who RECEIVED the badge (needed for team context)
+        ba.awarded_to_user_id,
+        recipient.username AS awarded_to_username,
+        recipient.first_name AS awarded_to_first_name,
+        recipient.last_name AS awarded_to_last_name,
+        recipient.avatar_url AS awarded_to_avatar_url
+      FROM badge_awards ba
+      JOIN badges b ON ba.badge_id = b.id
+      JOIN team_members tm ON ba.awarded_to_user_id = tm.user_id AND tm.team_id = $1
+      JOIN team_tags tt ON ba.tag_id = tt.tag_id AND tt.team_id = $1
+      LEFT JOIN users awarder ON ba.awarded_by_user_id = awarder.id
+      LEFT JOIN users recipient ON ba.awarded_to_user_id = recipient.id
+      LEFT JOIN teams t_ctx ON ba.team_id = t_ctx.id
+      LEFT JOIN tags tag ON ba.tag_id = tag.id
+      WHERE ba.tag_id IS NOT NULL
+      ORDER BY ba.created_at DESC, ba.id DESC
+      `,
+      [teamId],
+    );
+
+    res.status(200).json({
+      success: true,
+      data: result.rows,
+    });
+  } catch (error) {
+    console.error("Error fetching team badge awards:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching team badge awards",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
+/**
+ * @description Get aggregated badge summary for all team members
+ * @route GET /api/teams/:id/member-badges
+ * @access Public
+ *
+ * Returns one row per badge that any team member has earned credits in,
+ * with aggregated totals. Shape matches the per-user badge summary used
+ * by BadgesDisplaySection so the frontend component can be reused as-is.
+ */
+const getTeamMemberBadges = async (req, res) => {
+  try {
+    const teamId = req.params.id;
+
+    const result = await db.pool.query(
+      `
+      WITH badge_totals AS (
+        SELECT
+          b.id                          AS badge_id,
+          b.name,
+          b.description,
+          b.category,
+          b.color,
+          b.image_url,
+          b.cat_image_url,
+          SUM(ba.credits)::int               AS total_credits,
+          COUNT(ba.id)::int                   AS award_count,
+          COUNT(DISTINCT ba.awarded_by_user_id)::int AS awarder_count,
+          COUNT(DISTINCT ba.awarded_to_user_id)::int AS awardee_count
+        FROM badge_awards ba
+        JOIN badges b         ON ba.badge_id = b.id
+        JOIN team_members tm  ON ba.awarded_to_user_id = tm.user_id
+                             AND tm.team_id = $1
+        GROUP BY b.id, b.name, b.description, b.category, b.color,
+                 b.image_url, b.cat_image_url
+      ),
+      category_totals AS (
+        SELECT
+          category,
+          SUM(total_credits)::int          AS category_total_credits,
+          SUM(award_count)::int            AS category_award_count,
+          SUM(awarder_count)::int          AS category_awarder_count
+        FROM badge_totals
+        GROUP BY category
+      )
+      SELECT
+        bt.*,
+        ct.category_total_credits,
+        ct.category_award_count,
+        ct.category_awarder_count
+      FROM badge_totals bt
+      JOIN category_totals ct ON bt.category = ct.category
+      ORDER BY bt.category, bt.total_credits DESC, bt.name
+      `,
+      [teamId],
+    );
+
+    const grandTotalCredits = result.rows.reduce(
+      (sum, row) => sum + Number(row.total_credits || 0),
+      0,
+    );
+
+    res.status(200).json({
+      success: true,
+      data: result.rows,
+      meta: { totalCredits: grandTotalCredits },
+    });
+  } catch (error) {
+    console.error("Error fetching team member badges:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching team member badges",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
+/**
+ * @description Get ALL badge awards for team members (not filtered by focus areas)
+ * @route GET /api/teams/:id/member-badge-awards
+ * @access Public
+ *
+ * Used by badge category and badge pill drill-down modals in TeamDetailsModal.
+ * Unlike getTeamBadgeAwards (which filters to focus-area tags), this returns
+ * every badge award earned by any team member.
+ */
+const getTeamMemberBadgeAwards = async (req, res) => {
+  try {
+    const teamId = req.params.id;
+
+    const result = await db.pool.query(
+      `
+      SELECT
+        ba.id AS award_id,
+        b.id AS badge_id,
+        b.name AS badge_name,
+        b.description AS badge_description,
+        b.category AS badge_category,
+        b.image_url AS badge_image_url,
+        b.color AS badge_color,
+        b.cat_image_url AS badge_category_image_url,
+        ba.credits,
+        ba.created_at AS awarded_at,
+        ba.reason,
+        ba.context_type,
+        ba.context_id,
+        ba.custom_team_name,
+        ba.project_name,
+        ba.team_id,
+        COALESCE(t_ctx.name, ba.custom_team_name) AS team_name,
+        ba.tag_id,
+        tag.name AS tag_name,
+        tag.category AS tag_category,
+        ba.awarded_by_user_id,
+        awarder.username AS awarded_by_username,
+        awarder.first_name AS awarded_by_first_name,
+        awarder.last_name AS awarded_by_last_name,
+        awarder.avatar_url AS awarded_by_avatar_url,
+        ba.awarded_to_user_id,
+        recipient.username AS awarded_to_username,
+        recipient.first_name AS awarded_to_first_name,
+        recipient.last_name AS awarded_to_last_name,
+        recipient.avatar_url AS awarded_to_avatar_url
+      FROM badge_awards ba
+      JOIN badges b ON ba.badge_id = b.id
+      JOIN team_members tm ON ba.awarded_to_user_id = tm.user_id AND tm.team_id = $1
+      LEFT JOIN users awarder ON ba.awarded_by_user_id = awarder.id
+      LEFT JOIN users recipient ON ba.awarded_to_user_id = recipient.id
+      LEFT JOIN teams t_ctx ON ba.team_id = t_ctx.id
+      LEFT JOIN tags tag ON ba.tag_id = tag.id
+      ORDER BY ba.created_at DESC, ba.id DESC
+      `,
+      [teamId],
+    );
+
+    res.status(200).json({
+      success: true,
+      data: result.rows,
+    });
+  } catch (error) {
+    console.error("Error fetching team member badge awards:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching team member badge awards",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -2817,6 +3656,9 @@ module.exports = {
   createTeam,
   getAllTeams,
   getTeamById,
+  getTeamBadgeAwards,
+  getTeamMemberBadges,
+  getTeamMemberBadgeAwards,
   getUserTeams,
   getUserRoleInTeam,
   updateTeam,

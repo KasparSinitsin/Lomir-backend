@@ -48,7 +48,7 @@ const getUsers = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching users",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -161,7 +161,7 @@ const getUserById = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching user",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -415,7 +415,7 @@ const updateUser = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error updating user",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -484,7 +484,7 @@ const deleteAvatar = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error deleting avatar",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -548,7 +548,7 @@ const deleteUser = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error deleting user",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -591,7 +591,7 @@ WHERE ut.user_id = $1
     res.status(500).json({
       success: false,
       message: "Error fetching user tags",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -706,7 +706,7 @@ WHERE ut.user_id = $1
     res.status(500).json({
       success: false,
       message: "Error updating user tags",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   } finally {
     client.release();
@@ -743,9 +743,11 @@ const getUserBadges = async (req, res) => {
         ba.context_type,
         ba.context_id,
         ba.team_id,
+        ba.custom_team_name,
+        ba.project_name,
         tag.name AS tag_name,
         tag.category AS tag_category,
-        t.name AS team_name,
+        COALESCE(t.name, ba.custom_team_name) AS team_name,
 
         -- awarder fields
         ba.awarded_by_user_id AS awarded_by_user_id,
@@ -771,7 +773,7 @@ const getUserBadges = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching user badges",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };

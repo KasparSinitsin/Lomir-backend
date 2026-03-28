@@ -201,29 +201,38 @@ const getUnreadCount = async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Get total unread count
-    const countResult = await db.query(
-      `SELECT COUNT(*) as count 
-       FROM notifications 
+    const unreadResult = await db.query(
+      `SELECT
+         COUNT(*) AS count,
+         (
+           SELECT json_build_object(
+             'id', n2.id,
+             'type', n2.type,
+             'team_id', n2.team_id,
+             'reference_id', n2.reference_id,
+             'actor_id', n2.actor_id,
+             'title', n2.title
+           )
+           FROM notifications n2
+           WHERE n2.user_id = $1 AND n2.read_at IS NULL
+           ORDER BY n2.created_at DESC
+           LIMIT 1
+         ) AS first_unread_json
+       FROM notifications
        WHERE user_id = $1 AND read_at IS NULL`,
       [userId],
     );
 
-    // Get the first unread notification (most recent)
-    const firstUnreadResult = await db.query(
-      `SELECT id, type, team_id, reference_id, actor_id, title, created_at
-FROM notifications
-WHERE user_id = $1 AND read_at IS NULL
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [userId],
-    );
-
-    const unreadCount = parseInt(countResult.rows[0].count) || 0;
+    const unreadRow = unreadResult.rows[0] || {};
+    const unreadCount = parseInt(unreadRow.count, 10) || 0;
     let firstUnread = null;
 
-    if (firstUnreadResult.rows.length > 0) {
-      const notification = firstUnreadResult.rows[0];
+    if (unreadRow.first_unread_json) {
+      const notification =
+        typeof unreadRow.first_unread_json === "string"
+          ? JSON.parse(unreadRow.first_unread_json)
+          : unreadRow.first_unread_json;
+
       firstUnread = {
         id: notification.id,
         type: notification.type,
@@ -246,7 +255,7 @@ WHERE user_id = $1 AND read_at IS NULL
     res.status(500).json({
       success: false,
       message: "Error fetching unread notification count",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -314,7 +323,7 @@ const getNotifications = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching notifications",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -351,7 +360,7 @@ const markAsRead = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error marking notification as read",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -382,7 +391,7 @@ const markAllAsRead = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error marking all notifications as read",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -418,7 +427,7 @@ const deleteNotification = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error deleting notification",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };

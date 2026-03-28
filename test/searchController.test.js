@@ -1,0 +1,510 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+
+const db = require("../src/config/database");
+const searchController = require("../src/controllers/searchController");
+
+const originalQuery = db.pool.query;
+
+function createResponse() {
+  return {
+    statusCode: 200,
+    body: null,
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload) {
+      this.body = payload;
+      return this;
+    },
+  };
+}
+
+function createTeam(id, name) {
+  return {
+    id,
+    name,
+    description: `${name} description`,
+    is_public: true,
+    max_members: 5,
+    owner_id: 500 + id,
+    teamavatarUrl: null,
+    created_at: new Date("2026-01-01T00:00:00.000Z").toISOString(),
+    updated_at: new Date("2026-01-02T00:00:00.000Z").toISOString(),
+    is_remote: false,
+    current_members_count: "2",
+    available_capacity: "3",
+    open_role_count: "1",
+    tags_json: null,
+  };
+}
+
+function createUser(id, username) {
+  return {
+    id,
+    username,
+    first_name: username,
+    last_name: "User",
+    bio: `${username} bio`,
+    postal_code: null,
+    city: null,
+    country: "DE",
+    state: null,
+    avatar_url: null,
+    is_public: true,
+    created_at: new Date("2026-01-01T00:00:00.000Z").toISOString(),
+    updated_at: new Date("2026-01-02T00:00:00.000Z").toISOString(),
+    tags: [],
+    badges: [],
+  };
+}
+
+function buildQueryStub() {
+  const calls = [];
+  const baselineTeams = [createTeam(1, "Alpha"), createTeam(2, "Beta")];
+  const filteredTeams = [createTeam(2, "Beta")];
+  const users = [createUser(11, "ada"), createUser(12, "bea")];
+
+  const query = async (sql, params = []) => {
+    calls.push({ sql, params });
+
+    if (sql.includes("SELECT latitude, longitude, postal_code, city FROM users")) {
+      return {
+        rows: [
+          {
+            latitude: null,
+            longitude: null,
+            postal_code: null,
+            city: null,
+          },
+        ],
+      };
+    }
+
+    const hasExclusion = sql.includes("tm_excluded");
+
+    if (sql.includes("FROM teams t") && sql.includes("as total")) {
+      return { rows: [{ total: hasExclusion ? "1" : "2" }] };
+    }
+
+    if (sql.includes("FROM users u") && sql.includes("as total")) {
+      return { rows: [{ total: "2" }] };
+    }
+
+    if (sql.includes("FROM teams t") && sql.includes('t.teamavatar_url as "teamavatarUrl"')) {
+      const limit = Number(params.at(-2));
+      const offset = Number(params.at(-1));
+      const rows = hasExclusion ? filteredTeams : baselineTeams;
+      return {
+        rows:
+          Number.isFinite(limit) && Number.isFinite(offset)
+            ? rows.slice(offset, offset + limit)
+            : rows,
+      };
+    }
+
+    if (sql.includes("FROM users u") && sql.includes("u.username")) {
+      const limit = Number(params.at(-2));
+      const offset = Number(params.at(-1));
+      return {
+        rows:
+          Number.isFinite(limit) && Number.isFinite(offset)
+            ? users.slice(offset, offset + limit)
+            : users,
+      };
+    }
+
+    if (
+      sql.includes("SELECT COUNT(DISTINCT vr.id) AS total") &&
+      sql.includes("FROM team_vacant_roles vr")
+    ) {
+      return { rows: [{ total: "0" }] };
+    }
+
+    if (
+      sql.includes("FROM team_vacant_roles vr") &&
+      sql.includes("t.teamavatar_url AS team_avatar_url")
+    ) {
+      return { rows: [] };
+    }
+
+    throw new Error(`Unexpected SQL in test stub: ${sql}`);
+  };
+
+  return { query, calls };
+}
+
+function buildTeamMatchSortQueryStub() {
+  const team = {
+    ...createTeam(1, "Remote Team"),
+    is_remote: true,
+  };
+
+  const query = async (sql, params = []) => {
+    if (sql.includes("SELECT latitude, longitude, postal_code, city FROM users")) {
+      return {
+        rows: [
+          {
+            latitude: null,
+            longitude: null,
+            postal_code: null,
+            city: null,
+          },
+        ],
+      };
+    }
+
+    if (
+      sql.includes("SELECT latitude, longitude, country") &&
+      sql.includes("FROM users")
+    ) {
+      return {
+        rows: [
+          {
+            latitude: null,
+            longitude: null,
+            country: "DE",
+          },
+        ],
+      };
+    }
+
+    if (sql.includes("SELECT tag_id FROM user_tags")) {
+      return { rows: [{ tag_id: 1 }, { tag_id: 2 }] };
+    }
+
+    if (sql.includes("SELECT DISTINCT badge_id FROM badge_awards")) {
+      return {
+        rows: Array.from({ length: 15 }, (_, index) => ({
+          badge_id: index + 1,
+        })),
+      };
+    }
+
+    if (
+      sql.includes("SELECT id, is_remote, latitude, longitude, country") &&
+      sql.includes("FROM teams")
+    ) {
+      return {
+        rows: [
+          {
+            id: 1,
+            is_remote: true,
+            latitude: null,
+            longitude: null,
+            country: "DE",
+          },
+        ],
+      };
+    }
+
+    if (sql.includes("SELECT team_id, tag_id") && sql.includes("FROM team_tags")) {
+      return {
+        rows: [
+          { team_id: 1, tag_id: 1 },
+          { team_id: 1, tag_id: 2 },
+          { team_id: 1, tag_id: 3 },
+          { team_id: 1, tag_id: 4 },
+          { team_id: 1, tag_id: 5 },
+        ],
+      };
+    }
+
+    if (
+      sql.includes("SELECT DISTINCT tm.team_id, ba.badge_id") &&
+      sql.includes("FROM team_members tm")
+    ) {
+      return {
+        rows: Array.from({ length: 30 }, (_, index) => ({
+          team_id: 1,
+          badge_id: index + 1,
+        })),
+      };
+    }
+
+    if (sql.includes("FROM teams t") && sql.includes("as total")) {
+      return { rows: [{ total: "1" }] };
+    }
+
+    if (sql.includes("FROM teams t") && sql.includes('t.teamavatar_url as "teamavatarUrl"')) {
+      const limit = Number(params.at(-2));
+      const offset = Number(params.at(-1));
+      const rows =
+        Number.isFinite(limit) && Number.isFinite(offset)
+          ? [team].slice(offset, offset + limit)
+          : [team];
+      return { rows };
+    }
+
+    throw new Error(`Unexpected SQL in team match sort test stub: ${sql}`);
+  };
+
+  return { query };
+}
+
+function hasTeamExclusion(calls) {
+  return calls.some(
+    ({ sql }) =>
+      sql.includes("FROM teams t") &&
+      sql.includes("tm_excluded") &&
+      sql.includes("tm_excluded.user_id"),
+  );
+}
+
+function countTeamQueries(calls) {
+  return calls.filter(({ sql }) => sql.includes("FROM teams t")).length;
+}
+
+test.afterEach(() => {
+  db.pool.query = originalQuery;
+});
+
+test("getAllUsersAndTeams excludes own teams for authenticated users and preserves pagination totals", async () => {
+  const { query, calls } = buildQueryStub();
+  db.pool.query = query;
+
+  const req = {
+    query: { page: "1", limit: "1", excludeOwnTeams: "true", searchType: "all" },
+    user: { id: 99 },
+  };
+  const res = createResponse();
+
+  await searchController.getAllUsersAndTeams(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.pagination.totalTeams, 1);
+  assert.equal(res.body.pagination.totalUsers, 2);
+  assert.equal(res.body.pagination.totalItems, 3);
+  assert.equal(res.body.pagination.totalPages, 2);
+  assert.equal(res.body.pagination.hasNextPage, true);
+  assert.deepEqual(
+    res.body.data.teams.map((team) => team.id),
+    [2],
+  );
+  assert.deepEqual(
+    res.body.data.users.map((user) => user.id),
+    [11],
+  );
+  assert.equal(hasTeamExclusion(calls), true);
+});
+
+test("getAllUsersAndTeams leaves team results unchanged when excludeOwnTeams is false", async () => {
+  const { query, calls } = buildQueryStub();
+  db.pool.query = query;
+
+  const req = {
+    query: { page: "1", limit: "1", excludeOwnTeams: "false", searchType: "all" },
+    user: { id: 99 },
+  };
+  const res = createResponse();
+
+  await searchController.getAllUsersAndTeams(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.pagination.totalTeams, 2);
+  assert.equal(res.body.pagination.totalUsers, 2);
+  assert.equal(res.body.pagination.totalItems, 4);
+  assert.equal(res.body.pagination.totalPages, 2);
+  assert.deepEqual(
+    res.body.data.teams.map((team) => team.id),
+    [1],
+  );
+  assert.equal(hasTeamExclusion(calls), false);
+});
+
+test("getAllUsersAndTeams ignores excludeOwnTeams for unauthenticated requests", async () => {
+  const { query, calls } = buildQueryStub();
+  db.pool.query = query;
+
+  const req = {
+    query: { page: "1", limit: "1", excludeOwnTeams: "true", searchType: "all" },
+    user: null,
+  };
+  const res = createResponse();
+
+  await searchController.getAllUsersAndTeams(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.pagination.totalTeams, 2);
+  assert.equal(res.body.pagination.totalUsers, 2);
+  assert.equal(hasTeamExclusion(calls), false);
+});
+
+test("getAllUsersAndTeams keeps searchType=users unchanged even if excludeOwnTeams is true", async () => {
+  const { query, calls } = buildQueryStub();
+  db.pool.query = query;
+
+  const req = {
+    query: { page: "1", limit: "1", excludeOwnTeams: "true", searchType: "users" },
+    user: { id: 99 },
+  };
+  const res = createResponse();
+
+  await searchController.getAllUsersAndTeams(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.pagination.totalTeams, 0);
+  assert.equal(res.body.pagination.totalUsers, 2);
+  assert.equal(res.body.pagination.totalItems, 2);
+  assert.equal(res.body.pagination.totalPages, 2);
+  assert.deepEqual(res.body.data.teams, []);
+  assert.deepEqual(
+    res.body.data.users.map((user) => user.id),
+    [11],
+  );
+  assert.equal(countTeamQueries(calls), 0);
+});
+
+test("globalSearch excludes own teams for authenticated users and keeps user results unchanged", async () => {
+  const { query, calls } = buildQueryStub();
+  db.pool.query = query;
+
+  const req = {
+    query: {
+      query: "de",
+      page: "1",
+      limit: "1",
+      excludeOwnTeams: "true",
+      searchType: "all",
+    },
+    user: { id: 99 },
+  };
+  const res = createResponse();
+
+  await searchController.globalSearch(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.pagination.totalTeams, 1);
+  assert.equal(res.body.pagination.totalUsers, 2);
+  assert.equal(res.body.pagination.totalItems, 3);
+  assert.equal(res.body.pagination.totalPages, 2);
+  assert.deepEqual(
+    res.body.data.teams.map((team) => team.id),
+    [2],
+  );
+  assert.deepEqual(
+    res.body.data.users.map((user) => user.id),
+    [11],
+  );
+  assert.equal(hasTeamExclusion(calls), true);
+});
+
+test("globalSearch leaves team results unchanged when excludeOwnTeams is false", async () => {
+  const { query, calls } = buildQueryStub();
+  db.pool.query = query;
+
+  const req = {
+    query: {
+      query: "de",
+      page: "1",
+      limit: "1",
+      excludeOwnTeams: "false",
+      searchType: "all",
+    },
+    user: { id: 99 },
+  };
+  const res = createResponse();
+
+  await searchController.globalSearch(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.pagination.totalTeams, 2);
+  assert.equal(res.body.pagination.totalUsers, 2);
+  assert.equal(res.body.pagination.totalItems, 4);
+  assert.equal(hasTeamExclusion(calls), false);
+});
+
+test("globalSearch ignores excludeOwnTeams for unauthenticated requests", async () => {
+  const { query, calls } = buildQueryStub();
+  db.pool.query = query;
+
+  const req = {
+    query: {
+      query: "de",
+      page: "1",
+      limit: "1",
+      excludeOwnTeams: "true",
+      searchType: "all",
+    },
+    user: null,
+  };
+  const res = createResponse();
+
+  await searchController.globalSearch(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.pagination.totalTeams, 2);
+  assert.equal(res.body.pagination.totalUsers, 2);
+  assert.equal(hasTeamExclusion(calls), false);
+});
+
+test("getAllUsersAndTeams returns team match scores that stay consistent with match_details", async () => {
+  const { query } = buildTeamMatchSortQueryStub();
+  db.pool.query = query;
+
+  const req = {
+    query: { page: "1", limit: "10", sortBy: "match", searchType: "teams" },
+    user: { id: 99 },
+  };
+  const res = createResponse();
+
+  await searchController.getAllUsersAndTeams(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.teams.length, 1);
+  assert.deepEqual(res.body.data.users, []);
+  assert.equal(res.body.data.teams[0].match_score, 0.61);
+  assert.equal(res.body.data.teams[0].best_match_score, 0.61);
+  assert.equal(res.body.data.teams[0].shared_tag_count, 2);
+  assert.equal(res.body.data.teams[0].shared_badge_count, 15);
+  assert.equal(res.body.data.teams[0].match_type, "team_profile_match");
+  assert.deepEqual(res.body.data.teams[0].match_details, {
+    tag_score: 0.4,
+    badge_score: 0.5,
+    distance_score: 1,
+    shared_tag_count: 2,
+    total_team_tags: 5,
+    shared_badge_count: 15,
+    total_team_badges: 30,
+    distance_km: null,
+  });
+});
+
+test("globalSearch returns team match scores that stay consistent with match_details", async () => {
+  const { query } = buildTeamMatchSortQueryStub();
+  db.pool.query = query;
+
+  const req = {
+    query: {
+      query: "de",
+      page: "1",
+      limit: "10",
+      sortBy: "match",
+      searchType: "teams",
+    },
+    user: { id: 99 },
+  };
+  const res = createResponse();
+
+  await searchController.globalSearch(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.teams.length, 1);
+  assert.deepEqual(res.body.data.users, []);
+  assert.equal(res.body.data.teams[0].match_score, 0.61);
+  assert.equal(res.body.data.teams[0].best_match_score, 0.61);
+  assert.equal(res.body.data.teams[0].shared_tag_count, 2);
+  assert.equal(res.body.data.teams[0].shared_badge_count, 15);
+  assert.equal(res.body.data.teams[0].match_type, "team_profile_match");
+  assert.deepEqual(res.body.data.teams[0].match_details, {
+    tag_score: 0.4,
+    badge_score: 0.5,
+    distance_score: 1,
+    shared_tag_count: 2,
+    total_team_tags: 5,
+    shared_badge_count: 15,
+    total_team_badges: 30,
+    distance_km: null,
+  });
+});

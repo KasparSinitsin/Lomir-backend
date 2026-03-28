@@ -22,7 +22,7 @@ const getAllBadges = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching badges",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -94,9 +94,10 @@ const awardBadge = async (req, res) => {
       credits,
       reason,
       context_type,
-      context_id,
       team_id,
       tag_id,
+      custom_team_name,
+      project_name,
     } = req.body;
 
     // ── Basic validation ──
@@ -140,40 +141,45 @@ const awardBadge = async (req, res) => {
 
     // ── Validate team_id when context is "team" ──
     if (resolvedContextType === "team") {
-      if (!team_id) {
-        return res.status(400).json({
-          success: false,
-          message: "team_id is required when context_type is 'team'",
-        });
-      }
-
-      // Verify team exists and is not archived
-      const teamCheck = await pool.query(
-        "SELECT id, name FROM teams WHERE id = $1 AND archived_at IS NULL",
-        [team_id],
-      );
-      if (teamCheck.rows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: "Team not found or archived",
-        });
-      }
-
-      // Verify both awarder and awardee are members of the team
-      const memberCheck = await pool.query(
-        `SELECT user_id FROM team_members
-         WHERE team_id = $1 AND user_id IN ($2, $3)`,
-        [team_id, awardedByUserId, awarded_to_user_id],
-      );
-      if (memberCheck.rows.length < 2) {
+      if (!team_id && !custom_team_name?.trim()) {
         return res.status(400).json({
           success: false,
           message:
-            "Both awarder and awardee must be members of the selected team",
+            "team_id or custom_team_name is required when context_type is 'team'",
         });
       }
 
-      console.log("🏅 Team context validated:", teamCheck.rows[0].name);
+      if (team_id) {
+        // Verify team exists and is not archived
+        const teamCheck = await pool.query(
+          "SELECT id, name FROM teams WHERE id = $1 AND archived_at IS NULL",
+          [team_id],
+        );
+        if (teamCheck.rows.length === 0) {
+          return res.status(404).json({
+            success: false,
+            message: "Team not found or archived",
+          });
+        }
+
+        // Verify both awarder and awardee are members of the team
+        const memberCheck = await pool.query(
+          `SELECT user_id FROM team_members
+           WHERE team_id = $1 AND user_id IN ($2, $3)`,
+          [team_id, awardedByUserId, awarded_to_user_id],
+        );
+        if (memberCheck.rows.length < 2) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "Both awarder and awardee must be members of the selected team",
+          });
+        }
+
+        console.log("🏅 Team context validated:", teamCheck.rows[0].name);
+      } else {
+        console.log("🏅 Custom team name:", custom_team_name);
+      }
     }
 
     // ── If team_id is provided with non-team context, still validate it exists ──
@@ -183,9 +189,7 @@ const awardBadge = async (req, res) => {
         [team_id],
       );
       if (teamCheck.rows.length === 0) {
-        console.warn(
-          "⚠️ team_id provided but team not found, setting to null",
-        );
+        console.warn("⚠️ team_id provided but team not found, setting to null");
       }
     }
 
@@ -237,8 +241,8 @@ const awardBadge = async (req, res) => {
 
     const insertResult = await client.query(
       `INSERT INTO badge_awards
-         (awarded_to_user_id, badge_id, awarded_by_user_id, credits, reason, context_type, context_id, team_id, tag_id, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+  (awarded_to_user_id, badge_id, awarded_by_user_id, credits, reason, context_type, context_id, team_id, tag_id, custom_team_name, project_name, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
        RETURNING *`,
       [
         awarded_to_user_id,
@@ -247,16 +251,15 @@ const awardBadge = async (req, res) => {
         Number(credits),
         reason || null,
         resolvedContextType,
-        context_id || null,
-        resolvedContextType === "team" ? team_id : (team_id || null),
+        null,
+        resolvedContextType === "team" ? team_id : team_id || null,
         resolvedTagId,
+        custom_team_name || null,
+        project_name || null,
       ],
     );
 
-    console.log(
-      "🏅 badge_awards INSERT success! ID:",
-      insertResult.rows[0].id,
-    );
+    console.log("🏅 badge_awards INSERT success! ID:", insertResult.rows[0].id);
 
     // ── Non-critical: Update user_badges summary table (SAVEPOINT) ──
     try {
@@ -330,8 +333,7 @@ const awardBadge = async (req, res) => {
       await client.query("SAVEPOINT notification_sp");
 
       const badgeName = badgeCheck.rows[0].name;
-      const awarderName =
-        req.user.first_name || req.user.username || "Someone";
+      const awarderName = req.user.first_name || req.user.username || "Someone";
 
       await client.query(
         `INSERT INTO notifications (user_id, type, title, message, reference_type, reference_id, team_id, actor_id)
@@ -380,7 +382,7 @@ const awardBadge = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error awarding badge",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   } finally {
     client.release();
@@ -436,7 +438,7 @@ const getSharedTeams = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching shared teams",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };
@@ -466,8 +468,10 @@ const getUserBadges = async (req, res) => {
         ba.reason,
         ba.context_type,
         ba.context_id,
+        ba.custom_team_name,
+        ba.project_name,
         ba.team_id,
-        t.name AS team_name,
+        COALESCE(t.name, ba.custom_team_name) AS team_name,
         ba.tag_id,
         tag.name AS tag_name,
         tag.category AS tag_category,
@@ -493,7 +497,7 @@ const getUserBadges = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Error fetching user badges",
-      error: error.message,
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   }
 };

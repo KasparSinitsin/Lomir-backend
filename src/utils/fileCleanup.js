@@ -14,7 +14,9 @@ const deleteFromCloudinary = async (publicId, resourceType = 'image') => {
     const result = await cloudinary.uploader.destroy(publicId, {
       resource_type: resourceType,
     });
-    console.log(`[CLEANUP] Cloudinary delete result for ${publicId}:`, result);
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[CLEANUP] Cloudinary delete result for ${publicId}:`, result);
+    }
     return result.result === 'ok';
   } catch (error) {
     console.error(`[CLEANUP] Error deleting ${publicId} from Cloudinary:`, error);
@@ -40,7 +42,9 @@ const getResourceTypeFromUrl = (url) => {
  * @returns {Promise<{processed: number, deleted: number, errors: number}>}
  */
 const cleanupExpiredFiles = async () => {
-  console.log('[CLEANUP] Starting expired file cleanup...');
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('[CLEANUP] Starting expired file cleanup...');
+  }
   
   const stats = { processed: 0, deleted: 0, errors: 0 };
 
@@ -56,7 +60,9 @@ const cleanupExpiredFiles = async () => {
       LIMIT 100
     `);
 
-    console.log(`[CLEANUP] Found ${expiredFiles.rows.length} expired files to process`);
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[CLEANUP] Found ${expiredFiles.rows.length} expired files to process`);
+    }
 
     for (const row of expiredFiles.rows) {
       stats.processed++;
@@ -87,10 +93,14 @@ const cleanupExpiredFiles = async () => {
       `, [row.id]);
 
       stats.deleted++;
-      console.log(`[CLEANUP] Processed message ${row.id}`);
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[CLEANUP] Processed message ${row.id}`);
+      }
     }
 
-    console.log(`[CLEANUP] Completed. Processed: ${stats.processed}, Deleted: ${stats.deleted}, Errors: ${stats.errors}`);
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[CLEANUP] Completed. Processed: ${stats.processed}, Deleted: ${stats.deleted}, Errors: ${stats.errors}`);
+    }
     return stats;
 
   } catch (error) {
@@ -142,7 +152,9 @@ const getFilesExpiringSoon = async (days = 7) => {
  * @returns {Promise<{notified: number, errors: number}>}
  */
 const createExpirationNotifications = async (days = 7) => {
-  console.log(`[CLEANUP] Creating notifications for files expiring in ${days} days...`);
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`[CLEANUP] Creating notifications for files expiring in ${days} days...`);
+  }
   
   const stats = { notified: 0, errors: 0 };
 
@@ -162,7 +174,9 @@ const createExpirationNotifications = async (days = 7) => {
       GROUP BY m.sender_id
     `);
 
-    console.log(`[CLEANUP] Found ${result.rows.length} users with expiring files`);
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[CLEANUP] Found ${result.rows.length} users with expiring files`);
+    }
 
     for (const row of result.rows) {
       try {
@@ -176,7 +190,9 @@ const createExpirationNotifications = async (days = 7) => {
         `, [row.user_id]);
 
         if (existingNotification.rows.length > 0) {
-          console.log(`[CLEANUP] Skipping user ${row.user_id} - already notified recently`);
+          if (process.env.NODE_ENV !== 'production') {
+            console.log(`[CLEANUP] Skipping user ${row.user_id} - already notified recently`);
+          }
           continue;
         }
 
@@ -197,7 +213,9 @@ const createExpirationNotifications = async (days = 7) => {
         ]);
 
         stats.notified++;
-        console.log(`[CLEANUP] Notified user ${row.user_id} about ${row.file_count} expiring files`);
+        if (process.env.NODE_ENV !== 'production') {
+          console.log(`[CLEANUP] Notified user ${row.user_id} about ${row.file_count} expiring files`);
+        }
 
       } catch (error) {
         console.error(`[CLEANUP] Error notifying user ${row.user_id}:`, error);
@@ -205,7 +223,9 @@ const createExpirationNotifications = async (days = 7) => {
       }
     }
 
-    console.log(`[CLEANUP] Notifications complete. Notified: ${stats.notified}, Errors: ${stats.errors}`);
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[CLEANUP] Notifications complete. Notified: ${stats.notified}, Errors: ${stats.errors}`);
+    }
     return stats;
 
   } catch (error) {

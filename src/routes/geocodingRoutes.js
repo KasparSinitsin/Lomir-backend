@@ -125,15 +125,21 @@ router.get("/postal-code/:code", async (req, res) => {
           longitude: parseFloat(result.lon),
         };
 
-        console.log(`Nominatim success for ${code}:`, locationInfo.displayName);
+        if (process.env.NODE_ENV !== "production") {
+          console.log(`Nominatim success for ${code}:`, locationInfo.displayName);
+        }
         return res.json(locationInfo);
       }
     } catch (nominatimError) {
-      console.log(`Nominatim failed for ${code}:`, nominatimError.message);
+      if (process.env.NODE_ENV !== "production") {
+        console.log(`Nominatim failed for ${code}:`, nominatimError.message);
+      }
     }
 
     // If both methods fail, return a basic response
-    console.log(`No geocoding results found for postal code: ${code}`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`No geocoding results found for postal code: ${code}`);
+    }
     res.json({
       city: null,
       state: null,
