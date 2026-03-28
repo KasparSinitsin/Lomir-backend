@@ -1,12 +1,8 @@
 const express = require("express");
 const userController = require("../controllers/userController");
 // Import your authentication middleware
-<<<<<<< HEAD
 const auth = require("../middlewares/auth"); // Assuming '../middlewares/auth' is the correct path
 const { upload, uploadToCloudinary } = require('../middlewares/uploadMiddleware');
-=======
-const auth = require("../middlewares/auth");
->>>>>>> 2c3fe7db35a1c5fd3e768db6d05d7d7ddd09a44f
 
 const router = express.Router();
 

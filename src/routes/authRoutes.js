@@ -3,12 +3,8 @@ const router = express.Router();
 
 const authController = require("../controllers/authController");
 const auth = require("../middlewares/auth");
-<<<<<<< HEAD
 const { upload } = require('../middlewares/uploadMiddleware');
 const db = require("../config/database");
-=======
-const upload = require("../middlewares/uploadMiddleware");
->>>>>>> 2c3fe7db35a1c5fd3e768db6d05d7d7ddd09a44f
 
 // Register a new user (with optional avatar upload)
 router.post("/register", upload.single("avatar"), authController.register);
