@@ -1,127 +1,91 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
-// const path = require('path'); // Uncomment if serving static files
 
-// Load environment variables from .env file
+// Load environment variables
 dotenv.config();
 
 const app = express();
 
 // --- Middleware Setup ---
 
-// Body Parsers for JSON and URL-encoded data
+// Body Parsers
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// CORS Configuration
+// --- CORS Configuration ---
 const allowedOrigins = [
-  "https://lomir.onrender.com", // Your deployed frontend
-  "http://localhost:5173", // Your local frontend development server
-  // Add any other origins as needed
-];
+  "http://localhost:5173",
+  "https://lomir-frontend.vercel.app",
+  process.env.CLIENT_URL,
+  process.env.FRONTEND_URL,
+  process.env.FRONTEND_ORIGIN,
+].filter(Boolean);
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests) or from allowed origins
     if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
+      return callback(null, true);
     } else {
-      console.error(`CORS blocked: origin ${origin} not in allowed list.`); // Log blocked origins
-      callback(new Error(`CORS blocked: origin ${origin} not allowed`));
+      console.error(`CORS blocked: origin ${origin} not allowed`);
+      return callback(new Error(`CORS blocked: origin ${origin} not allowed`));
     }
   },
-  credentials: true, // Allow cookies/authorization headers to be sent
-  methods: "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS", // Allowed HTTP methods
-  allowedHeaders: ["Content-Type", "Authorization"], // Allowed headers
+  credentials: true,
+  methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
 };
 
-// Apply CORS middleware
+// Apply CORS
 app.use(cors(corsOptions));
-// Handle preflight requests (OPTIONS) which CORS middleware usually handles,
-// but explicit handling can sometimes be necessary depending on setup.
-// app.options('*', cors(corsOptions)); // Uncomment if preflight issues persist
 
+// Explicitly handle preflight requests
+app.options("*", cors(corsOptions));
+
+// --- Debug logging (only in development) ---
 if (process.env.NODE_ENV !== "production") {
   app.use((req, res, next) => {
     console.log(
-      `[${new Date().toISOString()}] Incoming request: ${req.method} ${
-        req.originalUrl
-      }`
+      `[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`
     );
-    // Optional: Log body or headers if needed for deep debugging
-    // if (req.body && Object.keys(req.body).length > 0) console.log('Request Body:', req.body);
-    // console.log('Request Headers:', req.headers);
-    next(); // Pass control to the next middleware/route handler
+    next();
   });
 }
 
 // --- API Routes ---
-// Define specific API routes first. Order matters.
-
-/*
-|--------------------------------------------------------------------------
-| NEW: Central API router
-|--------------------------------------------------------------------------
-*/
 const apiRoutes = require("./routes");
 app.use("/api", apiRoutes);
 
-// Simple Home route (Optional)
+// Root route
 app.get("/", (req, res) => {
   res.send("Lomir API is running...");
 });
 
-// --- Error Handling & Not Found ---
-// IMPORTANT: Define these AFTER all valid API and static file routes.
-
-// Catch-all for 404 Not Found errors (Routes not matched above)
-// This should come BEFORE the general error handler.
-app.use((req, res, next) => {
-  // Log the unmatched route attempt
+// --- 404 Handler ---
+app.use((req, res) => {
   console.log(
-    `[${new Date().toISOString()}] No route matched for: ${req.method} ${
-      req.originalUrl
-    }`
+    `[${new Date().toISOString()}] No route matched: ${req.method} ${req.originalUrl}`
   );
-  // Send a JSON 404 response
   res.status(404).json({
-    success: false, // Consistent response structure
+    success: false,
     message: `Resource not found. Cannot ${req.method} ${req.originalUrl}`,
   });
-  // Note: No 'next(err)' here, this is a final response for 404.
 });
 
-// General Error Handler (Catches errors passed via next(err))
-// This should be the LAST piece of middleware.
+// --- Global Error Handler ---
 app.use((err, req, res, next) => {
-  // Log the error details
   console.error(
-    `[${new Date().toISOString()}] Unhandled Error: ${err.message}`
+    `[${new Date().toISOString()}] Error: ${err.message}`
   );
-  console.error(err.stack); // Log stack trace for debugging
+  console.error(err.stack);
 
-  const statusCode = err.statusCode || 500; // Use error's status code or default to 500
+  const statusCode = err.statusCode || 500;
 
-  // Send a JSON response detailing the error
   res.status(statusCode).json({
-    success: false, // Consistent response structure
-    message: err.message || "An unexpected internal server error occurred.",
-    // Only include stack trace in development for security reasons
+    success: false,
+    message: err.message || "Internal server error",
     error: process.env.NODE_ENV === "development" ? err.stack : undefined,
   });
 });
 
-// Export the configured app instance (e.g., for use in server.js or testing)
 module.exports = app;
-
-// Note: The app.listen() call is typically in a separate file (e.g., server.js)
-// that imports this app.js file. Example:
-/*
-// In server.js
-const app = require('./app');
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
-*/
