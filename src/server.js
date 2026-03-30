@@ -1,3 +1,6 @@
+const { initScheduledJobs } = require("./jobs/fileCleanupScheduler");
+const { validateChatFileUrl } = require("./utils/fileValidation");
+
 require("dotenv").config();
 
 const app = require("./app");
@@ -17,6 +20,9 @@ const io = socketIo(server, {
     credentials: true,
   },
 });
+
+// Make io accessible to controllers via req.app.get("io")
+app.set("io", io);
 
 // Socket.IO middleware for authentication
 io.use((socket, next) => {
@@ -51,13 +57,13 @@ io.on("connection", (socket) => {
   // Join user to their own room for private messages
   socket.join(`user:${userId}`);
 
-  // ✅ JOIN USER TO ALL THEIR TEAM ROOMS
+  // Join user to all their team rooms
   const joinUserTeams = async () => {
     try {
       const db = require("./config/database");
       const userTeamsResult = await db.query(
         `SELECT tm.team_id FROM team_members tm WHERE tm.user_id = $1`,
-        [userId]
+        [userId],
       );
 
       for (const row of userTeamsResult.rows) {
@@ -75,90 +81,136 @@ io.on("connection", (socket) => {
   // Emit online users to all clients
   io.emit("users:online", Array.from(connectedUsers.keys()));
 
-  // Emit online users to all clients
-  io.emit("users:online", Array.from(connectedUsers.keys()));
-
   // Handle joining a conversation
-  socket.on("conversation:join", (conversationId) => {
+  socket.on("conversation:join", (data) => {
+    const conversationId =
+      typeof data === "object" ? data.conversationId : data;
+    const type = typeof data === "object" ? data.type : "direct";
+
     // Join the conversation room
     socket.join(`conversation:${conversationId}`);
-    console.log(`User ${userId} joined conversation ${conversationId}`);
+    console.log(`User ${userId} joined ${type} conversation ${conversationId}`);
   });
 
   // Handle leaving a conversation
-  socket.on("conversation:leave", (conversationId) => {
+  socket.on("conversation:leave", (data) => {
+    const conversationId =
+      typeof data === "object" ? data.conversationId : data;
+    const type = typeof data === "object" ? data.type : "direct";
+
     socket.leave(`conversation:${conversationId}`);
-    console.log(`User ${userId} left conversation ${conversationId}`);
+    console.log(`User ${userId} left ${type} conversation ${conversationId}`);
   });
 
   // Handle new message
   socket.on("message:new", async (data) => {
     try {
-      const { conversationId, content, type = "direct" } = data;
+      const {
+        conversationId,
+        content,
+        type = "direct",
+        imageUrl,
+        fileUrl,
+        fileName,
+      } = data;
 
-      console.log(
-        `User ${userId} sending ${type} message to ${
-          type === "team" ? "team" : "user"
-        } ${conversationId}: "${content}"`
-      );
-
-      // Validate message
-      if (!conversationId || !content || content.trim() === "") {
+      // Allow content OR imageUrl OR fileUrl
+      if ((!content || content.trim() === "") && !imageUrl && !fileUrl) {
         socket.emit("error", { message: "Invalid message data" });
         return;
+      }
+
+      // Variables to store file metadata
+      let fileSize = null;
+      let cloudinaryPublicId = null;
+      let fileExpiresAt = null;
+
+      // Validate image URL and extract metadata
+      if (imageUrl) {
+        const validation = await validateChatFileUrl(imageUrl, "chatImage");
+        if (!validation.valid) {
+          console.warn(
+            `[SOCKET] Rejected image from user ${userId}: ${validation.error}`,
+          );
+          socket.emit("error", { message: validation.error });
+          return;
+        }
+        fileSize = validation.size || null;
+        cloudinaryPublicId = validation.publicId || null;
+        // Set expiration to 60 days from now
+        fileExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+      }
+
+      // Validate file URL and extract metadata
+      if (fileUrl) {
+        const validation = await validateChatFileUrl(fileUrl, "chatFile");
+        if (!validation.valid) {
+          console.warn(
+            `[SOCKET] Rejected file from user ${userId}: ${validation.error}`,
+          );
+          socket.emit("error", { message: validation.error });
+          return;
+        }
+        fileSize = validation.size || null;
+        cloudinaryPublicId = validation.publicId || null;
+        // Set expiration to 60 days from now
+        fileExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
       }
 
       const db = require("./config/database");
       let messageResult;
 
       if (type === "team") {
-        // ✅ TEAM MESSAGE HANDLING
-        console.log(`Inserting team message for team ${conversationId}`);
-
-        // First verify user is a member of this team
-        const memberCheck = await db.query(
-          `SELECT tm.user_id FROM team_members tm 
-         WHERE tm.team_id = $1 AND tm.user_id = $2`,
-          [conversationId, userId]
-        );
-
-        if (memberCheck.rows.length === 0) {
-          socket.emit("error", {
-            message: "Not authorized to send messages to this team",
-          });
-          return;
-        }
-
-        // Insert team message
         messageResult = await db.query(
-          `INSERT INTO messages (sender_id, team_id, content, sent_at)
-         VALUES ($1, $2, $3, NOW())
-         RETURNING id, sender_id, team_id, content, sent_at`,
-          [userId, conversationId, content.trim()]
+          `INSERT INTO messages (sender_id, team_id, content, image_url, file_url, file_name, file_size, file_expires_at, cloudinary_public_id, sent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+         RETURNING id, sender_id, team_id, content, image_url, file_url, file_name, file_size, file_expires_at, sent_at`,
+          [
+            userId,
+            conversationId,
+            content?.trim() || null,
+            imageUrl || null,
+            fileUrl || null,
+            fileName || null,
+            fileSize,
+            fileExpiresAt,
+            cloudinaryPublicId,
+          ],
         );
 
         const message = {
           id: messageResult.rows[0].id,
           conversationId: String(conversationId),
+          teamId: parseInt(conversationId),
           senderId: userId,
           senderUsername: socket.username,
           content: messageResult.rows[0].content,
+          imageUrl: messageResult.rows[0].image_url,
+          fileUrl: messageResult.rows[0].file_url,
+          fileName: messageResult.rows[0].file_name,
+          fileSize: messageResult.rows[0].file_size,
+          fileExpiresAt: messageResult.rows[0].file_expires_at,
           createdAt: messageResult.rows[0].sent_at,
           type: "team",
         };
 
-        console.log("Broadcasting team message:", message);
-
-        // ✅ BROADCAST TO ALL TEAM MEMBERS
-        // Emit to the team room (all members will receive it)
         io.to(`team:${conversationId}`).emit("message:received", message);
       } else {
-        // ✅ DIRECT MESSAGE HANDLING (existing code)
         messageResult = await db.query(
-          `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-         VALUES ($1, $2, $3, NOW())
-         RETURNING id, sender_id, receiver_id, content, sent_at`,
-          [userId, conversationId, content.trim()]
+          `INSERT INTO messages (sender_id, receiver_id, content, image_url, file_url, file_name, file_size, file_expires_at, cloudinary_public_id, sent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+         RETURNING id, sender_id, receiver_id, content, image_url, file_url, file_name, file_size, file_expires_at, sent_at`,
+          [
+            userId,
+            conversationId,
+            content?.trim() || null,
+            imageUrl || null,
+            fileUrl || null,
+            fileName || null,
+            fileSize,
+            fileExpiresAt,
+            cloudinaryPublicId,
+          ],
         );
 
         const message = {
@@ -167,13 +219,15 @@ io.on("connection", (socket) => {
           senderId: userId,
           senderUsername: socket.username,
           content: messageResult.rows[0].content,
+          imageUrl: messageResult.rows[0].image_url,
+          fileUrl: messageResult.rows[0].file_url,
+          fileName: messageResult.rows[0].file_name,
+          fileSize: messageResult.rows[0].file_size,
+          fileExpiresAt: messageResult.rows[0].file_expires_at,
           createdAt: messageResult.rows[0].sent_at,
           type: "direct",
         };
 
-        console.log("Broadcasting direct message:", message);
-
-        // Emit to both users in direct conversation
         io.to(`user:${userId}`).emit("message:received", message);
         io.to(`user:${conversationId}`).emit("message:received", message);
       }
@@ -183,11 +237,11 @@ io.on("connection", (socket) => {
     }
   });
 
-  // Handle typing indicator
+  // Handle typing indicator - start
   socket.on("typing:start", (data) => {
     const { conversationId, type = "direct" } = data;
     console.log(
-      `User ${userId} started typing in ${type} conversation ${conversationId}`
+      `User ${userId} started typing in ${type} conversation ${conversationId}`,
     );
 
     if (type === "team") {
@@ -200,7 +254,7 @@ io.on("connection", (socket) => {
         type: "team",
       });
     } else {
-      // For direct messages (existing logic)
+      // For direct messages
       socket.to(`user:${conversationId}`).emit("typing:update", {
         conversationId: String(userId),
         userId,
@@ -211,10 +265,11 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Handle typing indicator - stop
   socket.on("typing:stop", (data) => {
     const { conversationId, type = "direct" } = data;
     console.log(
-      `User ${userId} stopped typing in ${type} conversation ${conversationId}`
+      `User ${userId} stopped typing in ${type} conversation ${conversationId}`,
     );
 
     if (type === "team") {
@@ -227,7 +282,7 @@ io.on("connection", (socket) => {
         type: "team",
       });
     } else {
-      // For direct messages (existing logic)
+      // For direct messages
       socket.to(`user:${conversationId}`).emit("typing:update", {
         conversationId: String(userId),
         userId,
@@ -241,25 +296,59 @@ io.on("connection", (socket) => {
   // Handle message read status
   socket.on("message:read", async (data) => {
     try {
-      const { conversationId } = data;
-
-      // Update read status in database
+      const { conversationId, type = "direct" } = data;
       const db = require("./config/database");
-      await db.query(
-        `
-        UPDATE messages
-        SET read_at = NOW()
-        WHERE receiver_id = $1 AND sender_id = $2 AND read_at IS NULL
-      `,
-        [userId, conversationId]
+
+      console.log(
+        `User ${userId} marking ${type} messages as read in conversation ${conversationId}`,
       );
 
-      // Emit read status update to the sender
-      socket.to(`user:${conversationId}`).emit("message:status", {
+      if (type === "team") {
+        // Mark team messages as read (messages not sent by this user)
+        await db.query(
+          `UPDATE messages
+           SET read_at = NOW()
+           WHERE team_id = $1 
+             AND sender_id != $2 
+             AND read_at IS NULL`,
+          [conversationId, userId],
+        );
+
+        // Emit read status update to the team room
+        socket.to(`team:${conversationId}`).emit("message:status", {
+          conversationId: String(conversationId),
+          type: "team",
+          readBy: userId,
+          readAt: new Date().toISOString(),
+        });
+      } else {
+        // Mark direct messages as read
+        await db.query(
+          `UPDATE messages
+           SET read_at = NOW()
+           WHERE receiver_id = $1 AND sender_id = $2 AND read_at IS NULL`,
+          [userId, conversationId],
+        );
+
+        // Emit read status update to the sender
+        socket.to(`user:${conversationId}`).emit("message:status", {
+          conversationId: String(conversationId),
+          type: "direct",
+          readBy: userId,
+          readAt: new Date().toISOString(),
+        });
+      }
+
+      // IMPORTANT: Emit to the current user so their Navbar can update the unread count
+      socket.emit("messages:read", {
         conversationId: String(conversationId),
-        readBy: userId,
+        type: type,
         readAt: new Date().toISOString(),
       });
+
+      console.log(
+        `Messages marked as read for ${type} conversation ${conversationId}`,
+      );
     } catch (error) {
       console.error("Error handling message read status:", error);
     }
@@ -274,6 +363,9 @@ io.on("connection", (socket) => {
     io.emit("users:online", Array.from(connectedUsers.keys()));
   });
 });
+
+// Initialize scheduled jobs
+initScheduledJobs();
 
 // Start server
 server.listen(PORT, () => {

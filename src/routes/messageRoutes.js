@@ -8,55 +8,47 @@ const router = express.Router();
 router.post(
   "/conversations",
   authenticateToken,
-  messageController.startConversation
+  messageController.startConversation,
 );
 
 // Get all conversations for current user
 router.get(
   "/conversations",
   authenticateToken,
-  messageController.getConversations
+  messageController.getConversations,
 );
 
 router.get(
   "/unread-count",
   authenticateToken,
-  messageController.getUnreadCount
+  messageController.getUnreadCount,
 );
 
 // Get specific conversation
 router.get(
   "/conversations/:id",
   authenticateToken,
-  messageController.getConversationById
+  messageController.getConversationById,
 );
 
 // Get messages for a conversation
 router.get(
   "/conversations/:id/messages",
   authenticateToken,
-  messageController.getMessages
+  messageController.getMessages,
 );
 
 // Send a message to a conversation
 router.post(
   "/conversations/:id/messages",
   authenticateToken,
-  messageController.sendMessage
+  messageController.sendMessage,
 );
 
 // Get specific message
-router.get(
-  "/messages/:id",
-  authenticateToken,
-  messageController.getMessageById
-);
+router.get("/:id", authenticateToken, messageController.getMessageById);
 
 // Delete a message
-router.delete(
-  "/messages/:id",
-  authenticateToken,
-  messageController.deleteMessage
-);
+router.delete("/:id", authenticateToken, messageController.deleteMessage);
 
 module.exports = router;

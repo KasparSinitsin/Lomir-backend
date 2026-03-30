@@ -5,7 +5,7 @@
   "scripts": {
     "start": "NODE_ENV=production node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test",
     "migrate": "node migrate.js",
     "seed": "node seed.js"
   },
@@ -33,7 +33,9 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.2",
     "multer-storage-cloudinary": "^4.0.0",
+    "node-cron": "^4.2.1",
     "pg": "^8.14.1",
+    "resend": "^6.8.0",
     "socket.io": "^4.8.1",
     "uuid": "^11.1.0"
   },
