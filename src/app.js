@@ -2,19 +2,14 @@ const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
 
-// Load environment variables
 dotenv.config();
 
 const app = express();
 
-// --- Middleware Setup ---
-
-// Body Parsers
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// --- CORS Configuration ---
-const allowedOrigins = [
+const explicitOrigins = [
   "http://localhost:5173",
   "https://lomir-frontend.vercel.app",
   process.env.CLIENT_URL,
@@ -22,27 +17,57 @@ const allowedOrigins = [
   process.env.FRONTEND_ORIGIN,
 ].filter(Boolean);
 
-const corsOptions = {
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    } else {
-      console.error(`CORS blocked: origin ${origin} not allowed`);
-      return callback(new Error(`CORS blocked: origin ${origin} not allowed`));
+const normalizeOrigin = (origin) => {
+  if (!origin) return origin;
+  return origin.replace(/\/$/, "");
+};
+
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true;
+
+  const normalized = normalizeOrigin(origin);
+  const normalizedExplicit = explicitOrigins.map(normalizeOrigin);
+
+  if (normalizedExplicit.includes(normalized)) {
+    return true;
+  }
+
+  try {
+    const url = new URL(normalized);
+
+    if (
+      url.protocol === "https:" &&
+      (url.hostname === "lomir-frontend.vercel.app" ||
+        url.hostname.endsWith(".vercel.app"))
+    ) {
+      return true;
     }
+  } catch (error) {
+    return false;
+  }
+
+  return false;
+};
+
+const corsOptions = {
+  origin(origin, callback) {
+    console.log("CORS origin:", origin);
+
+    if (isAllowedOrigin(origin)) {
+      return callback(null, true);
+    }
+
+    console.error(`CORS blocked: origin ${origin} not allowed`);
+    return callback(null, false);
   },
   credentials: true,
   methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
 };
 
-// Apply CORS
 app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 
-// Explicitly handle preflight requests
-app.options("*", cors(corsOptions));
-
-// --- Debug logging (only in development) ---
 if (process.env.NODE_ENV !== "production") {
   app.use((req, res, next) => {
     console.log(
@@ -52,16 +77,13 @@ if (process.env.NODE_ENV !== "production") {
   });
 }
 
-// --- API Routes ---
 const apiRoutes = require("./routes");
 app.use("/api", apiRoutes);
 
-// Root route
 app.get("/", (req, res) => {
   res.send("Lomir API is running...");
 });
 
-// --- 404 Handler ---
 app.use((req, res) => {
   console.log(
     `[${new Date().toISOString()}] No route matched: ${req.method} ${req.originalUrl}`
@@ -72,11 +94,8 @@ app.use((req, res) => {
   });
 });
 
-// --- Global Error Handler ---
 app.use((err, req, res, next) => {
-  console.error(
-    `[${new Date().toISOString()}] Error: ${err.message}`
-  );
+  console.error(`[${new Date().toISOString()}] Error: ${err.message}`);
   console.error(err.stack);
 
   const statusCode = err.statusCode || 500;
