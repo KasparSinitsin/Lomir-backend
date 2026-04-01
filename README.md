@@ -6,6 +6,20 @@ Built with Node.js, Express, PostgreSQL (Neon), and Socket.IO.
 
 ---
 
+## Live Demo
+
+**Try it now:** [lomir-frontend.vercel.app](https://lomir-frontend.vercel.app)
+
+> The backend runs on Render's free tier and enters sleep mode after inactivity. The first request may take 15–30 seconds to wake up — after that, everything responds normally.
+
+| Service  | Platform | URL |
+|----------|----------|-----|
+| Frontend | Vercel   | [lomir-frontend.vercel.app](https://lomir-frontend.vercel.app) |
+| Backend  | Render   | [lomir-backend-knae.onrender.com](https://lomir-backend-knae.onrender.com) |
+| Database | Neon     | PostgreSQL (remote) |
+
+---
+
 ## Features
 
 - **Authentication** - JWT-based registration, login, email verification, and password reset
@@ -89,6 +103,12 @@ RESEND_API_KEY=<resend-api-key>
 
 # Frontend URL (for CORS and email links)
 CLIENT_URL=http://localhost:5173
+
+# Skip email verification (interim — set to "true" while no custom domain is configured)
+SKIP_EMAIL_VERIFICATION=true
+
+# Cloudflare Turnstile (optional for local dev — if unset, CAPTCHA is skipped on registration)
+# TURNSTILE_SECRET_KEY=<turnstile-secret-key>
 ```
 
 > Get the actual values from the project owner.
@@ -152,10 +172,12 @@ Lomir-backend/
 |  |  |  |- tags.js
 |  |- middlewares/
 |  |  |- auth.js             # JWT authentication middleware
+|  |  |- rateLimiter.js      # Rate limiting for auth endpoints
 |  |- utils/
+|  |  |- fileValidation.js
 |  |  |- jwtUtils.js
 |  |  |- matchingScorer.js   # Shared scoring utilities
-|  |  |- fileValidation.js
+|  |  |- turnstileVerify.js  # Cloudflare Turnstile CAPTCHA verification
 |  |- jobs/
 |  |  |- fileCleanupScheduler.js
 |  |- database/
@@ -216,4 +238,4 @@ The server uses Socket.IO for real-time features. Clients authenticate via JWT t
 
 ## Related
 
-- **Frontend repo:** [lomir_frontend](https://github.com/KasparSinitsin/lomir_frontend)
+- **Frontend repo:** [Lomir-frontend](https://github.com/KasparSinitsin/Lomir-frontend)
