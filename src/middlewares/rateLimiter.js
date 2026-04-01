@@ -24,7 +24,7 @@ const authLimiter = createRateLimiter({
 
 const registerLimiter = createRateLimiter({
   windowMs: 60 * 60 * 1000,
-  max: 5,
+  max: 10,
   message: "Too many registration attempts. Please try again later.",
 });
 
