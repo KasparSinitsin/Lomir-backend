@@ -38,8 +38,6 @@ const authController = {
    */
   async register(req, res) {
     try {
-      console.log("Received registration data (req.body):", req.body);
-
       // Parse tags if sent as string
       let tags = req.body.tags;
       if (typeof tags === "string") {
@@ -93,7 +91,9 @@ const authController = {
       // Geocode the address if location data is provided
       let coordinates = null;
       if (value.postal_code || value.city) {
-        console.log("Attempting to geocode address for new user...");
+        if (process.env.NODE_ENV !== "production") {
+          console.log("Attempting to geocode address for new user...");
+        }
         coordinates = await geocodeAddress({
           postal_code: value.postal_code,
           city: value.city,
@@ -101,9 +101,11 @@ const authController = {
         });
 
         if (coordinates) {
-          console.log(
-            `Geocoded coordinates for new user: lat=${coordinates.latitude}, lng=${coordinates.longitude}`,
-          );
+          if (process.env.NODE_ENV !== "production") {
+            console.log(
+              `Geocoded coordinates for new user: lat=${coordinates.latitude}, lng=${coordinates.longitude}`,
+            );
+          }
           value.latitude = coordinates.latitude;
           value.longitude = coordinates.longitude;
           value.state = coordinates.state;

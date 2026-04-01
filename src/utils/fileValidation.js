@@ -166,9 +166,11 @@ const validateChatFileUrl = async (url, type = "chatImage") => {
     };
   }
 
-  console.log(
-    `[FILE VALIDATION] Accepted ${type}: ${(fileSize / (1024 * 1024)).toFixed(2)}MB`,
-  );
+  if (process.env.NODE_ENV !== "production") {
+    console.log(
+      `[FILE VALIDATION] Accepted ${type}: ${(fileSize / (1024 * 1024)).toFixed(2)}MB`,
+    );
+  }
   return { valid: true, size: fileSize, publicId };
 };
 

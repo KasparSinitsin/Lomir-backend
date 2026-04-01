@@ -51,7 +51,9 @@ const isAllowedOrigin = (origin) => {
 
 const corsOptions = {
   origin(origin, callback) {
-    console.log("CORS origin:", origin);
+    if (process.env.NODE_ENV !== "production") {
+      console.log("CORS origin:", origin);
+    }
 
     if (isAllowedOrigin(origin)) {
       return callback(null, true);
@@ -85,9 +87,11 @@ app.get("/", (req, res) => {
 });
 
 app.use((req, res) => {
-  console.log(
-    `[${new Date().toISOString()}] No route matched: ${req.method} ${req.originalUrl}`
-  );
+  if (process.env.NODE_ENV !== "production") {
+    console.log(
+      `[${new Date().toISOString()}] No route matched: ${req.method} ${req.originalUrl}`
+    );
+  }
   res.status(404).json({
     success: false,
     message: `Resource not found. Cannot ${req.method} ${req.originalUrl}`,

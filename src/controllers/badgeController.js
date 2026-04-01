@@ -42,7 +42,9 @@ const refreshBadgeViews = async (clientOrPool) => {
   for (const viewName of viewNames) {
     try {
       await clientOrPool.query(`REFRESH MATERIALIZED VIEW ${viewName}`);
-      console.log(`🏅 Refreshed materialized view: ${viewName}`);
+      if (process.env.NODE_ENV !== "production") {
+        console.log(`🏅 Refreshed materialized view: ${viewName}`);
+      }
     } catch (err) {
       if (
         err.message.includes("is not a materialized view") ||
@@ -84,9 +86,10 @@ const awardBadge = async (req, res) => {
   try {
     const awardedByUserId = req.user.id; // From auth middleware
 
-    console.log("🏅 ====== AWARD BADGE CALLED ======");
-    console.log("🏅 req.user.id:", awardedByUserId);
-    console.log("🏅 req.body:", JSON.stringify(req.body, null, 2));
+    if (process.env.NODE_ENV !== "production") {
+      console.log("🏅 ====== AWARD BADGE CALLED ======");
+      console.log("🏅 req.user.id:", awardedByUserId);
+    }
 
     const {
       awarded_to_user_id,
@@ -176,9 +179,13 @@ const awardBadge = async (req, res) => {
           });
         }
 
-        console.log("🏅 Team context validated:", teamCheck.rows[0].name);
+        if (process.env.NODE_ENV !== "production") {
+          console.log("🏅 Team context validated:", teamCheck.rows[0].name);
+        }
       } else {
-        console.log("🏅 Custom team name:", custom_team_name);
+        if (process.env.NODE_ENV !== "production") {
+          console.log("🏅 Custom team name:", custom_team_name);
+        }
       }
     }
 
@@ -207,7 +214,9 @@ const awardBadge = async (req, res) => {
         });
       }
       resolvedTagId = tagCheck.rows[0].id;
-      console.log("🏅 Tag validated:", tagCheck.rows[0].name);
+      if (process.env.NODE_ENV !== "production") {
+        console.log("🏅 Tag validated:", tagCheck.rows[0].name);
+      }
     }
 
     // Verify badge exists
@@ -221,7 +230,9 @@ const awardBadge = async (req, res) => {
         message: "Badge not found",
       });
     }
-    console.log("🏅 Badge found:", badgeCheck.rows[0].name);
+    if (process.env.NODE_ENV !== "production") {
+      console.log("🏅 Badge found:", badgeCheck.rows[0].name);
+    }
 
     // Verify target user exists
     const userCheck = await pool.query(
@@ -234,7 +245,9 @@ const awardBadge = async (req, res) => {
         message: "Target user not found",
       });
     }
-    console.log("🏅 Target user:", userCheck.rows[0].username);
+    if (process.env.NODE_ENV !== "production") {
+      console.log("🏅 Target user:", userCheck.rows[0].username);
+    }
 
     // ── Insert award (main transaction) ──
     await client.query("BEGIN");
@@ -259,7 +272,9 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
       ],
     );
 
-    console.log("🏅 badge_awards INSERT success! ID:", insertResult.rows[0].id);
+    if (process.env.NODE_ENV !== "production") {
+      console.log("🏅 badge_awards INSERT success! ID:", insertResult.rows[0].id);
+    }
 
     // ── Non-critical: Update user_badges summary table (SAVEPOINT) ──
     try {
@@ -270,7 +285,9 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
         [awarded_to_user_id, badge_id, awardedByUserId, team_id || null],
       );
       await client.query("RELEASE SAVEPOINT user_badges_sp");
-      console.log("🏅 user_badges INSERT OK");
+      if (process.env.NODE_ENV !== "production") {
+        console.log("🏅 user_badges INSERT OK");
+      }
     } catch (ubError) {
       await client.query("ROLLBACK TO SAVEPOINT user_badges_sp");
       console.warn(
@@ -312,10 +329,12 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
               resolvedTagId,
             ],
           );
-          console.log(
-            "🏅 Tag credit updated. Dominant category:",
-            dominantResult.rows[0].badge_category,
-          );
+          if (process.env.NODE_ENV !== "production") {
+            console.log(
+              "🏅 Tag credit updated. Dominant category:",
+              dominantResult.rows[0].badge_category,
+            );
+          }
         }
 
         await client.query("RELEASE SAVEPOINT tag_credit_sp");
@@ -348,7 +367,9 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
         ],
       );
       await client.query("RELEASE SAVEPOINT notification_sp");
-      console.log("🏅 Notification created");
+      if (process.env.NODE_ENV !== "production") {
+        console.log("🏅 Notification created");
+      }
     } catch (notifError) {
       await client.query("ROLLBACK TO SAVEPOINT notification_sp");
       console.warn(
@@ -359,17 +380,21 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
 
     // ── Commit main transaction ──
     await client.query("COMMIT");
-    console.log(
-      "🏅 ====== TRANSACTION COMMITTED ====== Award ID:",
-      insertResult.rows[0].id,
-    );
+    if (process.env.NODE_ENV !== "production") {
+      console.log(
+        "🏅 ====== TRANSACTION COMMITTED ====== Award ID:",
+        insertResult.rows[0].id,
+      );
+    }
 
     // Refresh materialized views (post-commit, non-blocking)
     refreshBadgeViews(pool).catch((err) =>
       console.warn("⚠️ View refresh failed:", err.message),
     );
 
-    console.log("🏅 ====== AWARD BADGE COMPLETE ======");
+    if (process.env.NODE_ENV !== "production") {
+      console.log("🏅 ====== AWARD BADGE COMPLETE ======");
+    }
 
     res.status(201).json({
       success: true,
@@ -425,9 +450,11 @@ const getSharedTeams = async (req, res) => {
       [currentUserId, targetUserId],
     );
 
-    console.log(
-      `🏅 Shared teams between user ${currentUserId} and ${targetUserId}: ${result.rows.length}`,
-    );
+    if (process.env.NODE_ENV !== "production") {
+      console.log(
+        `🏅 Shared teams between user ${currentUserId} and ${targetUserId}: ${result.rows.length}`,
+      );
+    }
 
     res.status(200).json({
       success: true,

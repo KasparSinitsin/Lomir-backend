@@ -20,10 +20,7 @@ const initScheduledJobs = () => {
       console.log('[SCHEDULER] Running daily file cleanup...');
     }
     try {
-      const result = await cleanupExpiredFiles();
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('[SCHEDULER] File cleanup completed:', result);
-      }
+      await cleanupExpiredFiles();
     } catch (error) {
       console.error('[SCHEDULER] File cleanup failed:', error);
     }
@@ -37,10 +34,7 @@ const initScheduledJobs = () => {
       console.log('[SCHEDULER] Running expiration notification check...');
     }
     try {
-      const result = await createExpirationNotifications(7);
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('[SCHEDULER] Expiration notifications completed:', result);
-      }
+      await createExpirationNotifications(7);
     } catch (error) {
       console.error('[SCHEDULER] Expiration notifications failed:', error);
     }

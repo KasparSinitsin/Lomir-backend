@@ -65,11 +65,6 @@ router.get('/structured', async (req, res) => {
         structuredData.push(supercategory);
       }
     }
-
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('Structured tags preview:', JSON.stringify(structuredData, null, 2));
-    }
-
     res.json(structuredData);
   } catch (error) {
     console.error('Error fetching structured tags:', error);
