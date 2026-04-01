@@ -5,12 +5,21 @@ const { generateToken } = require("../utils/jwtUtils");
 const emailService = require("../services/emailService");
 const db = require("../config/database");
 const { geocodeAddress } = require("../utils/geocodingUtil");
+const { verifyTurnstileToken } = require("../utils/turnstileVerify");
 
 // Validation schema for registration
 const registerSchema = Joi.object({
   username: Joi.string().alphanum().min(3).max(30).required(),
   email: Joi.string().email().required(),
-  password: Joi.string().min(6).required(),
+  password: Joi.string()
+    .min(8)
+    .pattern(/^(?=.*[a-zA-Z])(?=.*[0-9])/)
+    .required()
+    .messages({
+      "string.min": "Password must be at least 8 characters",
+      "string.pattern.base":
+        "Password must contain at least one letter and one number",
+    }),
   first_name: Joi.string().allow("", null),
   last_name: Joi.string().allow("", null),
   bio: Joi.string().allow("", null),
@@ -18,6 +27,7 @@ const registerSchema = Joi.object({
   city: Joi.string().allow("", null),
   country: Joi.string().allow("", null),
   avatar_url: Joi.string().uri().allow(null),
+  turnstile_token: Joi.string().optional(),
   tags: Joi.array()
     .items(
       Joi.object({
@@ -38,8 +48,6 @@ const authController = {
    */
   async register(req, res) {
     try {
-      console.log("Received registration data (req.body):", req.body);
-
       // Parse tags if sent as string
       let tags = req.body.tags;
       if (typeof tags === "string") {
@@ -70,6 +78,33 @@ const authController = {
         });
       }
 
+      const { turnstile_token } = req.body;
+
+      if (process.env.TURNSTILE_SECRET_KEY) {
+        if (!turnstile_token) {
+          return res.status(400).json({
+            success: false,
+            message: "CAPTCHA verification is required",
+          });
+        }
+
+        const turnstileResult = await verifyTurnstileToken(turnstile_token);
+
+        if (!turnstileResult.success) {
+          if (process.env.NODE_ENV !== "production") {
+            console.warn(
+              "Turnstile verification failed:",
+              turnstileResult.error,
+            );
+          }
+
+          return res.status(400).json({
+            success: false,
+            message: "CAPTCHA verification failed. Please try again.",
+          });
+        }
+      }
+
       // Check for existing users
       const [existingUserByEmail, existingUserByUsername] = await Promise.all([
         userModel.findByEmail(value.email),
@@ -93,7 +128,9 @@ const authController = {
       // Geocode the address if location data is provided
       let coordinates = null;
       if (value.postal_code || value.city) {
-        console.log("Attempting to geocode address for new user...");
+        if (process.env.NODE_ENV !== "production") {
+          console.log("Attempting to geocode address for new user...");
+        }
         coordinates = await geocodeAddress({
           postal_code: value.postal_code,
           city: value.city,
@@ -101,9 +138,11 @@ const authController = {
         });
 
         if (coordinates) {
-          console.log(
-            `Geocoded coordinates for new user: lat=${coordinates.latitude}, lng=${coordinates.longitude}`,
-          );
+          if (process.env.NODE_ENV !== "production") {
+            console.log(
+              `Geocoded coordinates for new user: lat=${coordinates.latitude}, lng=${coordinates.longitude}`,
+            );
+          }
           value.latitude = coordinates.latitude;
           value.longitude = coordinates.longitude;
           value.state = coordinates.state;
@@ -597,10 +636,14 @@ const authController = {
         });
       }
 
-      if (password.length < 6) {
+      if (
+        password.length < 8 ||
+        !/^(?=.*[a-zA-Z])(?=.*[0-9])/.test(password)
+      ) {
         return res.status(400).json({
           success: false,
-          message: "Password must be at least 6 characters",
+          message:
+            "Password must be at least 8 characters and contain at least one letter and one number",
         });
       }
 
@@ -665,10 +708,14 @@ const authController = {
         });
       }
 
-      if (newPassword.length < 6) {
+      if (
+        newPassword.length < 8 ||
+        !/^(?=.*[a-zA-Z])(?=.*[0-9])/.test(newPassword)
+      ) {
         return res.status(400).json({
           success: false,
-          message: "New password must be at least 6 characters",
+          message:
+            "Password must be at least 8 characters and contain at least one letter and one number",
         });
       }
 

@@ -78,12 +78,16 @@ function extractState(address) {
 async function geocodeAddress({ postal_code, city, country }) {
   // Need at least postal_code and country, or city and country
   if (!country) {
-    console.log("Geocoding skipped: No country provided");
+    if (process.env.NODE_ENV !== "production") {
+      console.log("Geocoding skipped: No country provided");
+    }
     return null;
   }
 
   if (!postal_code && !city) {
-    console.log("Geocoding skipped: No postal_code or city provided");
+    if (process.env.NODE_ENV !== "production") {
+      console.log("Geocoding skipped: No postal_code or city provided");
+    }
     return null;
   }
 
@@ -99,7 +103,9 @@ async function geocodeAddress({ postal_code, city, country }) {
 
     const searchQuery = queryParts.join(", ");
 
-    console.log(`Geocoding address: "${searchQuery}"`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`Geocoding address: "${searchQuery}"`);
+    }
 
     // Call Nominatim API
     const response = await axios.get(
@@ -124,9 +130,11 @@ async function geocodeAddress({ postal_code, city, country }) {
       const longitude = parseFloat(result.lon);
       const state = extractState(result.address);
 
-      console.log(
-        `Geocoding success: "${searchQuery}" -> lat: ${latitude}, lng: ${longitude}, state: ${state}`,
-      );
+      if (process.env.NODE_ENV !== "production") {
+        console.log(
+          `Geocoding success: "${searchQuery}" -> lat: ${latitude}, lng: ${longitude}, state: ${state}`,
+        );
+      }
 
       return {
         latitude,
@@ -137,9 +145,11 @@ async function geocodeAddress({ postal_code, city, country }) {
 
     // If first attempt failed and we have both postal_code and city, try with just postal_code + country
     if (postal_code && city) {
-      console.log(
-        `Geocoding retry with postal_code + country only: "${postal_code}, ${countryName}"`,
-      );
+      if (process.env.NODE_ENV !== "production") {
+        console.log(
+          `Geocoding retry with postal_code + country only: "${postal_code}, ${countryName}"`,
+        );
+      }
 
       const retryResponse = await axios.get(
         "https://nominatim.openstreetmap.org/search",
@@ -164,9 +174,11 @@ async function geocodeAddress({ postal_code, city, country }) {
         const longitude = parseFloat(result.lon);
         const state = extractState(result.address);
 
-        console.log(
-          `Geocoding retry success: lat: ${latitude}, lng: ${longitude}, state: ${state}`,
-        );
+        if (process.env.NODE_ENV !== "production") {
+          console.log(
+            `Geocoding retry success: lat: ${latitude}, lng: ${longitude}, state: ${state}`,
+          );
+        }
 
         return {
           latitude,
@@ -178,9 +190,11 @@ async function geocodeAddress({ postal_code, city, country }) {
 
     // If still no result and we have city, try city + country
     if (city) {
-      console.log(
-        `Geocoding retry with city + country only: "${city}, ${countryName}"`,
-      );
+      if (process.env.NODE_ENV !== "production") {
+        console.log(
+          `Geocoding retry with city + country only: "${city}, ${countryName}"`,
+        );
+      }
 
       const cityResponse = await axios.get(
         "https://nominatim.openstreetmap.org/search",
@@ -205,9 +219,11 @@ async function geocodeAddress({ postal_code, city, country }) {
         const longitude = parseFloat(result.lon);
         const state = extractState(result.address);
 
-        console.log(
-          `Geocoding city retry success: lat: ${latitude}, lng: ${longitude}, state: ${state}`,
-        );
+        if (process.env.NODE_ENV !== "production") {
+          console.log(
+            `Geocoding city retry success: lat: ${latitude}, lng: ${longitude}, state: ${state}`,
+          );
+        }
 
         return {
           latitude,
@@ -217,7 +233,9 @@ async function geocodeAddress({ postal_code, city, country }) {
       }
     }
 
-    console.log(`Geocoding failed: No results found for "${searchQuery}"`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`Geocoding failed: No results found for "${searchQuery}"`);
+    }
     return null;
   } catch (error) {
     console.error("Geocoding error:", error.message);

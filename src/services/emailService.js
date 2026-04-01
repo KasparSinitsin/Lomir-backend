@@ -54,7 +54,9 @@ const emailService = {
         return { success: false, error: error.message };
       }
 
-      console.log("Verification email sent:", data?.id);
+      if (process.env.NODE_ENV !== "production") {
+        console.log("Verification email sent:", data?.id);
+      }
       return { success: true, messageId: data?.id };
     } catch (error) {
       console.error("Email send error:", error);
@@ -111,7 +113,9 @@ const emailService = {
         return { success: false, error: error.message };
       }
 
-      console.log("Password reset email sent:", data?.id);
+      if (process.env.NODE_ENV !== "production") {
+        console.log("Password reset email sent:", data?.id);
+      }
       return { success: true, messageId: data?.id };
     } catch (error) {
       console.error("Email send error:", error);

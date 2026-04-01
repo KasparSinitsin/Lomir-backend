@@ -6,6 +6,10 @@ dotenv.config();
 
 const app = express();
 
+if (process.env.NODE_ENV === "production") {
+  app.set("trust proxy", 1);
+}
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -38,7 +42,9 @@ const isAllowedOrigin = (origin) => {
     if (
       url.protocol === "https:" &&
       (url.hostname === "lomir-frontend.vercel.app" ||
-        url.hostname.endsWith(".vercel.app"))
+        /^lomir-frontend-[a-z0-9]+-juliabaurs-projects\.vercel\.app$/.test(
+          url.hostname
+        ))
     ) {
       return true;
     }
@@ -51,7 +57,9 @@ const isAllowedOrigin = (origin) => {
 
 const corsOptions = {
   origin(origin, callback) {
-    console.log("CORS origin:", origin);
+    if (process.env.NODE_ENV !== "production") {
+      console.log("CORS origin:", origin);
+    }
 
     if (isAllowedOrigin(origin)) {
       return callback(null, true);
@@ -85,9 +93,11 @@ app.get("/", (req, res) => {
 });
 
 app.use((req, res) => {
-  console.log(
-    `[${new Date().toISOString()}] No route matched: ${req.method} ${req.originalUrl}`
-  );
+  if (process.env.NODE_ENV !== "production") {
+    console.log(
+      `[${new Date().toISOString()}] No route matched: ${req.method} ${req.originalUrl}`
+    );
+  }
   res.status(404).json({
     success: false,
     message: `Resource not found. Cannot ${req.method} ${req.originalUrl}`,
