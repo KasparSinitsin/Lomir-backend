@@ -5,6 +5,7 @@ const { generateToken } = require("../utils/jwtUtils");
 const emailService = require("../services/emailService");
 const db = require("../config/database");
 const { geocodeAddress } = require("../utils/geocodingUtil");
+const { verifyTurnstileToken } = require("../utils/turnstileVerify");
 
 // Validation schema for registration
 const registerSchema = Joi.object({
@@ -18,6 +19,7 @@ const registerSchema = Joi.object({
   city: Joi.string().allow("", null),
   country: Joi.string().allow("", null),
   avatar_url: Joi.string().uri().allow(null),
+  turnstile_token: Joi.string().optional(),
   tags: Joi.array()
     .items(
       Joi.object({
@@ -66,6 +68,33 @@ const authController = {
           message: "Invalid input data",
           errors: error.details.map((detail) => detail.message),
         });
+      }
+
+      const { turnstile_token } = req.body;
+
+      if (process.env.TURNSTILE_SECRET_KEY) {
+        if (!turnstile_token) {
+          return res.status(400).json({
+            success: false,
+            message: "CAPTCHA verification is required",
+          });
+        }
+
+        const turnstileResult = await verifyTurnstileToken(turnstile_token);
+
+        if (!turnstileResult.success) {
+          if (process.env.NODE_ENV !== "production") {
+            console.warn(
+              "Turnstile verification failed:",
+              turnstileResult.error,
+            );
+          }
+
+          return res.status(400).json({
+            success: false,
+            message: "CAPTCHA verification failed. Please try again.",
+          });
+        }
       }
 
       // Check for existing users
