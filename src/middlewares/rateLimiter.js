@@ -30,7 +30,7 @@ const registerLimiter = createRateLimiter({
 
 const generalApiLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
-  max: 150,
+  max: 500,
   message: "Too many requests. Please slow down.",
 });
 
