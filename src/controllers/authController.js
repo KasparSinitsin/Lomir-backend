@@ -11,7 +11,15 @@ const { verifyTurnstileToken } = require("../utils/turnstileVerify");
 const registerSchema = Joi.object({
   username: Joi.string().alphanum().min(3).max(30).required(),
   email: Joi.string().email().required(),
-  password: Joi.string().min(6).required(),
+  password: Joi.string()
+    .min(8)
+    .pattern(/^(?=.*[a-zA-Z])(?=.*[0-9])/)
+    .required()
+    .messages({
+      "string.min": "Password must be at least 8 characters",
+      "string.pattern.base":
+        "Password must contain at least one letter and one number",
+    }),
   first_name: Joi.string().allow("", null),
   last_name: Joi.string().allow("", null),
   bio: Joi.string().allow("", null),
@@ -628,10 +636,14 @@ const authController = {
         });
       }
 
-      if (password.length < 6) {
+      if (
+        password.length < 8 ||
+        !/^(?=.*[a-zA-Z])(?=.*[0-9])/.test(password)
+      ) {
         return res.status(400).json({
           success: false,
-          message: "Password must be at least 6 characters",
+          message:
+            "Password must be at least 8 characters and contain at least one letter and one number",
         });
       }
 
@@ -696,10 +708,14 @@ const authController = {
         });
       }
 
-      if (newPassword.length < 6) {
+      if (
+        newPassword.length < 8 ||
+        !/^(?=.*[a-zA-Z])(?=.*[0-9])/.test(newPassword)
+      ) {
         return res.status(400).json({
           success: false,
-          message: "New password must be at least 6 characters",
+          message:
+            "Password must be at least 8 characters and contain at least one letter and one number",
         });
       }
 
