@@ -65,16 +65,20 @@ router.get("/postal-code/:code", async (req, res) => {
     const { code } = req.params;
     const detectedCountry = detectCountryCode(code);
 
-    console.log(
-      `Geocoding request for postal code: ${code}, detected country: ${detectedCountry}`
-    );
+    if (process.env.NODE_ENV !== "production") {
+      console.log(
+        `Geocoding request for postal code: ${code}, detected country: ${detectedCountry}`
+      );
+    }
 
     // First, try our simple mapping
     if (postalCodeMapping[code]) {
       const location = postalCodeMapping[code];
-      console.log(
-        `Found in mapping: ${code} -> ${location.city}, ${location.country}`
-      );
+      if (process.env.NODE_ENV !== "production") {
+        console.log(
+          `Found in mapping: ${code} -> ${location.city}, ${location.country}`
+        );
+      }
 
       const locationInfo = {
         city: location.city,
@@ -90,9 +94,11 @@ router.get("/postal-code/:code", async (req, res) => {
 
     // If not in mapping, try Nominatim with proper country code
     try {
-      console.log(
-        `Trying Nominatim for ${code} with country ${detectedCountry}`
-      );
+      if (process.env.NODE_ENV !== "production") {
+        console.log(
+          `Trying Nominatim for ${code} with country ${detectedCountry}`
+        );
+      }
 
       const response = await axios.get(
         "https://nominatim.openstreetmap.org/search",

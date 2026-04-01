@@ -55,7 +55,9 @@ const connectedUsers = new Map();
 // Socket.IO connection handling
 io.on("connection", (socket) => {
   const userId = socket.userId;
-  console.log(`User connected: ${userId} (${socket.username})`);
+  if (process.env.NODE_ENV !== "production") {
+    console.log(`User connected: ${userId} (${socket.username})`);
+  }
 
   // Store user connection
   connectedUsers.set(userId, socket.id);
@@ -75,7 +77,9 @@ io.on("connection", (socket) => {
       for (const row of userTeamsResult.rows) {
         const teamId = row.team_id;
         socket.join(`team:${teamId}`);
-        console.log(`User ${userId} joined team room: team:${teamId}`);
+        if (process.env.NODE_ENV !== "production") {
+          console.log(`User ${userId} joined team room: team:${teamId}`);
+        }
       }
     } catch (error) {
       console.error("Error joining user teams:", error);
@@ -95,7 +99,9 @@ io.on("connection", (socket) => {
 
     // Join the conversation room
     socket.join(`conversation:${conversationId}`);
-    console.log(`User ${userId} joined ${type} conversation ${conversationId}`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`User ${userId} joined ${type} conversation ${conversationId}`);
+    }
   });
 
   // Handle leaving a conversation
@@ -105,7 +111,9 @@ io.on("connection", (socket) => {
     const type = typeof data === "object" ? data.type : "direct";
 
     socket.leave(`conversation:${conversationId}`);
-    console.log(`User ${userId} left ${type} conversation ${conversationId}`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`User ${userId} left ${type} conversation ${conversationId}`);
+    }
   });
 
   // Handle new message
@@ -246,9 +254,11 @@ io.on("connection", (socket) => {
   // Handle typing indicator - start
   socket.on("typing:start", (data) => {
     const { conversationId, type = "direct" } = data;
-    console.log(
-      `User ${userId} started typing in ${type} conversation ${conversationId}`,
-    );
+    if (process.env.NODE_ENV !== "production") {
+      console.log(
+        `User ${userId} started typing in ${type} conversation ${conversationId}`,
+      );
+    }
 
     if (type === "team") {
       // For team messages, broadcast to all team members except sender
@@ -274,9 +284,11 @@ io.on("connection", (socket) => {
   // Handle typing indicator - stop
   socket.on("typing:stop", (data) => {
     const { conversationId, type = "direct" } = data;
-    console.log(
-      `User ${userId} stopped typing in ${type} conversation ${conversationId}`,
-    );
+    if (process.env.NODE_ENV !== "production") {
+      console.log(
+        `User ${userId} stopped typing in ${type} conversation ${conversationId}`,
+      );
+    }
 
     if (type === "team") {
       // For team messages, broadcast to all team members except sender
@@ -305,9 +317,11 @@ io.on("connection", (socket) => {
       const { conversationId, type = "direct" } = data;
       const db = require("./config/database");
 
-      console.log(
-        `User ${userId} marking ${type} messages as read in conversation ${conversationId}`,
-      );
+      if (process.env.NODE_ENV !== "production") {
+        console.log(
+          `User ${userId} marking ${type} messages as read in conversation ${conversationId}`,
+        );
+      }
 
       if (type === "team") {
         // Mark team messages as read (messages not sent by this user)
@@ -352,9 +366,11 @@ io.on("connection", (socket) => {
         readAt: new Date().toISOString(),
       });
 
-      console.log(
-        `Messages marked as read for ${type} conversation ${conversationId}`,
-      );
+      if (process.env.NODE_ENV !== "production") {
+        console.log(
+          `Messages marked as read for ${type} conversation ${conversationId}`,
+        );
+      }
     } catch (error) {
       console.error("Error handling message read status:", error);
     }
@@ -362,7 +378,9 @@ io.on("connection", (socket) => {
 
   // Handle disconnection
   socket.on("disconnect", () => {
-    console.log(`User disconnected: ${userId}`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`User disconnected: ${userId}`);
+    }
     connectedUsers.delete(userId);
 
     // Emit updated online users

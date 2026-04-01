@@ -489,16 +489,17 @@ const searchController = {
 
       const capacityMode = req.query.capacityMode === "roles" ? "roles" : "spots";
 
-      console.log(`=== SEARCH DEBUG ===`);
-      console.log(`Search query: "${query}"`);
-      console.log(`User ID from JWT: ${userId}`);
-      console.log(`Pagination: page=${page}, limit=${limit}, offset=${offset}`);
-      console.log(
-        `Sort by: ${sort}, direction: ${direction}, capacityMode: ${capacityMode}, searchType: ${searchType}, openRolesOnly: ${openRolesOnly}`,
-      );
-      console.log(`Tag filter IDs: ${JSON.stringify(tagIds)}, Badge filter IDs: ${JSON.stringify(badgeIds)}`);
-      console.log(`Match sort: roleId=${matchRoleId || 'none (profile-based)'}`);
-      console.log(`Exclude team members: teamId=${excludeTeamId || 'none'}`);
+      if (process.env.NODE_ENV !== "production") {
+        console.log(`Search query: "${query}"`);
+        console.log(`User ID from JWT: ${userId}`);
+        console.log(`Pagination: page=${page}, limit=${limit}, offset=${offset}`);
+        console.log(
+          `Sort by: ${sort}, direction: ${direction}, capacityMode: ${capacityMode}, searchType: ${searchType}, openRolesOnly: ${openRolesOnly}`,
+        );
+        console.log(`Tag filter IDs: ${JSON.stringify(tagIds)}, Badge filter IDs: ${JSON.stringify(badgeIds)}`);
+        console.log(`Match sort: roleId=${matchRoleId || 'none (profile-based)'}`);
+        console.log(`Exclude team members: teamId=${excludeTeamId || 'none'}`);
+      }
 
       if (!query || query.trim().length < 2) {
         return res.status(400).json({
@@ -571,7 +572,6 @@ const searchController = {
       let userLocation = null;
       if (userId) {
         userLocation = await searchController.getUserLocation(userId);
-        console.log("SEARCH DEBUG: userLocation =", userLocation);
       }
 
       // ========== TEAM COUNT QUERY ==========
@@ -1311,17 +1311,6 @@ const searchController = {
         userParams.push(limit, offset);
       }
 
-      // ========== EXECUTE ALL QUERIES ==========
-      console.log("=== DEBUG SQL ===");
-      console.log("teamCountQuery:", teamCountQuery);
-      console.log("teamCountParams:", teamCountParams);
-      console.log("teamQuery:", teamQuery);
-      console.log("teamParams:", teamParams);
-      console.log("userCountQuery:", userCountQuery);
-      console.log("userCountParams:", userCountParams);
-      console.log("userQuery:", userQuery);
-      console.log("userParams:", userParams);
-
       const [teamCountResult, teamResults, userCountResult, userResults] =
         await Promise.all([
           includeTeams
@@ -1636,9 +1625,6 @@ const searchController = {
         ? req.query.badgeIds.split(",").map(Number).filter(Number.isFinite)
         : [];
 
-      console.log("GETALL DEBUG: req.user =", req.user);
-      console.log("GETALL DEBUG: userId =", userId);
-
       const page = parseInt(req.query.page, 10) || 1;
       const limit = parseInt(req.query.limit, 10) || 20;
       const offset = (page - 1) * limit;
@@ -1670,12 +1656,14 @@ const searchController = {
 
       const capacityMode = req.query.capacityMode === "roles" ? "roles" : "spots";
 
-      console.log(
-        `getAllUsersAndTeams: userId=${userId}, page=${page}, limit=${limit}, sortBy=${sort}, sortDir=${direction}, capacityMode=${capacityMode}, searchType=${searchType}, openRolesOnly=${openRolesOnly}`,
-      );
-      console.log(`Tag filter IDs: ${JSON.stringify(tagIds)}, Badge filter IDs: ${JSON.stringify(badgeIds)}`);
-      console.log(`Match sort: roleId=${matchRoleId || 'none (profile-based)'}`);
-      console.log(`Exclude team members: teamId=${excludeTeamId || 'none'}`);
+      if (process.env.NODE_ENV !== "production") {
+        console.log(
+          `getAllUsersAndTeams: userId=${userId}, page=${page}, limit=${limit}, sortBy=${sort}, sortDir=${direction}, capacityMode=${capacityMode}, searchType=${searchType}, openRolesOnly=${openRolesOnly}`,
+        );
+        console.log(`Tag filter IDs: ${JSON.stringify(tagIds)}, Badge filter IDs: ${JSON.stringify(badgeIds)}`);
+        console.log(`Match sort: roleId=${matchRoleId || 'none (profile-based)'}`);
+        console.log(`Exclude team members: teamId=${excludeTeamId || 'none'}`);
+      }
 
       if (includeRoles) {
         const { roles, totalRoles } = await fetchOpenRoleSearchResults({
@@ -1715,11 +1703,6 @@ const searchController = {
 
       if (userId) {
         userLocation = await searchController.getUserLocation(userId);
-        console.log("GETALL DEBUG: userLocation =", userLocation);
-      } else {
-        console.log(
-          "GETALL DEBUG: no userId (req.user missing) -> userLocation null",
-        );
       }
 
       // ========== TEAM COUNT QUERY ==========
@@ -2387,17 +2370,6 @@ const searchController = {
         `;
         userParams.push(limit, offset);
       }
-
-      // ========== EXECUTE ALL QUERIES ==========
-      console.log("=== DEBUG SQL ===");
-      console.log("teamCountQuery:", teamCountQuery);
-      console.log("teamCountParams:", teamCountParams);
-      console.log("teamQuery:", teamQuery);
-      console.log("teamParams:", teamParams);
-      console.log("userCountQuery:", userCountQuery);
-      console.log("userCountParams:", userCountParams);
-      console.log("userQuery:", userQuery);
-      console.log("userParams:", userParams);
 
       const [teamCountResult, teamResults, userCountResult, userResults] =
         await Promise.all([

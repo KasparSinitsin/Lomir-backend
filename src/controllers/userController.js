@@ -61,7 +61,9 @@ const getUsers = async (req, res) => {
 const getUserById = async (req, res) => {
   try {
     const userId = req.params.id;
-    console.log(`Fetching user with ID: ${userId}`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`Fetching user with ID: ${userId}`);
+    }
 
     // Fetch user with tags as a comma-separated string
     const result = await pool.query(
@@ -139,16 +141,6 @@ const getUserById = async (req, res) => {
 
     const user = result.rows[0];
 
-    // Log the retrieved user data for debugging
-    console.log("Retrieved user from database:", {
-      id: user.id,
-      username: user.username,
-      is_public: user.is_public,
-      city: user.city,
-      country: user.country,
-      tags: user.tags,
-    });
-
     // Send successful response with user data including tags as string
     res.status(200).json({
       success: true,
@@ -174,8 +166,9 @@ const getUserById = async (req, res) => {
 const updateUser = async (req, res) => {
   try {
     const userId = req.params.id;
-    console.log("updateUser called for ID:", userId);
-    console.log("Request body:", req.body);
+    if (process.env.NODE_ENV !== "production") {
+      console.log("updateUser called for ID:", userId);
+    }
 
     // First, get the current user data to access the old avatar URL and location
     const currentUserResult = await pool.query(
@@ -296,11 +289,12 @@ const updateUser = async (req, res) => {
         try {
           const publicId = extractCloudinaryPublicId(oldAvatarUrl);
           if (publicId) {
-            console.log(
-              `Attempting to delete old avatar from Cloudinary: ${publicId}`,
-            );
+            if (process.env.NODE_ENV !== "production") {
+              console.log(
+                `Attempting to delete old avatar from Cloudinary: ${publicId}`,
+              );
+            }
             const deleteResult = await cloudinary.uploader.destroy(publicId);
-            console.log("Cloudinary deletion result:", deleteResult);
           }
         } catch (cloudinaryError) {
           console.error(
@@ -317,7 +311,9 @@ const updateUser = async (req, res) => {
       updateFields.push(`is_public = $${paramPosition}`);
       queryParams.push(is_public);
       paramPosition++;
-      console.log(`Setting is_public to: ${is_public} (${typeof is_public})`);
+      if (process.env.NODE_ENV !== "production") {
+        console.log(`Setting is_public to: ${is_public} (${typeof is_public})`);
+      }
     }
 
     // Check if location data has changed and trigger geocoding
@@ -331,13 +327,17 @@ const updateUser = async (req, res) => {
     const locationChanged = hasLocationChanged(newLocationData, currentUser);
 
     if (locationChanged) {
-      console.log("Location data changed, triggering geocoding...");
+      if (process.env.NODE_ENV !== "production") {
+        console.log("Location data changed, triggering geocoding...");
+      }
       const coordinates = await geocodeAddress(newLocationData);
 
       if (coordinates) {
-        console.log(
-          `Geocoded new coordinates: lat=${coordinates.latitude}, lng=${coordinates.longitude}`,
-        );
+        if (process.env.NODE_ENV !== "production") {
+          console.log(
+            `Geocoded new coordinates: lat=${coordinates.latitude}, lng=${coordinates.longitude}`,
+          );
+        }
         updateFields.push(`latitude = $${paramPosition}`);
         queryParams.push(coordinates.latitude);
         paramPosition++;
@@ -350,9 +350,11 @@ const updateUser = async (req, res) => {
         queryParams.push(coordinates.state);
         paramPosition++;
       } else {
-        console.log(
-          "Geocoding failed or returned no results, clearing coordinates",
-        );
+        if (process.env.NODE_ENV !== "production") {
+          console.log(
+            "Geocoding failed or returned no results, clearing coordinates",
+          );
+        }
         // Clear coordinates if geocoding fails
         updateFields.push(`latitude = $${paramPosition}`);
         queryParams.push(null);
@@ -391,9 +393,6 @@ const updateUser = async (req, res) => {
       RETURNING id, username, email, first_name, last_name, bio, postal_code, city, country, state, latitude, longitude, avatar_url, is_public, created_at, updated_at
     `;
 
-    console.log("Executing update query:", query);
-    console.log("With params:", queryParams);
-
     const result = await pool.query(query, queryParams);
 
     if (result.rows.length === 0) {
@@ -402,8 +401,6 @@ const updateUser = async (req, res) => {
         message: "User not found",
       });
     }
-
-    console.log("Update successful:", result.rows[0]);
 
     res.status(200).json({
       success: true,
@@ -457,7 +454,9 @@ const deleteAvatar = async (req, res) => {
       try {
         const publicId = extractCloudinaryPublicId(currentAvatarUrl);
         if (publicId) {
-          console.log(`Deleting avatar from Cloudinary: ${publicId}`);
+          if (process.env.NODE_ENV !== "production") {
+            console.log(`Deleting avatar from Cloudinary: ${publicId}`);
+          }
           await cloudinary.uploader.destroy(publicId);
         }
       } catch (cloudinaryError) {
