@@ -28,14 +28,7 @@ const registerLimiter = createRateLimiter({
   message: "Too many registration attempts. Please try again later.",
 });
 
-const generalApiLimiter = createRateLimiter({
-  windowMs: 15 * 60 * 1000,
-  max: 500,
-  message: "Too many requests. Please slow down.",
-});
-
 module.exports = {
   authLimiter,
   registerLimiter,
-  generalApiLimiter,
 };

@@ -1,7 +1,6 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
-const { generalApiLimiter } = require("./middlewares/rateLimiter");
 
 dotenv.config();
 
@@ -85,7 +84,6 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 const apiRoutes = require("./routes");
-app.use("/api", generalApiLimiter);
 app.use("/api", apiRoutes);
 
 app.get("/", (req, res) => {
