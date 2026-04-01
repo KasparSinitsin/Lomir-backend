@@ -3,24 +3,34 @@ const router = express.Router();
 
 const authController = require("../controllers/authController");
 const auth = require("../middlewares/auth");
+const { authLimiter, registerLimiter } = require("../middlewares/rateLimiter");
 const upload = require("../middlewares/uploadMiddleware");
 
 // Register a new user (with optional avatar upload)
-router.post("/register", upload.single("avatar"), authController.register);
+router.post(
+  "/register",
+  registerLimiter,
+  upload.single("avatar"),
+  authController.register,
+);
 
 // Login existing user
-router.post("/login", authController.login);
+router.post("/login", authLimiter, authController.login);
 
 // Email verification routes (query-param based: /verify-email?token=...)
 router.get("/verify-email", authController.verifyEmail);
-router.post("/resend-verification", authController.resendVerification);
+router.post(
+  "/resend-verification",
+  authLimiter,
+  authController.resendVerification,
+);
 
 // Get current user (requires token)
 router.get("/me", auth.authenticateToken, authController.getCurrentUser);
 
 // Password reset routes
-router.post("/forgot-password", authController.forgotPassword);
-router.post("/reset-password", authController.resetPassword);
+router.post("/forgot-password", authLimiter, authController.forgotPassword);
+router.post("/reset-password", authLimiter, authController.resetPassword);
 
 // Change password (authenticated)
 router.put(
