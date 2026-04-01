@@ -42,7 +42,9 @@ const isAllowedOrigin = (origin) => {
     if (
       url.protocol === "https:" &&
       (url.hostname === "lomir-frontend.vercel.app" ||
-        url.hostname.endsWith(".vercel.app"))
+        /^lomir-frontend-[a-z0-9]+-juliabaurs-projects\.vercel\.app$/.test(
+          url.hostname
+        ))
     ) {
       return true;
     }
