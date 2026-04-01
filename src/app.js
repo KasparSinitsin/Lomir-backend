@@ -1,10 +1,15 @@
 const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
+const { generalApiLimiter } = require("./middlewares/rateLimiter");
 
 dotenv.config();
 
 const app = express();
+
+if (process.env.NODE_ENV === "production") {
+  app.set("trust proxy", 1);
+}
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -80,6 +85,7 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 const apiRoutes = require("./routes");
+app.use("/api", generalApiLimiter);
 app.use("/api", apiRoutes);
 
 app.get("/", (req, res) => {
