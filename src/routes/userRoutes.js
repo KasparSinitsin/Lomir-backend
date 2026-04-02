@@ -19,6 +19,14 @@ router.get("/:id", userController.getUserById);
 // Access: Private (Requires valid token)
 router.put("/:id", auth.authenticateToken, userController.updateUser);
 
+// POST /api/users/:id/deletion-preview - Preview account deletion impact
+// Access: Private (Requires valid token)
+router.post(
+  "/:id/deletion-preview",
+  auth.authenticateToken,
+  userController.deletionPreview,
+);
+
 // DELETE /api/users/:id - Delete a specific user by their ID (Placeholder in controller)
 // Access: Private (Requires valid token)
 router.delete("/:id", auth.authenticateToken, userController.deleteUser);

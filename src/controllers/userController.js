@@ -1,4 +1,5 @@
 const { pool } = require("../config/database");
+const bcrypt = require("bcrypt");
 const cloudinary = require("cloudinary").v2;
 const {
   geocodeAddress,
@@ -29,6 +30,19 @@ const extractCloudinaryPublicId = (url) => {
     console.error("Error extracting Cloudinary public ID:", error);
     return null;
   }
+};
+
+const buildUserDisplayName = (user) => {
+  const fullName = [user.first_name, user.last_name].filter(Boolean).join(" ");
+  return fullName || user.username;
+};
+
+const toIsoString = (value) => {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  return value;
 };
 
 /**
@@ -553,6 +567,243 @@ const deleteUser = async (req, res) => {
 };
 
 /**
+ * @description Preview the impact of deleting a user's account
+ * @route POST /api/users/:id/deletion-preview
+ * @access Private (Requires authentication and password verification)
+ */
+const deletionPreview = async (req, res) => {
+  try {
+    const userId = parseInt(req.params.id, 10);
+    const { password } = req.body;
+
+    if (Number(req.user.id) !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only preview deletion for your own account",
+      });
+    }
+
+    if (!password) {
+      return res.status(400).json({
+        success: false,
+        message: "Password is required",
+      });
+    }
+
+    const userResult = await pool.query(
+      "SELECT id, password_hash FROM users WHERE id = $1",
+      [userId],
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const passwordMatches = await bcrypt.compare(
+      password,
+      userResult.rows[0].password_hash,
+    );
+
+    if (!passwordMatches) {
+      return res.status(401).json({
+        success: false,
+        message: "Password is incorrect",
+      });
+    }
+
+    const [
+      ownedTeamsResult,
+      rolesToReopenResult,
+      badgeAwardsGivenResult,
+      teamMembershipsResult,
+      directMessagesResult,
+    ] = await Promise.all([
+      pool.query(
+        `
+        SELECT
+          t.id AS team_id,
+          t.name AS team_name,
+          COUNT(tm_all.user_id)::int AS member_count,
+          (COUNT(tm_all.user_id) FILTER (WHERE tm_all.user_id != $1))::int AS other_member_count
+        FROM teams t
+        JOIN team_members tm_owner
+          ON tm_owner.team_id = t.id
+         AND tm_owner.user_id = $1
+         AND tm_owner.role = 'owner'
+        JOIN team_members tm_all ON tm_all.team_id = t.id
+        GROUP BY t.id, t.name
+        ORDER BY t.name ASC, t.id ASC
+        `,
+        [userId],
+      ),
+      pool.query(
+        `
+        SELECT
+          vr.id AS role_id,
+          vr.role_name,
+          vr.team_id,
+          t.name AS team_name
+        FROM team_vacant_roles vr
+        JOIN teams t ON t.id = vr.team_id
+        WHERE vr.filled_by = $1
+          AND vr.status = 'filled'
+        ORDER BY t.name ASC, vr.role_name ASC, vr.id ASC
+        `,
+        [userId],
+      ),
+      pool.query(
+        `
+        SELECT COUNT(*)::int AS count
+        FROM badge_awards
+        WHERE awarded_by_user_id = $1
+        `,
+        [userId],
+      ),
+      pool.query(
+        `
+        SELECT COUNT(*)::int AS count
+        FROM team_members
+        WHERE user_id = $1
+        `,
+        [userId],
+      ),
+      pool.query(
+        `
+        SELECT COUNT(*)::int AS count
+        FROM messages
+        WHERE (sender_id = $1 OR receiver_id = $1)
+          AND team_id IS NULL
+        `,
+        [userId],
+      ),
+    ]);
+
+    const ownedTeams = ownedTeamsResult.rows;
+    const teamIdsToTransfer = ownedTeams
+      .filter((team) => Number(team.other_member_count) > 0)
+      .map((team) => Number(team.team_id));
+
+    let successorByTeamId = new Map();
+
+    if (teamIdsToTransfer.length > 0) {
+      const successorsResult = await pool.query(
+        `
+        SELECT
+          ranked.team_id,
+          ranked.user_id,
+          ranked.role,
+          ranked.joined_at,
+          ranked.first_name,
+          ranked.last_name,
+          ranked.username
+        FROM (
+          SELECT
+            tm.team_id,
+            tm.user_id,
+            tm.role,
+            tm.joined_at,
+            u.first_name,
+            u.last_name,
+            u.username,
+            ROW_NUMBER() OVER (
+              PARTITION BY tm.team_id
+              ORDER BY
+                CASE
+                  WHEN tm.role = 'admin' THEN 0
+                  WHEN tm.role = 'member' THEN 1
+                  ELSE 2
+                END,
+                tm.joined_at ASC NULLS LAST,
+                tm.user_id ASC
+            ) AS row_number
+          FROM team_members tm
+          JOIN users u ON u.id = tm.user_id
+          WHERE tm.team_id = ANY($1::int[])
+            AND tm.user_id != $2
+            AND tm.role IN ('admin', 'member')
+        ) ranked
+        WHERE ranked.row_number = 1
+        `,
+        [teamIdsToTransfer, userId],
+      );
+
+      successorByTeamId = new Map(
+        successorsResult.rows.map((row) => [
+          Number(row.team_id),
+          {
+            userId: Number(row.user_id),
+            name: buildUserDisplayName(row),
+            role: row.role,
+            joinedAt: toIsoString(row.joined_at),
+          },
+        ]),
+      );
+    }
+
+    const teamsToDelete = [];
+    const teamsToTransfer = [];
+
+    for (const team of ownedTeams) {
+      const teamId = Number(team.team_id);
+      const memberCount = Number(team.member_count);
+      const otherMemberCount = Number(team.other_member_count);
+
+      if (otherMemberCount === 0) {
+        teamsToDelete.push({
+          teamId,
+          teamName: team.team_name,
+        });
+        continue;
+      }
+
+      const successor = successorByTeamId.get(teamId);
+
+      if (!successor) {
+        throw new Error(`No successor candidate found for team ${teamId}`);
+      }
+
+      teamsToTransfer.push({
+        teamId,
+        teamName: team.team_name,
+        successor,
+        memberCount,
+      });
+    }
+
+    const rolesToReopen = rolesToReopenResult.rows.map((row) => ({
+      roleId: Number(row.role_id),
+      roleName: row.role_name,
+      teamId: Number(row.team_id),
+      teamName: row.team_name,
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: {
+        teamsToTransfer,
+        teamsToDelete,
+        rolesToReopen,
+        counts: {
+          badgeAwardsGiven: Number(badgeAwardsGivenResult.rows[0].count),
+          teamMemberships: Number(teamMembershipsResult.rows[0].count),
+          directMessages: Number(directMessagesResult.rows[0].count),
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Error generating deletion preview:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error generating deletion preview",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
+/**
  * @description Get tags for a specific user
  * @route GET /api/users/:id/tags
  * @access Public
@@ -781,6 +1032,7 @@ module.exports = {
   getUsers,
   getUserById,
   updateUser,
+  deletionPreview,
   deleteUser,
   deleteAvatar,
   getUserTags,
