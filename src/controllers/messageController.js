@@ -428,7 +428,7 @@ const getMessages = async (req, res) => {
       u.last_name as sender_last_name,
       u.avatar_url as sender_avatar_url
     FROM messages m
-    JOIN users u ON m.sender_id = u.id
+    LEFT JOIN users u ON m.sender_id = u.id
     WHERE m.team_id = $1
     ${before ? "AND m.id < $2" : ""}
     ORDER BY m.sent_at DESC, m.id DESC

@@ -242,6 +242,8 @@ const getUserById = async (req, res) => {
     );
 
     if (result.rows.length === 0) {
+      // The frontend treats a 404 for a valid-looking profile ID as
+      // "This user has left Lomir" and renders the deleted-user placeholder.
       return res.status(404).json({
         success: false,
         message: "User not found",
