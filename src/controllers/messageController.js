@@ -428,7 +428,7 @@ const getMessages = async (req, res) => {
       u.last_name as sender_last_name,
       u.avatar_url as sender_avatar_url
     FROM messages m
-    JOIN users u ON m.sender_id = u.id
+    LEFT JOIN users u ON m.sender_id = u.id
     WHERE m.team_id = $1
     ${before ? "AND m.id < $2" : ""}
     ORDER BY m.sent_at DESC, m.id DESC
@@ -459,7 +459,7 @@ const getMessages = async (req, res) => {
       u.last_name as sender_last_name,
       u.avatar_url as sender_avatar_url
     FROM messages m
-    JOIN users u ON m.sender_id = u.id
+    LEFT JOIN users u ON m.sender_id = u.id
     WHERE ((m.sender_id = $1 AND m.receiver_id = $2) 
        OR (m.sender_id = $2 AND m.receiver_id = $1))
       AND m.team_id IS NULL
@@ -615,7 +615,7 @@ const getMessageById = async (req, res) => {
         m.read_at,
         u.username as sender_username
       FROM messages m
-      JOIN users u ON m.sender_id = u.id
+      LEFT JOIN users u ON m.sender_id = u.id
       WHERE m.id = $1
     `;
 
