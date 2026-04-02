@@ -187,8 +187,9 @@ No FK constraint exists on this column, so it won't block deletion, but cleanup 
 ## Profile Placeholder
 
 When someone visits a deleted user's profile URL:
-- **Show a "This user has left Lomir" placeholder page** instead of a 404
+- **Show a "This user profile does not exist on Lomir" placeholder page** with subtitle **"This profile is not available"**
 - Grey silhouette avatar, no personal information displayed
+- This placeholder appears for ANY profile 404 — the backend does not distinguish between "never existed" and "was deleted". This is by design (Option A).
 
 ---
 
@@ -212,6 +213,7 @@ On successful deletion, emit events so connected clients update:
 - **Auth:** Requires valid token + password in request body
 - **Body:** `{ password: string, ownershipOverrides?: { teamId: number, successorId: number }[] }`
 - **Executes:** Full deletion transaction as specified above
+- Service calls use `skipAuthRedirect` on the frontend to prevent a 401 (wrong password) from triggering a global logout.
 
 ---
 
@@ -220,9 +222,10 @@ On successful deletion, emit events so connected clients update:
 1. **Settings.jsx** — Updated delete modal: password input → impact summary → confirm
 2. **Message display components** — Handle `sender_id = NULL` → show "Former Lomir User" + grey avatar
 3. **AwardCard.jsx / badge components** — Handle `awarded_by = NULL` → show "Former Lomir User"
-4. **Profile/user routes** — Handle deleted user → show placeholder page
+4. **Profile routes** — New `/profile/:id` public route with `PublicProfile.jsx` component for deleted user placeholder. `UserDetailsModal` also handles 404 inline with 'Former Lomir User' display.
 5. **Notification click handlers** — Handle `reference_id = NULL` gracefully (no navigation)
 6. **Chat/conversation list** — Handle `conversation:deleted` socket event
+7. **Shared utility** — `deletedUser.js` (or similar) with `DELETED_USER_DISPLAY_NAME` constant, `isDeletedUser()` helper, `getDisplayName()` fallback, and `FormerUserAvatar` grey silhouette component.
 
 ---
 
@@ -251,7 +254,7 @@ Based on the actual constraints in the Neon database:
 |---|---|---|
 | `teams.owner_id` | NO ACTION | Transfer ownership or delete team first |
 | `team_vacant_roles.filled_by` | NO ACTION | SET NULL + reopen role |
-| `team_vacant_roles.created_by` | NO ACTION | SET NULL |
+| `team_vacant_roles.created_by` | NO ACTION | SET NULL. **Schema change applied:** `ALTER TABLE team_vacant_roles ALTER COLUMN created_by DROP NOT NULL` — the column originally had a NOT NULL constraint that prevented SET NULL. This was dropped in the Neon database. |
 | `team_applications.reviewed_by` | NO ACTION | SET NULL |
 | `user_badges.awarded_by` | NO ACTION | SET NULL |
 | `tags.created_by` | NO ACTION | SET NULL (0 rows currently, future-proofing) |
@@ -288,7 +291,7 @@ The `deleteUser` controller executes all operations in a **single database trans
 
 **Phase D — Role & reference cleanup (resolve all 6 NO ACTION blockers):**
 8. **Reopen filled roles**: `UPDATE team_vacant_roles SET status='open', filled_by=NULL WHERE filled_by=userId`
-9. **Create notifications** for team owners/admins about reopened roles
+9. **Create notifications** for all team members about reopened roles
 10. **SET NULL on remaining blockers:**
     - `team_vacant_roles.created_by`
     - `team_applications.reviewed_by`
@@ -303,6 +306,12 @@ The `deleteUser` controller executes all operations in a **single database trans
 **Phase F — Post-transaction cleanup (outside transaction):**
 14. **Delete Cloudinary avatar** (non-blocking, best-effort)
 15. **Emit Socket.IO events**: `team:member_left`, `notification:new`, `conversation:deleted`
+
+---
+
+## Query Fixes Applied
+
+All `JOIN users u ON m.sender_id = u.id` in `messageController.js` changed to `LEFT JOIN` — affects `getMessages` (both legacy and paginated versions) and `getMessageById`. Without this, team messages from deleted users (`sender_id = NULL`) are silently excluded from results.
 
 ---
 
@@ -327,3 +336,28 @@ The `deleteUser` controller executes all operations in a **single database trans
 | Invitations | 585 total | All involving user deleted | ✅ CASCADE |
 | Applications (user's) | Varies | Deleted | ✅ CASCADE |
 | Messages deleted_by | 18 rows | SET NULL | ⚠️ No FK — code required |
+
+---
+
+## Implementation Notes
+
+**Status:** Fully implemented and tested (April 2026).
+
+**Schema change applied:** `team_vacant_roles.created_by` changed from NOT NULL to nullable.
+
+**Key files (backend):**
+- `src/controllers/userController.js` — `deletionPreview` and `deleteUser` functions
+- `src/controllers/messageController.js` — LEFT JOIN fixes
+- `src/routes/userRoutes.js` — POST /:id/deletion-preview route
+- `test/userController.deleteUser.test.js` — deletion test coverage (41 tests)
+
+**Key files (frontend):**
+- `src/pages/Settings.jsx` — multi-step deletion modal
+- `src/pages/PublicProfile.jsx` — deleted user profile placeholder
+- `src/App.jsx` — /profile/:id route
+- `src/services/userService.js` — deletionPreview and updated deleteUser methods
+- `src/components/badges/AwardCard.jsx` — Former Lomir User fallback
+- Shared deleted user utility and FormerUserAvatar component
+- Chat message components — null sender handling
+- Notification components — null actor/reference handling
+- `UserDetailsModal.jsx` — inline deleted user handling on 404
