@@ -31,6 +31,7 @@ Built with Node.js, Express, PostgreSQL (Neon), and Socket.IO.
 - **Chat** - Real-time direct and team group messaging via Socket.IO, including typing indicators and read receipts
 - **Badge System** - 30 badges across 5 categories; award badges to teammates with reasons and context
 - **Notifications** - In-app notifications for invitations, applications, badge awards, and messages
+- **Account Deletion** - Full transactional account deletion with impact preview, automatic team ownership transfer, role reopening, and "Former Lomir User" handling for preserved references
 - **Geocoding** - Postal code lookup via Nominatim with built-in fallback mapping
 
 ---
@@ -183,6 +184,9 @@ Lomir-backend/
 |  |- database/
 |  |  |- migrations/
 |- scripts/                  # SQL seed and migration scripts
+|- test/                     # Controller unit tests
+|  |- userController.deleteUser.test.js
+|  |- userController.deletionPreview.test.js
 |- .env                      # Environment variables (not committed)
 |- package.json
 |- README.md
@@ -197,7 +201,7 @@ All routes are prefixed with `/api`.
 | Prefix | Description |
 |---|---|
 | `/api/auth` | Register, login, email verification, password reset |
-| `/api/users` | User CRUD, tags, badges, avatar |
+| `/api/users` | User CRUD, tags, badges, avatar, account deletion with preview |
 | `/api/teams` | Team CRUD, members, applications, invitations, badge awards |
 | `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management |
 | `/api/search` | Global search with tag/badge/location/role filtering |
@@ -224,6 +228,9 @@ The server uses Socket.IO for real-time features. Clients authenticate via JWT t
 | `message:status` | Server -> Client | Read receipt notification |
 | `typing:start` / `typing:stop` | Bidirectional | Typing indicators |
 | `users:online` | Server -> Client | Updated list of online user IDs |
+| `team:member_left` | Server -> Client | Emitted when a user is deleted, to each team they were in |
+| `conversation:deleted` | Server -> Client | Emitted to DM partners when a user is deleted |
+| `notification:new` | Server -> Client | Emitted for ownership transfers, role reopenings, and team dissolutions |
 
 ---
 
