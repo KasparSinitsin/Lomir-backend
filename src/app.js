@@ -28,30 +28,27 @@ const normalizeOrigin = (origin) => {
 
 const isAllowedOrigin = (origin) => {
   if (!origin) return true;
-
   const normalized = normalizeOrigin(origin);
   const normalizedExplicit = explicitOrigins.map(normalizeOrigin);
-
   if (normalizedExplicit.includes(normalized)) {
     return true;
   }
-
   try {
     const url = new URL(normalized);
-
     if (
-      url.protocol === "https:" &&
-      (url.hostname === "lomir-frontend.vercel.app" ||
-        /^lomir-frontend-[a-z0-9]+-juliabaurs-projects\.vercel\.app$/.test(
-          url.hostname
-        ))
+      url.hostname === "lomir-frontend.vercel.app" ||
+      /^lomir-frontend-[a-z0-9]+-juliabaurs-projects\.vercel\.app$/.test(url.hostname) ||
+      url.hostname.endsWith('.ngrok-free.dev') ||
+      url.hostname.endsWith('.ngrok.io') ||
+      url.hostname.endsWith('.shares.zrok.io') ||
+      url.hostname.endsWith('.trycloudflare.com') ||
+      url.hostname.endsWith('.pagekite.me') ||
+      url.hostname === 'bore.pub' ||
+      url.hostname.startsWith('100.')
     ) {
       return true;
     }
-  } catch (error) {
-    return false;
-  }
-
+  } catch (e) {}
   return false;
 };
 

@@ -1,8 +1,6 @@
 const { initScheduledJobs } = require("./jobs/fileCleanupScheduler");
 const { validateChatFileUrl } = require("./utils/fileValidation");
-
-require("dotenv").config();
-
+require ("dotenv").config();
 const app = require("./app");
 const http = require("http");
 const socketIo = require("socket.io");
