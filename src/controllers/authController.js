@@ -6,6 +6,7 @@ const emailService = require("../services/emailService");
 const db = require("../config/database");
 const { geocodeAddress } = require("../utils/geocodingUtil");
 const { verifyTurnstileToken } = require("../utils/turnstileVerify");
+const { uploadToImageKit } = require("../middlewares/uploadMiddleware");
 
 // Validation schema for registration
 const registerSchema = Joi.object({
@@ -59,11 +60,21 @@ const authController = {
         }
       }
 
+      let avatarUrl = req.body.avatar_url || null;
+
+      if (req.file) {
+        const uploadResult = await uploadToImageKit(
+          req.file.buffer,
+          req.file.originalname,
+        );
+        avatarUrl = uploadResult.url;
+      }
+
       // Prepare user data
       const userData = {
         ...req.body,
         tags: tags || [],
-        avatar_url: req.file ? req.file.path : req.body.avatar_url || null,
+        avatar_url: avatarUrl,
       };
 
       // Validate the payload

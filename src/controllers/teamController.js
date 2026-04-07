@@ -1,6 +1,5 @@
 const db = require("../config/database");
 const Joi = require("joi");
-const cloudinary = require("../config/cloudinary");
 const {
   geocodeAddress,
   hasLocationChanged,
@@ -12,50 +11,7 @@ const {
 } = require("./notificationController");
 const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer");
-
-// Helper function to extract Cloudinary public ID from URL
-const extractCloudinaryPublicId = (url) => {
-  if (!url || typeof url !== "string") return null;
-
-  try {
-    // Remove query parameters if present
-    const urlWithoutParams = url.split("?")[0];
-
-    // Match various Cloudinary URL patterns
-    const patterns = [
-      // Standard pattern with optional version and transformations
-      /\/image\/upload\/(?:(?:[^/]+\/)*)?(?:v\d+\/)?(.+)\.[a-zA-Z]+$/i,
-      // Alternative pattern for URLs without /image/upload/
-      /\/([^/]+\/[^/]+)\.[a-zA-Z]+$/i,
-    ];
-
-    for (const pattern of patterns) {
-      const match = urlWithoutParams.match(pattern);
-      if (match && match[1]) {
-        let publicId = match[1];
-
-        // If the publicId contains transformation-like patterns at the start, remove them
-        if (/^[a-z]_\d+/.test(publicId)) {
-          const parts = publicId.split("/");
-          const startIndex = parts.findIndex(
-            (part) => !/^[a-z]_[\d\w]+/.test(part) && !/^v\d+$/.test(part),
-          );
-          if (startIndex > -1) {
-            publicId = parts.slice(startIndex).join("/");
-          }
-        }
-
-        return publicId;
-      }
-    }
-
-    console.warn(`Could not extract Cloudinary public ID from URL: ${url}`);
-    return null;
-  } catch (error) {
-    console.error("Error extracting Cloudinary public ID:", error);
-    return null;
-  }
-};
+const { deleteImageKitFile } = require("../utils/imagekitUtils");
 
 const permanentlyDeleteTeam = async (teamId) => {
   const client = await db.pool.connect();
@@ -89,31 +45,10 @@ const permanentlyDeleteTeam = async (teamId) => {
 
     await client.query("COMMIT");
 
-    // Delete avatar from Cloudinary AFTER successful database deletion
+    // Delete avatar from ImageKit AFTER successful database deletion
     // This is done outside the transaction to prevent rollback issues
-    if (teamAvatarUrl && teamAvatarUrl.includes("cloudinary.com")) {
-      try {
-        const publicId = extractCloudinaryPublicId(teamAvatarUrl);
-        if (publicId) {
-          const deleteResult = await cloudinary.uploader.destroy(publicId);
-
-          if (
-            deleteResult.result !== "ok" &&
-            deleteResult.result !== "not found"
-          ) {
-            console.warn(
-              "Cloudinary deletion may have failed for team avatar:",
-              deleteResult,
-            );
-          }
-        }
-      } catch (cloudinaryError) {
-        // Log but don't fail - team is already deleted from database
-        console.error(
-          `Error deleting team avatar from Cloudinary for team ${teamId}:`,
-          cloudinaryError,
-        );
-      }
+    if (teamAvatarUrl) {
+      await deleteImageKitFile(teamAvatarUrl);
     }
 
     return true;
@@ -178,24 +113,9 @@ const deleteTeamAvatar = async (req, res) => {
 
     const currentAvatarUrl = teamCheck.rows[0].teamavatar_url;
 
-    // Delete from Cloudinary if it exists
-    if (currentAvatarUrl && currentAvatarUrl.includes("cloudinary.com")) {
-      try {
-        const publicId = extractCloudinaryPublicId(currentAvatarUrl);
-        if (publicId) {
-          const deleteResult = await cloudinary.uploader.destroy(publicId);
-
-          if (
-            deleteResult.result !== "ok" &&
-            deleteResult.result !== "not found"
-          ) {
-            console.warn("Cloudinary deletion may have failed:", deleteResult);
-          }
-        }
-      } catch (cloudinaryError) {
-        console.error("Error deleting from Cloudinary:", cloudinaryError);
-        // Continue with DB update even if Cloudinary fails
-      }
+    // Delete from ImageKit if it exists
+    if (currentAvatarUrl) {
+      await deleteImageKitFile(currentAvatarUrl);
     }
 
     // Update database to remove avatar URL
@@ -1415,24 +1335,9 @@ const updateTeam = async (req, res) => {
         queryParams.push(value.teamavatar_url);
         paramCounter++;
 
-        // Delete old image from Cloudinary if it exists and is different from new one
-        if (
-          oldAvatarUrl &&
-          oldAvatarUrl !== value.teamavatar_url &&
-          oldAvatarUrl.includes("cloudinary.com")
-        ) {
-          try {
-            const publicId = extractCloudinaryPublicId(oldAvatarUrl);
-            if (publicId) {
-              const deleteResult = await cloudinary.uploader.destroy(publicId);
-            }
-          } catch (cloudinaryError) {
-            console.error(
-              "Error deleting old team avatar from Cloudinary:",
-              cloudinaryError,
-            );
-            // Don't fail the update if Cloudinary deletion fails
-          }
+        // Delete old image from ImageKit if it exists and is different from the new one
+        if (oldAvatarUrl && oldAvatarUrl !== value.teamavatar_url) {
+          await deleteImageKitFile(oldAvatarUrl);
         }
       }
 

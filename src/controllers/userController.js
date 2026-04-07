@@ -1,37 +1,11 @@
 const db = require("../config/database");
 const { pool } = db;
 const bcrypt = require("bcrypt");
-const cloudinary = require("cloudinary").v2;
 const {
   geocodeAddress,
   hasLocationChanged,
 } = require("../utils/geocodingUtil");
-
-// Configure Cloudinary
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
-
-// Helper function to extract Cloudinary public ID from URL
-const extractCloudinaryPublicId = (url) => {
-  try {
-    // URL format: https://res.cloudinary.com/cloud_name/image/upload/v1234567890/folder/public_id.ext
-    const urlParts = url.split("/");
-    const uploadIndex = urlParts.indexOf("upload");
-    if (uploadIndex === -1) return null;
-
-    // Get everything after 'upload' and version number
-    const pathAfterUpload = urlParts.slice(uploadIndex + 2).join("/");
-    // Remove file extension
-    const publicId = pathAfterUpload.replace(/\.[^/.]+$/, "");
-    return publicId;
-  } catch (error) {
-    console.error("Error extracting Cloudinary public ID:", error);
-    return null;
-  }
-};
+const { deleteImageKitFile } = require("../utils/imagekitUtils");
 
 const buildUserDisplayName = (user) => {
   const fullName = [user.first_name, user.last_name].filter(Boolean).join(" ");
@@ -391,29 +365,13 @@ const updateUser = async (req, res) => {
       queryParams.push(avatar_url);
       paramPosition++;
 
-      // Delete old image from Cloudinary if it exists and is different from new one
-      if (
-        oldAvatarUrl &&
-        oldAvatarUrl !== avatar_url &&
-        oldAvatarUrl.includes("cloudinary.com")
-      ) {
-        try {
-          const publicId = extractCloudinaryPublicId(oldAvatarUrl);
-          if (publicId) {
-            if (process.env.NODE_ENV !== "production") {
-              console.log(
-                `Attempting to delete old avatar from Cloudinary: ${publicId}`,
-              );
-            }
-            const deleteResult = await cloudinary.uploader.destroy(publicId);
-          }
-        } catch (cloudinaryError) {
-          console.error(
-            "Error deleting old avatar from Cloudinary:",
-            cloudinaryError,
-          );
-          // Don't fail the update if Cloudinary deletion fails
+      // Delete old image from ImageKit if it exists and is different from the new one
+      if (oldAvatarUrl && oldAvatarUrl !== avatar_url) {
+        if (process.env.NODE_ENV !== "production") {
+          console.log(`Attempting to delete old avatar from ImageKit: ${oldAvatarUrl}`);
         }
+
+        await deleteImageKitFile(oldAvatarUrl);
       }
     }
 
@@ -560,23 +518,13 @@ const deleteAvatar = async (req, res) => {
 
     const currentAvatarUrl = userResult.rows[0].avatar_url;
 
-    // Delete from Cloudinary if it exists
-    if (currentAvatarUrl && currentAvatarUrl.includes("cloudinary.com")) {
-      try {
-        const publicId = extractCloudinaryPublicId(currentAvatarUrl);
-        if (publicId) {
-          if (process.env.NODE_ENV !== "production") {
-            console.log(`Deleting avatar from Cloudinary: ${publicId}`);
-          }
-          await cloudinary.uploader.destroy(publicId);
-        }
-      } catch (cloudinaryError) {
-        console.error(
-          "Error deleting avatar from Cloudinary:",
-          cloudinaryError,
-        );
-        // Continue anyway to clear the database reference
+    // Delete from ImageKit if it exists
+    if (currentAvatarUrl) {
+      if (process.env.NODE_ENV !== "production") {
+        console.log(`Deleting avatar from ImageKit: ${currentAvatarUrl}`);
       }
+
+      await deleteImageKitFile(currentAvatarUrl);
     }
 
     // Clear the avatar_url in the database
@@ -1155,18 +1103,8 @@ const deleteUser = async (req, res) => {
     });
 
     try {
-      if (avatarUrl && avatarUrl.includes("cloudinary.com")) {
-        try {
-          const publicId = extractCloudinaryPublicId(avatarUrl);
-          if (publicId) {
-            await cloudinary.uploader.destroy(publicId);
-          }
-        } catch (cloudinaryError) {
-          console.error(
-            "Error deleting avatar from Cloudinary:",
-            cloudinaryError,
-          );
-        }
+      if (avatarUrl) {
+        await deleteImageKitFile(avatarUrl);
       }
 
       const io =

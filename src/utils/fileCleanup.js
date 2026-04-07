@@ -1,54 +1,58 @@
 // Utilities for cleaning up expired chat files
 
-const db = require('../config/database');
-const cloudinary = require('../config/cloudinary');
+const db = require("../config/database");
+const imagekit = require("../config/imagekit");
+const {
+  extractImageKitFilename,
+  isImageKitUrl,
+} = require("./imagekitUtils");
 
 /**
- * Delete a file from Cloudinary
- * @param {string} publicId - The Cloudinary public ID
- * @param {string} resourceType - 'image' or 'raw'
+ * Delete a file from ImageKit
+ * @param {string} url - The ImageKit file URL
  * @returns {Promise<boolean>} - Success status
  */
-const deleteFromCloudinary = async (publicId, resourceType = 'image') => {
+const deleteFromImageKit = async (url) => {
   try {
-    const result = await cloudinary.uploader.destroy(publicId, {
-      resource_type: resourceType,
+    const filename = extractImageKitFilename(url);
+
+    if (!filename) {
+      return false;
+    }
+
+    const files = await imagekit.listFiles({
+      searchQuery: `name="${filename}"`,
     });
-    return result.result === 'ok';
+
+    if (Array.isArray(files) && files.length > 0) {
+      await imagekit.deleteFile(files[0].fileId);
+      return true;
+    }
+
+    return false;
   } catch (error) {
-    console.error(`[CLEANUP] Error deleting ${publicId} from Cloudinary:`, error);
+    console.error(`[CLEANUP] Error deleting from ImageKit:`, error);
     return false;
   }
 };
 
 /**
- * Determine resource type from URL
- * @param {string} url - The Cloudinary URL
- * @returns {'image' | 'raw'}
- */
-const getResourceTypeFromUrl = (url) => {
-  if (!url) return 'image';
-  if (url.includes('/raw/upload/')) return 'raw';
-  return 'image';
-};
-
-/**
  * Clean up expired files
- * - Deletes files from Cloudinary
+ * - Deletes files from ImageKit
  * - Updates database to mark files as deleted
  * @returns {Promise<{processed: number, deleted: number, errors: number}>}
  */
 const cleanupExpiredFiles = async () => {
-  if (process.env.NODE_ENV !== 'production') {
-    console.log('[CLEANUP] Starting expired file cleanup...');
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[CLEANUP] Starting expired file cleanup...");
   }
-  
+
   const stats = { processed: 0, deleted: 0, errors: 0 };
 
   try {
     // Find all expired files that haven't been deleted yet
     const expiredFiles = await db.query(`
-      SELECT id, image_url, file_url, cloudinary_public_id
+      SELECT id, image_url, file_url
       FROM messages
       WHERE file_expires_at IS NOT NULL
         AND file_expires_at < NOW()
@@ -57,30 +61,27 @@ const cleanupExpiredFiles = async () => {
       LIMIT 100
     `);
 
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(`[CLEANUP] Found ${expiredFiles.rows.length} expired files to process`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(
+        `[CLEANUP] Found ${expiredFiles.rows.length} expired files to process`,
+      );
     }
 
     for (const row of expiredFiles.rows) {
       stats.processed++;
-      
+
       const url = row.file_url || row.image_url;
-      const publicId = row.cloudinary_public_id;
-      
-      if (!publicId) {
-        console.warn(`[CLEANUP] No public ID for message ${row.id}, skipping Cloudinary deletion`);
-      } else {
-        // Determine resource type and delete from Cloudinary
-        const resourceType = getResourceTypeFromUrl(url);
-        const cloudinaryDeleted = await deleteFromCloudinary(publicId, resourceType);
-        
-        if (!cloudinaryDeleted) {
-          console.warn(`[CLEANUP] Could not delete ${publicId} from Cloudinary`);
+
+      if (isImageKitUrl(url)) {
+        const imagekitDeleted = await deleteFromImageKit(url);
+
+        if (!imagekitDeleted) {
+          console.warn(`[CLEANUP] Could not delete file from ImageKit for message ${row.id}`);
           stats.errors++;
         }
       }
 
-      // Update database to mark as deleted (even if Cloudinary delete failed)
+      // Update database to mark as deleted (even if ImageKit delete failed)
       await db.query(`
         UPDATE messages
         SET file_deleted_at = NOW(),
@@ -90,18 +91,19 @@ const cleanupExpiredFiles = async () => {
       `, [row.id]);
 
       stats.deleted++;
-      if (process.env.NODE_ENV !== 'production') {
+      if (process.env.NODE_ENV !== "production") {
         console.log(`[CLEANUP] Processed message ${row.id}`);
       }
     }
 
-    if (process.env.NODE_ENV !== 'production') {
-      console.log(`[CLEANUP] Completed. Processed: ${stats.processed}, Deleted: ${stats.deleted}, Errors: ${stats.errors}`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(
+        `[CLEANUP] Completed. Processed: ${stats.processed}, Deleted: ${stats.deleted}, Errors: ${stats.errors}`,
+      );
     }
     return stats;
-
   } catch (error) {
-    console.error('[CLEANUP] Error during cleanup:', error);
+    console.error("[CLEANUP] Error during cleanup:", error);
     throw error;
   }
 };
@@ -138,7 +140,7 @@ const getFilesExpiringSoon = async (days = 7) => {
 
     return result.rows;
   } catch (error) {
-    console.error('[CLEANUP] Error fetching expiring files:', error);
+    console.error("[CLEANUP] Error fetching expiring files:", error);
     throw error;
   }
 };
@@ -149,7 +151,7 @@ const getFilesExpiringSoon = async (days = 7) => {
  * @returns {Promise<{notified: number, errors: number}>}
  */
 const createExpirationNotifications = async (days = 7) => {
-  if (process.env.NODE_ENV !== 'production') {
+  if (process.env.NODE_ENV !== "production") {
     console.log(`[CLEANUP] Creating notifications for files expiring in ${days} days...`);
   }
   
@@ -226,13 +228,13 @@ const createExpirationNotifications = async (days = 7) => {
     return stats;
 
   } catch (error) {
-    console.error('[CLEANUP] Error creating notifications:', error);
+    console.error("[CLEANUP] Error creating notifications:", error);
     throw error;
   }
 };
 
 module.exports = {
-  deleteFromCloudinary,
+  deleteFromImageKit,
   cleanupExpiredFiles,
   getFilesExpiringSoon,
   createExpirationNotifications,
