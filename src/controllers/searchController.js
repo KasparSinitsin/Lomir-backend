@@ -50,6 +50,21 @@ function normalizeNullableNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function normalizeJsonArray(value) {
+  if (Array.isArray(value)) return value;
+
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value);
+    } catch (error) {
+      console.warn("Error parsing JSON array:", value, error);
+      return [];
+    }
+  }
+
+  return [];
+}
+
 function normalizeRoleSearchRow(role) {
   return {
     ...role,
@@ -94,9 +109,7 @@ function computeJaccardOverlap(baseSet, candidateIds) {
 async function enrichRolesWithTagsAndBadges(roles) {
   if (!roles || roles.length === 0) return [];
 
-  const roleIds = roles
-    .map((role) => Number(role.id))
-    .filter(Number.isFinite);
+  const roleIds = roles.map((role) => Number(role.id)).filter(Number.isFinite);
 
   if (roleIds.length === 0) {
     return roles.map((role) => ({
@@ -169,14 +182,19 @@ async function enrichRolesWithTagsAndBadges(roles) {
 async function applyViewerRoleMatchScores(roles, userId) {
   if (!userId || !roles || roles.length === 0) return roles || [];
 
-  const [viewerTagsResult, viewerBadgesResult, viewerLocationResult] = await Promise.all([
-    db.pool.query(`SELECT tag_id FROM user_tags WHERE user_id = $1`, [userId]),
-    db.pool.query(
-      `SELECT DISTINCT badge_id FROM badge_awards WHERE awarded_to_user_id = $1`,
-      [userId],
-    ),
-    db.pool.query(`SELECT latitude, longitude FROM users WHERE id = $1`, [userId]),
-  ]);
+  const [viewerTagsResult, viewerBadgesResult, viewerLocationResult] =
+    await Promise.all([
+      db.pool.query(`SELECT tag_id FROM user_tags WHERE user_id = $1`, [
+        userId,
+      ]),
+      db.pool.query(
+        `SELECT DISTINCT badge_id FROM badge_awards WHERE awarded_to_user_id = $1`,
+        [userId],
+      ),
+      db.pool.query(`SELECT latitude, longitude FROM users WHERE id = $1`, [
+        userId,
+      ]),
+    ]);
 
   const viewerTagIds = new Set(
     viewerTagsResult.rows
@@ -231,8 +249,7 @@ async function fetchOpenRoleSearchResults({
   limit = 20,
   userId = null,
 }) {
-  const searchValue =
-    typeof query === "string" ? query.trim() : query;
+  const searchValue = typeof query === "string" ? query.trim() : query;
   const offset = (page - 1) * limit;
   const isMatchSort = sort === "match" && !!userId;
 
@@ -305,8 +322,7 @@ async function fetchOpenRoleSearchResults({
     db.pool.query(roleDataQuery, roleDataParams),
   ]);
 
-  const totalRoles =
-    parseInt(roleCountResult.rows[0]?.total, 10) || 0;
+  const totalRoles = parseInt(roleCountResult.rows[0]?.total, 10) || 0;
 
   let roles = await enrichRolesWithTagsAndBadges(roleDataResult.rows);
 
@@ -316,7 +332,9 @@ async function fetchOpenRoleSearchResults({
       const scoreDiff = b.best_match_score - a.best_match_score;
       if (scoreDiff !== 0) return scoreDiff;
 
-      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      return (
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
     });
     roles = roles.slice(offset, offset + limit);
   }
@@ -447,9 +465,15 @@ const searchController = {
       const includeUsers = searchType === "all" || searchType === "users";
       const includeRoles = searchType === "roles";
       const openRolesOnly = parseBooleanFlag(req.query.openRolesOnly);
-      const excludeOwnTeams = parseBooleanFlag(req.query.excludeOwnTeams) && !!userId;
-      const excludeTeamId = req.query.excludeTeamId ? parseInt(req.query.excludeTeamId, 10) : null;
-      const hasValidExcludeTeamId = excludeTeamId !== null && Number.isFinite(excludeTeamId) && excludeTeamId > 0;
+      const excludeOwnTeams =
+        parseBooleanFlag(req.query.excludeOwnTeams) && !!userId;
+      const excludeTeamId = req.query.excludeTeamId
+        ? parseInt(req.query.excludeTeamId, 10)
+        : null;
+      const hasValidExcludeTeamId =
+        excludeTeamId !== null &&
+        Number.isFinite(excludeTeamId) &&
+        excludeTeamId > 0;
 
       const tagIds = req.query.tagIds
         ? req.query.tagIds.split(",").map(Number).filter(Number.isFinite)
@@ -479,7 +503,9 @@ const searchController = {
         : "ASC";
 
       const isMatchSort = sort === "match" && !!userId;
-      const matchRoleId = req.query.roleId ? parseInt(req.query.roleId, 10) : null;
+      const matchRoleId = req.query.roleId
+        ? parseInt(req.query.roleId, 10)
+        : null;
 
       const maxDistance = req.query.maxDistance
         ? parseFloat(req.query.maxDistance)
@@ -487,18 +513,25 @@ const searchController = {
       const hasValidMaxDistance =
         maxDistance !== null && Number.isFinite(maxDistance) && maxDistance > 0;
 
-      const capacityMode = req.query.capacityMode === "roles" ? "roles" : "spots";
+      const capacityMode =
+        req.query.capacityMode === "roles" ? "roles" : "spots";
 
       if (process.env.NODE_ENV !== "production") {
         console.log(`Search query: "${query}"`);
         console.log(`User ID from JWT: ${userId}`);
-        console.log(`Pagination: page=${page}, limit=${limit}, offset=${offset}`);
+        console.log(
+          `Pagination: page=${page}, limit=${limit}, offset=${offset}`,
+        );
         console.log(
           `Sort by: ${sort}, direction: ${direction}, capacityMode: ${capacityMode}, searchType: ${searchType}, openRolesOnly: ${openRolesOnly}`,
         );
-        console.log(`Tag filter IDs: ${JSON.stringify(tagIds)}, Badge filter IDs: ${JSON.stringify(badgeIds)}`);
-        console.log(`Match sort: roleId=${matchRoleId || 'none (profile-based)'}`);
-        console.log(`Exclude team members: teamId=${excludeTeamId || 'none'}`);
+        console.log(
+          `Tag filter IDs: ${JSON.stringify(tagIds)}, Badge filter IDs: ${JSON.stringify(badgeIds)}`,
+        );
+        console.log(
+          `Match sort: roleId=${matchRoleId || "none (profile-based)"}`,
+        );
+        console.log(`Exclude team members: teamId=${excludeTeamId || "none"}`);
       }
 
       if (!query || query.trim().length < 2) {
@@ -661,11 +694,7 @@ const searchController = {
         teamCountQuery += ` AND t.is_remote IS NOT TRUE`;
       }
 
-      if (
-        hasValidMaxDistance &&
-        userLocation &&
-        direction !== "REMOTE"
-      ) {
+      if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
         const distFilter = searchController.buildDistanceFilterSQL(
           userLocation,
           "t",
@@ -701,7 +730,11 @@ const searchController = {
       // ========== TEAM DATA QUERY ==========
       let teamDistanceSelect = "";
       let teamDistanceGroupBy = "";
-      if (userLocation && (sort === "proximity" && direction !== "REMOTE" || hasValidMaxDistance)) {
+      if (
+        userLocation &&
+        ((sort === "proximity" && direction !== "REMOTE") ||
+          hasValidMaxDistance)
+      ) {
         if (userLocation.hasCoordinates) {
           teamDistanceSelect = `,
             CASE
@@ -746,15 +779,17 @@ const searchController = {
             ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0)
           END as available_capacity,
           (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count,
-          STRING_AGG(
-            DISTINCT CASE
-              WHEN tag.id IS NOT NULL
-              THEN json_build_object('id', tag.id, 'name', tag.name, 'category', tag.category)::text
-              ELSE NULL
-            END,
-            ','
-          ) as tags_json
-          ${teamDistanceSelect}
+          COALESCE(
+  json_agg(
+    DISTINCT jsonb_build_object(
+      'id', tag.id,
+      'name', tag.name,
+      'category', tag.category
+    )
+  ) FILTER (WHERE tag.id IS NOT NULL),
+  '[]'::json
+) as tags
+${teamDistanceSelect}
         FROM teams t
         LEFT JOIN team_members tm ON t.id = tm.team_id
         LEFT JOIN team_tags tt ON t.id = tt.team_id
@@ -843,11 +878,7 @@ const searchController = {
         teamQuery += ` AND t.is_remote IS NOT TRUE`;
       }
 
-      if (
-        hasValidMaxDistance &&
-        userLocation &&
-        direction !== "REMOTE"
-      ) {
+      if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
         const distFilter = searchController.buildDistanceFilterSQL(
           userLocation,
           "t",
@@ -1007,11 +1038,7 @@ const searchController = {
         userCountQuery += ` AND u.is_public = TRUE`;
       }
 
-      if (
-        hasValidMaxDistance &&
-        userLocation &&
-        direction !== "REMOTE"
-      ) {
+      if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
         const distFilter = searchController.buildDistanceFilterSQL(
           userLocation,
           "u",
@@ -1059,7 +1086,11 @@ const searchController = {
       // ========== USER DATA QUERY ==========
       let userDistanceSelect = "";
       let userDistanceGroupBy = "";
-      if (userLocation && (sort === "proximity" && direction !== "REMOTE" || hasValidMaxDistance)) {
+      if (
+        userLocation &&
+        ((sort === "proximity" && direction !== "REMOTE") ||
+          hasValidMaxDistance)
+      ) {
         if (userLocation.hasCoordinates) {
           userDistanceSelect = `,
             CASE
@@ -1211,11 +1242,7 @@ const searchController = {
         userQuery += ` AND u.is_public = TRUE`;
       }
 
-      if (
-        hasValidMaxDistance &&
-        userLocation &&
-        direction !== "REMOTE"
-      ) {
+      if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
         const distFilter = searchController.buildDistanceFilterSQL(
           userLocation,
           "u",
@@ -1330,48 +1357,23 @@ const searchController = {
       const totalTeams = parseInt(teamCountResult.rows[0].total, 10);
       const totalUsers = parseInt(userCountResult.rows[0].total, 10);
 
-      const teamsWithFixedVisibility = teamResults.rows.map((team) => {
-        let parsedTags = [];
-
-        if (team.tags_json) {
-          try {
-            const tagStrings = team.tags_json.split(",");
-            parsedTags = tagStrings
-              .filter((tagStr) => tagStr && tagStr.trim() !== "null")
-              .map((tagStr) => {
-                try {
-                  return JSON.parse(tagStr.trim());
-                } catch (parseError) {
-                  console.warn("Error parsing tag JSON:", tagStr, parseError);
-                  return null;
-                }
-              })
-              .filter((tag) => tag !== null);
-          } catch (error) {
-            console.warn("Error processing team tags:", error);
-          }
-        }
-
-        const { tags_json, ...teamWithoutTagsJson } = team;
-
-        return {
-          ...teamWithoutTagsJson,
-          is_public: team.is_public === true || team.is_public === "true",
-          tags: parsedTags,
-          available_capacity:
-            team.available_capacity !== null
-              ? parseInt(team.available_capacity, 10)
-              : null,
-          distance_km:
-            team.distance_km !== undefined && team.distance_km !== null
-              ? parseFloat(Number(team.distance_km).toFixed(1))
-              : null,
-          open_role_count:
-            team.open_role_count !== null && team.open_role_count !== undefined
-              ? parseInt(team.open_role_count, 10)
-              : 0,
-        };
-      });
+      const teamsWithFixedVisibility = teamResults.rows.map((team) => ({
+        ...team,
+        is_public: team.is_public === true || team.is_public === "true",
+        tags: normalizeJsonArray(team.tags),
+        available_capacity:
+          team.available_capacity !== null
+            ? parseInt(team.available_capacity, 10)
+            : null,
+        distance_km:
+          team.distance_km !== undefined && team.distance_km !== null
+            ? parseFloat(Number(team.distance_km).toFixed(1))
+            : null,
+        open_role_count:
+          team.open_role_count !== null && team.open_role_count !== undefined
+            ? parseInt(team.open_role_count, 10)
+            : 0,
+      }));
 
       const usersWithFixedVisibility = userResults.rows.map((user) => ({
         ...user,
@@ -1393,7 +1395,11 @@ const searchController = {
           // --- Team scoring: always profile-based ---
           const teamIds = teamsWithFixedVisibility.map((t) => t.id);
 
-          const teamMatches = await computeTeamProfileMatchScores(db, userId, teamIds);
+          const teamMatches = await computeTeamProfileMatchScores(
+            db,
+            userId,
+            teamIds,
+          );
           finalTeams = teamsWithFixedVisibility.map((team) => {
             const match = teamMatches.get(team.id);
             return {
@@ -1442,7 +1448,9 @@ const searchController = {
               ]);
 
               const roleTagIds = roleTagsRes.rows.map((r) => Number(r.tag_id));
-              const roleBadgeIds = roleBadgesRes.rows.map((r) => Number(r.badge_id));
+              const roleBadgeIds = roleBadgesRes.rows.map((r) =>
+                Number(r.badge_id),
+              );
 
               const userIds = usersWithFixedVisibility.map((u) => u.id);
 
@@ -1466,7 +1474,8 @@ const searchController = {
                 userTagMap[r.user_id].add(Number(r.tag_id));
               }
               for (const r of allUserBadges.rows) {
-                if (!userBadgeMap[r.user_id]) userBadgeMap[r.user_id] = new Set();
+                if (!userBadgeMap[r.user_id])
+                  userBadgeMap[r.user_id] = new Set();
                 userBadgeMap[r.user_id].add(Number(r.badge_id));
               }
 
@@ -1494,14 +1503,20 @@ const searchController = {
                 };
               });
 
-              finalUsers.sort((a, b) => b.best_match_score - a.best_match_score);
+              finalUsers.sort(
+                (a, b) => b.best_match_score - a.best_match_score,
+              );
             }
           }
 
           // Profile-based user scoring (default when no roleId, or role not found)
           if (!matchRoleId || finalUsers === usersWithFixedVisibility) {
             const userIds = usersWithFixedVisibility.map((u) => u.id);
-            const userOverlap = await computeUserProfileOverlap(db, userId, userIds);
+            const userOverlap = await computeUserProfileOverlap(
+              db,
+              userId,
+              userIds,
+            );
             finalUsers = usersWithFixedVisibility.map((user) => {
               const overlap = userOverlap.get(user.id);
               return {
@@ -1614,9 +1629,15 @@ const searchController = {
       const includeUsers = searchType === "all" || searchType === "users";
       const includeRoles = searchType === "roles";
       const openRolesOnly = parseBooleanFlag(req.query.openRolesOnly);
-      const excludeOwnTeams = parseBooleanFlag(req.query.excludeOwnTeams) && !!userId;
-      const excludeTeamId = req.query.excludeTeamId ? parseInt(req.query.excludeTeamId, 10) : null;
-      const hasValidExcludeTeamId = excludeTeamId !== null && Number.isFinite(excludeTeamId) && excludeTeamId > 0;
+      const excludeOwnTeams =
+        parseBooleanFlag(req.query.excludeOwnTeams) && !!userId;
+      const excludeTeamId = req.query.excludeTeamId
+        ? parseInt(req.query.excludeTeamId, 10)
+        : null;
+      const hasValidExcludeTeamId =
+        excludeTeamId !== null &&
+        Number.isFinite(excludeTeamId) &&
+        excludeTeamId > 0;
 
       const tagIds = req.query.tagIds
         ? req.query.tagIds.split(",").map(Number).filter(Number.isFinite)
@@ -1646,7 +1667,9 @@ const searchController = {
         : "ASC";
 
       const isMatchSort = sort === "match" && !!userId;
-      const matchRoleId = req.query.roleId ? parseInt(req.query.roleId, 10) : null;
+      const matchRoleId = req.query.roleId
+        ? parseInt(req.query.roleId, 10)
+        : null;
 
       const maxDistance = req.query.maxDistance
         ? parseFloat(req.query.maxDistance)
@@ -1654,15 +1677,20 @@ const searchController = {
       const hasValidMaxDistance =
         maxDistance !== null && Number.isFinite(maxDistance) && maxDistance > 0;
 
-      const capacityMode = req.query.capacityMode === "roles" ? "roles" : "spots";
+      const capacityMode =
+        req.query.capacityMode === "roles" ? "roles" : "spots";
 
       if (process.env.NODE_ENV !== "production") {
         console.log(
           `getAllUsersAndTeams: userId=${userId}, page=${page}, limit=${limit}, sortBy=${sort}, sortDir=${direction}, capacityMode=${capacityMode}, searchType=${searchType}, openRolesOnly=${openRolesOnly}`,
         );
-        console.log(`Tag filter IDs: ${JSON.stringify(tagIds)}, Badge filter IDs: ${JSON.stringify(badgeIds)}`);
-        console.log(`Match sort: roleId=${matchRoleId || 'none (profile-based)'}`);
-        console.log(`Exclude team members: teamId=${excludeTeamId || 'none'}`);
+        console.log(
+          `Tag filter IDs: ${JSON.stringify(tagIds)}, Badge filter IDs: ${JSON.stringify(badgeIds)}`,
+        );
+        console.log(
+          `Match sort: roleId=${matchRoleId || "none (profile-based)"}`,
+        );
+        console.log(`Exclude team members: teamId=${excludeTeamId || "none"}`);
       }
 
       if (includeRoles) {
@@ -1760,11 +1788,7 @@ const searchController = {
         teamCountQuery += ` AND t.is_remote IS NOT TRUE`;
       }
 
-      if (
-        hasValidMaxDistance &&
-        userLocation &&
-        direction !== "REMOTE"
-      ) {
+      if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
         const distFilter = searchController.buildDistanceFilterSQL(
           userLocation,
           "t",
@@ -1819,7 +1843,11 @@ const searchController = {
       // ========== TEAM DATA QUERY ==========
       let teamDistanceSelect = "";
       let teamDistanceGroupBy = "";
-      if (userLocation && (sort === "proximity" && direction !== "REMOTE" || hasValidMaxDistance)) {
+      if (
+        userLocation &&
+        ((sort === "proximity" && direction !== "REMOTE") ||
+          hasValidMaxDistance)
+      ) {
         if (userLocation.hasCoordinates) {
           teamDistanceSelect = `,
             CASE
@@ -1862,15 +1890,17 @@ const searchController = {
             ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0)
           END as available_capacity,
           (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count,
-          STRING_AGG(
-            DISTINCT CASE
-              WHEN tag.id IS NOT NULL
-              THEN json_build_object('id', tag.id, 'name', tag.name, 'category', tag.category)::text
-              ELSE NULL
-            END,
-            ','
-          ) as tags_json
-          ${teamDistanceSelect}
+          COALESCE(
+  json_agg(
+    DISTINCT jsonb_build_object(
+      'id', tag.id,
+      'name', tag.name,
+      'category', tag.category
+    )
+  ) FILTER (WHERE tag.id IS NOT NULL),
+  '[]'::json
+) as tags
+${teamDistanceSelect}
         FROM teams t
         LEFT JOIN team_members tm ON t.id = tm.team_id
         LEFT JOIN team_tags tt ON t.id = tt.team_id
@@ -1928,11 +1958,7 @@ const searchController = {
         teamQuery += ` AND t.is_remote IS NOT TRUE`;
       }
 
-      if (
-        hasValidMaxDistance &&
-        userLocation &&
-        direction !== "REMOTE"
-      ) {
+      if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
         const distFilter = searchController.buildDistanceFilterSQL(
           userLocation,
           "t",
@@ -2066,11 +2092,7 @@ const searchController = {
         userCountQuery += ` AND u.is_public = TRUE`;
       }
 
-      if (
-        hasValidMaxDistance &&
-        userLocation &&
-        direction !== "REMOTE"
-      ) {
+      if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
         const distFilter = searchController.buildDistanceFilterSQL(
           userLocation,
           "u",
@@ -2142,7 +2164,11 @@ const searchController = {
       // ========== USER DATA QUERY ==========
       let userDistanceSelect = "";
       let userDistanceGroupBy = "";
-      if (userLocation && (sort === "proximity" && direction !== "REMOTE" || hasValidMaxDistance)) {
+      if (
+        userLocation &&
+        ((sort === "proximity" && direction !== "REMOTE") ||
+          hasValidMaxDistance)
+      ) {
         if (userLocation.hasCoordinates) {
           userDistanceSelect = `,
             CASE
@@ -2247,11 +2273,7 @@ const searchController = {
         userQuery += ` AND u.is_public = TRUE`;
       }
 
-      if (
-        hasValidMaxDistance &&
-        userLocation &&
-        direction !== "REMOTE"
-      ) {
+      if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
         const distFilter = searchController.buildDistanceFilterSQL(
           userLocation,
           "u",
@@ -2390,48 +2412,23 @@ const searchController = {
       const totalTeams = parseInt(teamCountResult.rows[0].total, 10);
       const totalUsers = parseInt(userCountResult.rows[0].total, 10);
 
-      const teamsWithFixedVisibility = teamResults.rows.map((team) => {
-        let parsedTags = [];
-
-        if (team.tags_json) {
-          try {
-            const tagStrings = team.tags_json.split(",");
-            parsedTags = tagStrings
-              .filter((tagStr) => tagStr && tagStr.trim() !== "null")
-              .map((tagStr) => {
-                try {
-                  return JSON.parse(tagStr.trim());
-                } catch (parseError) {
-                  console.warn("Error parsing tag JSON:", tagStr, parseError);
-                  return null;
-                }
-              })
-              .filter((tag) => tag !== null);
-          } catch (error) {
-            console.warn("Error processing team tags:", error);
-          }
-        }
-
-        const { tags_json, ...teamWithoutTagsJson } = team;
-
-        return {
-          ...teamWithoutTagsJson,
-          is_public: team.is_public === true || team.is_public === "true",
-          tags: parsedTags,
-          available_capacity:
-            team.available_capacity !== null
-              ? parseInt(team.available_capacity, 10)
-              : null,
-          distance_km:
-            team.distance_km !== undefined && team.distance_km !== null
-              ? parseFloat(Number(team.distance_km).toFixed(1))
-              : null,
-          open_role_count:
-            team.open_role_count !== null && team.open_role_count !== undefined
-              ? parseInt(team.open_role_count, 10)
-              : 0,
-        };
-      });
+      const teamsWithFixedVisibility = teamResults.rows.map((team) => ({
+        ...team,
+        is_public: team.is_public === true || team.is_public === "true",
+        tags: normalizeJsonArray(team.tags),
+        available_capacity:
+          team.available_capacity !== null
+            ? parseInt(team.available_capacity, 10)
+            : null,
+        distance_km:
+          team.distance_km !== undefined && team.distance_km !== null
+            ? parseFloat(Number(team.distance_km).toFixed(1))
+            : null,
+        open_role_count:
+          team.open_role_count !== null && team.open_role_count !== undefined
+            ? parseInt(team.open_role_count, 10)
+            : 0,
+      }));
 
       const usersWithFixedVisibility = userResults.rows.map((user) => ({
         ...user,
@@ -2453,7 +2450,11 @@ const searchController = {
           // --- Team scoring: always profile-based ---
           const teamIds = teamsWithFixedVisibility.map((t) => t.id);
 
-          const teamMatches = await computeTeamProfileMatchScores(db, userId, teamIds);
+          const teamMatches = await computeTeamProfileMatchScores(
+            db,
+            userId,
+            teamIds,
+          );
           finalTeams = teamsWithFixedVisibility.map((team) => {
             const match = teamMatches.get(team.id);
             return {
@@ -2502,7 +2503,9 @@ const searchController = {
               ]);
 
               const roleTagIds = roleTagsRes.rows.map((r) => Number(r.tag_id));
-              const roleBadgeIds = roleBadgesRes.rows.map((r) => Number(r.badge_id));
+              const roleBadgeIds = roleBadgesRes.rows.map((r) =>
+                Number(r.badge_id),
+              );
 
               const userIds = usersWithFixedVisibility.map((u) => u.id);
 
@@ -2526,7 +2529,8 @@ const searchController = {
                 userTagMap[r.user_id].add(Number(r.tag_id));
               }
               for (const r of allUserBadges.rows) {
-                if (!userBadgeMap[r.user_id]) userBadgeMap[r.user_id] = new Set();
+                if (!userBadgeMap[r.user_id])
+                  userBadgeMap[r.user_id] = new Set();
                 userBadgeMap[r.user_id].add(Number(r.badge_id));
               }
 
@@ -2554,14 +2558,20 @@ const searchController = {
                 };
               });
 
-              finalUsers.sort((a, b) => b.best_match_score - a.best_match_score);
+              finalUsers.sort(
+                (a, b) => b.best_match_score - a.best_match_score,
+              );
             }
           }
 
           // Profile-based user scoring (default when no roleId, or role not found)
           if (!matchRoleId || finalUsers === usersWithFixedVisibility) {
             const userIds = usersWithFixedVisibility.map((u) => u.id);
-            const userOverlap = await computeUserProfileOverlap(db, userId, userIds);
+            const userOverlap = await computeUserProfileOverlap(
+              db,
+              userId,
+              userIds,
+            );
             finalUsers = usersWithFixedVisibility.map((user) => {
               const overlap = userOverlap.get(user.id);
               return {
