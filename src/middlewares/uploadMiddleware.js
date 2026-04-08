@@ -8,7 +8,7 @@ const uploadToImageKit = async (
   fileName,
   folder = "lomir/avatars",
 ) => {
-  const response = await imagekit.upload({
+  const response = await imagekit.files.upload({
     file: fileBuffer.toString("base64"),
     fileName,
     folder,

@@ -257,7 +257,7 @@ const updateUser = async (req, res) => {
 
     // First, get the current user data to access the old avatar URL and location
     const currentUserResult = await pool.query(
-      "SELECT avatar_url, postal_code, city, country, state, latitude, longitude FROM users WHERE id = $1",
+      "SELECT avatar_url, avatar_file_id, postal_code, city, country, state, latitude, longitude FROM users WHERE id = $1",
       [userId],
     );
 
@@ -270,6 +270,7 @@ const updateUser = async (req, res) => {
 
     const currentUser = currentUserResult.rows[0];
     const oldAvatarUrl = currentUser.avatar_url;
+    const oldAvatarFileId = currentUser.avatar_file_id;
 
     // Extract all relevant fields from request body
     const {
@@ -282,8 +283,11 @@ const updateUser = async (req, res) => {
       city,
       country,
       avatar_url,
+      avatar_file_id,
       is_public,
     } = req.body;
+    const nextAvatarFileId =
+      avatar_file_id === "" ? null : (avatar_file_id ?? null);
 
     // Build SET clause dynamically
     const updateFields = [];
@@ -365,13 +369,17 @@ const updateUser = async (req, res) => {
       queryParams.push(avatar_url);
       paramPosition++;
 
+      updateFields.push(`avatar_file_id = $${paramPosition}`);
+      queryParams.push(nextAvatarFileId);
+      paramPosition++;
+
       // Delete old image from ImageKit if it exists and is different from the new one
-      if (oldAvatarUrl && oldAvatarUrl !== avatar_url) {
+      if ((oldAvatarUrl || oldAvatarFileId) && oldAvatarUrl !== avatar_url) {
         if (process.env.NODE_ENV !== "production") {
           console.log(`Attempting to delete old avatar from ImageKit: ${oldAvatarUrl}`);
         }
 
-        await deleteImageKitFile(oldAvatarUrl);
+        await deleteImageKitFile(oldAvatarUrl, oldAvatarFileId);
       }
     }
 
@@ -505,7 +513,7 @@ const deleteAvatar = async (req, res) => {
 
     // Get the current avatar URL
     const userResult = await pool.query(
-      "SELECT avatar_url FROM users WHERE id = $1",
+      "SELECT avatar_url, avatar_file_id FROM users WHERE id = $1",
       [userId],
     );
 
@@ -517,19 +525,20 @@ const deleteAvatar = async (req, res) => {
     }
 
     const currentAvatarUrl = userResult.rows[0].avatar_url;
+    const currentAvatarFileId = userResult.rows[0].avatar_file_id;
 
     // Delete from ImageKit if it exists
-    if (currentAvatarUrl) {
+    if (currentAvatarUrl || currentAvatarFileId) {
       if (process.env.NODE_ENV !== "production") {
         console.log(`Deleting avatar from ImageKit: ${currentAvatarUrl}`);
       }
 
-      await deleteImageKitFile(currentAvatarUrl);
+      await deleteImageKitFile(currentAvatarUrl, currentAvatarFileId);
     }
 
     // Clear the avatar_url in the database
     await pool.query(
-      "UPDATE users SET avatar_url = NULL, updated_at = NOW() WHERE id = $1",
+      "UPDATE users SET avatar_url = NULL, avatar_file_id = NULL, updated_at = NOW() WHERE id = $1",
       [userId],
     );
 
@@ -556,6 +565,7 @@ const deleteUser = async (req, res) => {
   let client = null;
   let transactionOpen = false;
   let avatarUrl = null;
+  let avatarFileId = null;
   let teamIdsForSockets = [];
   let dmPartnerIds = [];
   let ownershipTransferEvents = [];
@@ -620,7 +630,7 @@ const deleteUser = async (req, res) => {
     logDeletionPhase("Phase A - gather context", { userId });
 
     const userResult = await client.query(
-      `SELECT id, first_name, last_name, username, avatar_url, password_hash
+      `SELECT id, first_name, last_name, username, avatar_url, avatar_file_id, password_hash
        FROM users
        WHERE id = $1`,
       [userId],
@@ -644,6 +654,7 @@ const deleteUser = async (req, res) => {
     }
 
     avatarUrl = user.avatar_url;
+    avatarFileId = user.avatar_file_id;
 
     const fullName = [user.first_name, user.last_name].filter(Boolean).join(" ");
     const userDisplayName = fullName || user.username;
@@ -1103,8 +1114,8 @@ const deleteUser = async (req, res) => {
     });
 
     try {
-      if (avatarUrl) {
-        await deleteImageKitFile(avatarUrl);
+      if (avatarUrl || avatarFileId) {
+        await deleteImageKitFile(avatarUrl, avatarFileId);
       }
 
       const io =

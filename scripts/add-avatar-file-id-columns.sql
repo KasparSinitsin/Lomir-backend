@@ -1,0 +1,2 @@
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_file_id TEXT;
+ALTER TABLE teams ADD COLUMN IF NOT EXISTS teamavatar_file_id TEXT;
