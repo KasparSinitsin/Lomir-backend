@@ -1,4 +1,8 @@
 const db = require("../config/database");
+const {
+  deleteImageKitFile,
+  isImageKitUrl,
+} = require("../utils/imagekitUtils");
 
 const getUnreadCount = async (req, res) => {
   try {
@@ -651,7 +655,7 @@ const deleteMessage = async (req, res) => {
 
     // 1) Fetch message first (so we know whether it’s team or direct + room ids)
     const msgResult = await db.query(
-      `SELECT id, sender_id, receiver_id, team_id
+      `SELECT id, sender_id, receiver_id, team_id, image_url, file_url
        FROM messages
        WHERE id = $1`,
       [messageId],
@@ -668,6 +672,16 @@ const deleteMessage = async (req, res) => {
       return res
         .status(403)
         .json({ message: "Not authorized to delete this message" });
+    }
+
+    const imageUrl = msg.image_url;
+    const fileUrl = msg.file_url;
+
+    if (imageUrl && isImageKitUrl(imageUrl)) {
+      await deleteImageKitFile(imageUrl);
+    }
+    if (fileUrl && isImageKitUrl(fileUrl)) {
+      await deleteImageKitFile(fileUrl);
     }
 
     // 3) SOFT DELETE (matches your UI + your getMessages already returns deleted_at/deleted_by)
