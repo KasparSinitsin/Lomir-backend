@@ -21,11 +21,12 @@ const permanentlyDeleteTeam = async (teamId) => {
 
     // Fetch team avatar URL before deleting
     const teamResult = await client.query(
-      `SELECT teamavatar_url FROM teams WHERE id = $1`,
+      `SELECT teamavatar_url, teamavatar_file_id FROM teams WHERE id = $1`,
       [teamId],
     );
 
     const teamAvatarUrl = teamResult.rows[0]?.teamavatar_url;
+    const teamAvatarFileId = teamResult.rows[0]?.teamavatar_file_id;
 
     // Delete all related data in order...
     await client.query("DELETE FROM messages WHERE team_id = $1", [teamId]);
@@ -47,8 +48,8 @@ const permanentlyDeleteTeam = async (teamId) => {
 
     // Delete avatar from ImageKit AFTER successful database deletion
     // This is done outside the transaction to prevent rollback issues
-    if (teamAvatarUrl) {
-      await deleteImageKitFile(teamAvatarUrl);
+    if (teamAvatarUrl || teamAvatarFileId) {
+      await deleteImageKitFile(teamAvatarUrl, teamAvatarFileId);
     }
 
     return true;
@@ -93,7 +94,7 @@ const deleteTeamAvatar = async (req, res) => {
     // Check if team exists and user is the owner or admin
     const teamCheck = await db.pool.query(
       `
-      SELECT t.teamavatar_url, tm.role
+      SELECT t.teamavatar_url, t.teamavatar_file_id, tm.role
       FROM teams t
       JOIN team_members tm ON t.id = tm.team_id
       WHERE t.id = $1 
@@ -112,15 +113,16 @@ const deleteTeamAvatar = async (req, res) => {
     }
 
     const currentAvatarUrl = teamCheck.rows[0].teamavatar_url;
+    const currentAvatarFileId = teamCheck.rows[0].teamavatar_file_id;
 
     // Delete from ImageKit if it exists
-    if (currentAvatarUrl) {
-      await deleteImageKitFile(currentAvatarUrl);
+    if (currentAvatarUrl || currentAvatarFileId) {
+      await deleteImageKitFile(currentAvatarUrl, currentAvatarFileId);
     }
 
     // Update database to remove avatar URL
     const result = await db.pool.query(
-      "UPDATE teams SET teamavatar_url = NULL, updated_at = NOW() WHERE id = $1 RETURNING id, teamavatar_url",
+      "UPDATE teams SET teamavatar_url = NULL, teamavatar_file_id = NULL, updated_at = NOW() WHERE id = $1 RETURNING id, teamavatar_url",
       [teamId],
     );
 
@@ -1007,6 +1009,7 @@ const updateTeam = async (req, res) => {
     // Get current team data to access old avatar URL
     const currentTeam = teamCheck.rows[0];
     const oldAvatarUrl = currentTeam.teamavatar_url;
+    const oldAvatarFileId = currentTeam.teamavatar_file_id;
 
     // Create validation schema for update (similar to creation but all fields optional)
     const updateSchema = Joi.object({
@@ -1030,6 +1033,7 @@ const updateTeam = async (req, res) => {
       status: Joi.string().valid("active", "inactive"),
 
       teamavatar_url: Joi.string().uri().allow(null, ""),
+      teamavatar_file_id: Joi.string().allow(null, ""),
 
       tags: Joi.array().items(
         Joi.object({
@@ -1294,6 +1298,7 @@ const updateTeam = async (req, res) => {
     if (value.city === "") value.city = null;
     if (value.state === "") value.state = null;
     if (value.country === "") value.country = null;
+    if (value.teamavatar_file_id === "") value.teamavatar_file_id = null;
 
     // Geocode if location changed and not remote
     if (!isRemote && (value.postal_code || value.city) && value.country) {
@@ -1335,9 +1340,16 @@ const updateTeam = async (req, res) => {
         queryParams.push(value.teamavatar_url);
         paramCounter++;
 
+        updateFields.push(`teamavatar_file_id = $${paramCounter}`);
+        queryParams.push(value.teamavatar_file_id ?? null);
+        paramCounter++;
+
         // Delete old image from ImageKit if it exists and is different from the new one
-        if (oldAvatarUrl && oldAvatarUrl !== value.teamavatar_url) {
-          await deleteImageKitFile(oldAvatarUrl);
+        if (
+          (oldAvatarUrl || oldAvatarFileId) &&
+          oldAvatarUrl !== value.teamavatar_url
+        ) {
+          await deleteImageKitFile(oldAvatarUrl, oldAvatarFileId);
         }
       }
 
@@ -1491,7 +1503,7 @@ const updateTeam = async (req, res) => {
         [teamId],
       );
 
-      const updatedTeam = updatedTeamResult.rows[0];
+      const { teamavatar_file_id, ...updatedTeam } = updatedTeamResult.rows[0];
 
       res.status(200).json({
         success: true,
