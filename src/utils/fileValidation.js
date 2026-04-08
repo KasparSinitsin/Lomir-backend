@@ -1,6 +1,10 @@
 // Validates file URLs before saving to database
 
 const https = require("https");
+const {
+  extractImageKitFilename,
+  isImageKitUrl,
+} = require("./imagekitUtils");
 
 // Centralized file size limits (in bytes) - keep in sync with frontend
 const FILE_LIMITS = {
@@ -84,35 +88,10 @@ const getExtensionFromUrl = (url) => {
 };
 
 /**
- * Extract Cloudinary public ID from URL
- * @param {string} url - The Cloudinary URL
- * @returns {string|null} - Public ID or null
- */
-const extractCloudinaryPublicId = (url) => {
-  if (!url) return null;
-
-  try {
-    // Match patterns like:
-    // https://res.cloudinary.com/xxx/image/upload/v123456789/folder/filename.jpg
-    // https://res.cloudinary.com/xxx/raw/upload/v123456789/folder/filename.pdf
-    const match = url.match(
-      /\/(?:image|raw|video)\/upload\/(?:v\d+\/)?(.+)\.[a-zA-Z0-9]+$/,
-    );
-    if (match && match[1]) {
-      return match[1];
-    }
-    return null;
-  } catch (error) {
-    console.warn(`[FILE VALIDATION] Could not extract public ID from: ${url}`);
-    return null;
-  }
-};
-
-/**
- * Validate a Cloudinary URL for chat messages
- * @param {string} url - The Cloudinary URL
+ * Validate an ImageKit URL for chat messages
+ * @param {string} url - The ImageKit URL
  * @param {'chatImage' | 'chatFile'} type - Type of upload
- * @returns {Promise<{valid: boolean, error?: string, size?: number, publicId?: string}>}
+ * @returns {Promise<{valid: boolean, error?: string, size?: number, filename?: string}>}
  */
 const validateChatFileUrl = async (url, type = "chatImage") => {
   // Must have a URL
@@ -120,14 +99,17 @@ const validateChatFileUrl = async (url, type = "chatImage") => {
     return { valid: false, error: "Invalid file URL" };
   }
 
-  // Must be a Cloudinary URL
-  if (!url.includes("res.cloudinary.com")) {
-    console.warn(`[FILE VALIDATION] Rejected non-Cloudinary URL: ${url}`);
-    return { valid: false, error: "Files must be uploaded through our system" };
+  // Must be an ImageKit URL
+  if (!isImageKitUrl(url)) {
+    console.warn(`[FILE VALIDATION] Rejected non-ImageKit URL: ${url}`);
+    return { valid: false, error: "Files must be uploaded through Lomir" };
   }
 
-  // Extract public ID for later deletion
-  const publicId = extractCloudinaryPublicId(url);
+  const filename = extractImageKitFilename(url);
+
+  if (!filename) {
+    return { valid: false, error: "Invalid ImageKit file URL" };
+  }
 
   // Check file extension
   const extension = getExtensionFromUrl(url);
@@ -149,7 +131,7 @@ const validateChatFileUrl = async (url, type = "chatImage") => {
   // If we can't verify size, allow it but log a warning
   if (fileSize === null) {
     console.warn(`[FILE VALIDATION] Could not verify file size: ${url}`);
-    return { valid: true, warning: "Could not verify file size", publicId };
+    return { valid: true, warning: "Could not verify file size", filename };
   }
 
   const limit = FILE_LIMITS[type];
@@ -171,7 +153,7 @@ const validateChatFileUrl = async (url, type = "chatImage") => {
       `[FILE VALIDATION] Accepted ${type}: ${(fileSize / (1024 * 1024)).toFixed(2)}MB`,
     );
   }
-  return { valid: true, size: fileSize, publicId };
+  return { valid: true, size: fileSize, filename };
 };
 
 module.exports = {
@@ -179,5 +161,5 @@ module.exports = {
   ALLOWED_EXTENSIONS,
   getFileSizeFromUrl,
   validateChatFileUrl,
-  extractCloudinaryPublicId,
+  extractImageKitFilename,
 };

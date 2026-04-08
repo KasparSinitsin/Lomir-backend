@@ -23,7 +23,7 @@ Built with Node.js, Express, PostgreSQL (Neon), and Socket.IO.
 ## Features
 
 - **Authentication** - JWT-based registration, login, email verification, and password reset
-- **User Profiles** - CRUD with avatar uploads (Cloudinary), interest tags, and badge portfolios
+- **User Profiles** - CRUD with avatar uploads (ImageKit), interest tags, and badge portfolios
 - **Teams** - Create, join, manage members, assign roles, and archive teams
 - **Vacant Roles** - Post open positions on teams with desired tags, badges, and location preferences
 - **Matching Engine** - Score users against roles (and vice versa) using weighted tag/badge/distance criteria
@@ -31,6 +31,7 @@ Built with Node.js, Express, PostgreSQL (Neon), and Socket.IO.
 - **Chat** - Real-time direct and team group messaging via Socket.IO, including typing indicators and read receipts
 - **Badge System** - 30 badges across 5 categories; award badges to teammates with reasons and context
 - **Notifications** - In-app notifications for invitations, applications, badge awards, and messages
+- **Account Deletion** - Full transactional account deletion with impact preview, automatic team ownership transfer, role reopening, and "Former Lomir User" handling for preserved references
 - **Geocoding** - Postal code lookup via Nominatim with built-in fallback mapping
 
 ---
@@ -45,7 +46,7 @@ Built with Node.js, Express, PostgreSQL (Neon), and Socket.IO.
 | Real-time | Socket.IO |
 | Auth | JSON Web Tokens (jsonwebtoken, bcrypt) |
 | Validation | Joi |
-| File Uploads | Cloudinary + Multer |
+| File Uploads | ImageKit + Multer |
 | Email | Resend |
 | Scheduling | node-cron |
 
@@ -93,10 +94,10 @@ NODE_ENV=development
 JWT_SECRET=<your-jwt-secret>
 JWT_EXPIRES_IN=7d
 
-# Cloudinary (image uploads)
-CLOUDINARY_CLOUD_NAME=<cloud-name>
-CLOUDINARY_API_KEY=<api-key>
-CLOUDINARY_API_SECRET=<api-secret>
+# ImageKit (image/file uploads)
+IMAGEKIT_PUBLIC_KEY=<your-public-key>
+IMAGEKIT_PRIVATE_KEY=<your-private-key>
+IMAGEKIT_URL_ENDPOINT=https://ik.imagekit.io/<your-id>
 
 # Resend (email service)
 RESEND_API_KEY=<resend-api-key>
@@ -111,7 +112,7 @@ SKIP_EMAIL_VERIFICATION=true
 # TURNSTILE_SECRET_KEY=<turnstile-secret-key>
 ```
 
-> Get the actual values from the project owner.
+> Get the ImageKit values from the project owner.
 
 ### 4. Run the server
 
@@ -146,6 +147,7 @@ Lomir-backend/
 |  |- server.js               # HTTP server + Socket.IO setup
 |  |- config/
 |  |  |- database.js          # PostgreSQL connection pool (Neon)
+|  |  |- imagekit.js          # ImageKit client configuration
 |  |- controllers/
 |  |  |- authController.js
 |  |  |- userController.js
@@ -167,6 +169,7 @@ Lomir-backend/
 |  |  |- messageRoutes.js
 |  |  |- notificationRoutes.js
 |  |  |- matchingRoutes.js
+|  |  |- imagekitRoutes.js
 |  |  |- geocodingRoutes.js
 |  |  |- api/
 |  |  |  |- tags.js
@@ -174,6 +177,7 @@ Lomir-backend/
 |  |  |- auth.js             # JWT authentication middleware
 |  |  |- rateLimiter.js      # Rate limiting for auth endpoints
 |  |- utils/
+|  |  |- imagekitUtils.js
 |  |  |- fileValidation.js
 |  |  |- jwtUtils.js
 |  |  |- matchingScorer.js   # Shared scoring utilities
@@ -183,6 +187,9 @@ Lomir-backend/
 |  |- database/
 |  |  |- migrations/
 |- scripts/                  # SQL seed and migration scripts
+|- test/                     # Controller unit tests
+|  |- userController.deleteUser.test.js
+|  |- userController.deletionPreview.test.js
 |- .env                      # Environment variables (not committed)
 |- package.json
 |- README.md
@@ -197,7 +204,7 @@ All routes are prefixed with `/api`.
 | Prefix | Description |
 |---|---|
 | `/api/auth` | Register, login, email verification, password reset |
-| `/api/users` | User CRUD, tags, badges, avatar |
+| `/api/users` | User CRUD, tags, badges, avatar, account deletion with preview |
 | `/api/teams` | Team CRUD, members, applications, invitations, badge awards |
 | `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management |
 | `/api/search` | Global search with tag/badge/location/role filtering |
@@ -205,6 +212,7 @@ All routes are prefixed with `/api`.
 | `/api/badges` | Badge catalog and awarding |
 | `/api/messages` | Direct and team message history |
 | `/api/notifications` | User notifications |
+| `/api/imagekit` | Auth params for client-side ImageKit uploads |
 | `/api/tags` | Tag catalog (structured by category) |
 | `/api/geocoding` | Postal code -> city/country/coordinates lookup |
 
@@ -224,6 +232,9 @@ The server uses Socket.IO for real-time features. Clients authenticate via JWT t
 | `message:status` | Server -> Client | Read receipt notification |
 | `typing:start` / `typing:stop` | Bidirectional | Typing indicators |
 | `users:online` | Server -> Client | Updated list of online user IDs |
+| `team:member_left` | Server -> Client | Emitted when a user is deleted, to each team they were in |
+| `conversation:deleted` | Server -> Client | Emitted to DM partners when a user is deleted |
+| `notification:new` | Server -> Client | Emitted for ownership transfers, role reopenings, and team dissolutions |
 
 ---
 
