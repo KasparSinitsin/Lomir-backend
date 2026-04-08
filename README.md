@@ -23,7 +23,7 @@ Built with Node.js, Express, PostgreSQL (Neon), and Socket.IO.
 ## Features
 
 - **Authentication** - JWT-based registration, login, email verification, and password reset
-- **User Profiles** - CRUD with avatar uploads (Cloudinary), interest tags, and badge portfolios
+- **User Profiles** - CRUD with avatar uploads (ImageKit), interest tags, and badge portfolios
 - **Teams** - Create, join, manage members, assign roles, and archive teams
 - **Vacant Roles** - Post open positions on teams with desired tags, badges, and location preferences
 - **Matching Engine** - Score users against roles (and vice versa) using weighted tag/badge/distance criteria
@@ -46,7 +46,7 @@ Built with Node.js, Express, PostgreSQL (Neon), and Socket.IO.
 | Real-time | Socket.IO |
 | Auth | JSON Web Tokens (jsonwebtoken, bcrypt) |
 | Validation | Joi |
-| File Uploads | Cloudinary + Multer |
+| File Uploads | ImageKit + Multer |
 | Email | Resend |
 | Scheduling | node-cron |
 
@@ -94,10 +94,10 @@ NODE_ENV=development
 JWT_SECRET=<your-jwt-secret>
 JWT_EXPIRES_IN=7d
 
-# Cloudinary (image uploads)
-CLOUDINARY_CLOUD_NAME=<cloud-name>
-CLOUDINARY_API_KEY=<api-key>
-CLOUDINARY_API_SECRET=<api-secret>
+# ImageKit (image/file uploads)
+IMAGEKIT_PUBLIC_KEY=<your-public-key>
+IMAGEKIT_PRIVATE_KEY=<your-private-key>
+IMAGEKIT_URL_ENDPOINT=https://ik.imagekit.io/<your-id>
 
 # Resend (email service)
 RESEND_API_KEY=<resend-api-key>
@@ -112,7 +112,7 @@ SKIP_EMAIL_VERIFICATION=true
 # TURNSTILE_SECRET_KEY=<turnstile-secret-key>
 ```
 
-> Get the actual values from the project owner.
+> Get the ImageKit values from the project owner.
 
 ### 4. Run the server
 
@@ -147,6 +147,7 @@ Lomir-backend/
 |  |- server.js               # HTTP server + Socket.IO setup
 |  |- config/
 |  |  |- database.js          # PostgreSQL connection pool (Neon)
+|  |  |- imagekit.js          # ImageKit client configuration
 |  |- controllers/
 |  |  |- authController.js
 |  |  |- userController.js
@@ -168,6 +169,7 @@ Lomir-backend/
 |  |  |- messageRoutes.js
 |  |  |- notificationRoutes.js
 |  |  |- matchingRoutes.js
+|  |  |- imagekitRoutes.js
 |  |  |- geocodingRoutes.js
 |  |  |- api/
 |  |  |  |- tags.js
@@ -175,6 +177,7 @@ Lomir-backend/
 |  |  |- auth.js             # JWT authentication middleware
 |  |  |- rateLimiter.js      # Rate limiting for auth endpoints
 |  |- utils/
+|  |  |- imagekitUtils.js
 |  |  |- fileValidation.js
 |  |  |- jwtUtils.js
 |  |  |- matchingScorer.js   # Shared scoring utilities
@@ -209,6 +212,7 @@ All routes are prefixed with `/api`.
 | `/api/badges` | Badge catalog and awarding |
 | `/api/messages` | Direct and team message history |
 | `/api/notifications` | User notifications |
+| `/api/imagekit` | Auth params for client-side ImageKit uploads |
 | `/api/tags` | Tag catalog (structured by category) |
 | `/api/geocoding` | Postal code -> city/country/coordinates lookup |
 

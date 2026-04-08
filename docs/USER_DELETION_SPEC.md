@@ -136,7 +136,7 @@ Both pending and resolved invitations are removed.
 | `messages` where `sender_id = userId AND team_id IS NULL` | **DELETE** |
 | `messages` where `receiver_id = userId AND team_id IS NULL` | **DELETE** |
 
-All DMs involving the user are removed. The other party loses the conversation. Cloudinary file attachments in these messages are left alone — existing 60-day expiration handles cleanup.
+All DMs involving the user are removed. The other party loses the conversation. ImageKit file attachments in these messages are left alone — existing 60-day expiration handles cleanup.
 
 ### 12. Team Chat Messages
 | Item | Action |
@@ -304,7 +304,7 @@ The `deleteUser` controller executes all operations in a **single database trans
 13. **DELETE the user row** — triggers automatic CASCADE/SET NULL for all remaining FKs
 
 **Phase F — Post-transaction cleanup (outside transaction):**
-14. **Delete Cloudinary avatar** (non-blocking, best-effort)
+14. **Delete ImageKit avatar** (non-blocking, best-effort)
 15. **Emit Socket.IO events**: `team:member_left`, `notification:new`, `conversation:deleted`
 
 ---
