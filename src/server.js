@@ -136,7 +136,6 @@ io.on("connection", (socket) => {
 
       // Variables to store file metadata
       let fileSize = null;
-      let cloudinaryPublicId = null;
       let fileExpiresAt = null;
 
       // Validate image URL and extract metadata
@@ -150,7 +149,6 @@ io.on("connection", (socket) => {
           return;
         }
         fileSize = validation.size || null;
-        cloudinaryPublicId = validation.publicId || null;
         // Set expiration to 60 days from now
         fileExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
       }
@@ -166,7 +164,6 @@ io.on("connection", (socket) => {
           return;
         }
         fileSize = validation.size || null;
-        cloudinaryPublicId = validation.publicId || null;
         // Set expiration to 60 days from now
         fileExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
       }
@@ -176,8 +173,8 @@ io.on("connection", (socket) => {
 
       if (type === "team") {
         messageResult = await db.query(
-          `INSERT INTO messages (sender_id, team_id, content, image_url, file_url, file_name, file_size, file_expires_at, cloudinary_public_id, sent_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+          `INSERT INTO messages (sender_id, team_id, content, image_url, file_url, file_name, file_size, file_expires_at, sent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
          RETURNING id, sender_id, team_id, content, image_url, file_url, file_name, file_size, file_expires_at, sent_at`,
           [
             userId,
@@ -188,7 +185,6 @@ io.on("connection", (socket) => {
             fileName || null,
             fileSize,
             fileExpiresAt,
-            cloudinaryPublicId,
           ],
         );
 
@@ -211,8 +207,8 @@ io.on("connection", (socket) => {
         io.to(`team:${conversationId}`).emit("message:received", message);
       } else {
         messageResult = await db.query(
-          `INSERT INTO messages (sender_id, receiver_id, content, image_url, file_url, file_name, file_size, file_expires_at, cloudinary_public_id, sent_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+          `INSERT INTO messages (sender_id, receiver_id, content, image_url, file_url, file_name, file_size, file_expires_at, sent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
          RETURNING id, sender_id, receiver_id, content, image_url, file_url, file_name, file_size, file_expires_at, sent_at`,
           [
             userId,
@@ -223,7 +219,6 @@ io.on("connection", (socket) => {
             fileName || null,
             fileSize,
             fileExpiresAt,
-            cloudinaryPublicId,
           ],
         );
 

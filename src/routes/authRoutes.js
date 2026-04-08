@@ -4,7 +4,7 @@ const router = express.Router();
 const authController = require("../controllers/authController");
 const auth = require("../middlewares/auth");
 const { authLimiter, registerLimiter } = require("../middlewares/rateLimiter");
-const upload = require("../middlewares/uploadMiddleware");
+const { upload } = require("../middlewares/uploadMiddleware");
 
 // Register a new user (with optional avatar upload)
 router.post(
