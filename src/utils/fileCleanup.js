@@ -1,9 +1,8 @@
 // Utilities for cleaning up expired chat files
 
 const db = require("../config/database");
-const imagekit = require("../config/imagekit");
 const {
-  extractImageKitFilename,
+  deleteImageKitFile,
   isImageKitUrl,
 } = require("./imagekitUtils");
 
@@ -13,47 +12,7 @@ const {
  * @returns {Promise<boolean>} - Success status
  */
 const deleteFromImageKit = async (url) => {
-  try {
-    if (!isImageKitUrl(url)) {
-      return false;
-    }
-
-    const filename = extractImageKitFilename(url);
-
-    if (!filename) {
-      return false;
-    }
-
-    const response = await fetch(
-      `https://api.imagekit.io/v1/files?searchQuery=${encodeURIComponent(`name="${filename}"`)}`,
-      {
-        headers: {
-          Authorization:
-            "Basic " +
-            Buffer.from(`${process.env.IMAGEKIT_PRIVATE_KEY}:`).toString(
-              "base64",
-            ),
-        },
-      },
-    );
-
-    if (!response.ok) {
-      console.error("[CLEANUP] Search API error:", response.status);
-      return false;
-    }
-
-    const files = await response.json();
-
-    if (!Array.isArray(files) || files.length === 0) {
-      return false;
-    }
-
-    await imagekit.files.delete(files[0].fileId);
-    return true;
-  } catch (error) {
-    console.error(`[CLEANUP] Error deleting from ImageKit:`, error);
-    return false;
-  }
+  return await deleteImageKitFile(url);
 };
 
 /**
