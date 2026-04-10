@@ -630,7 +630,7 @@ const getUserPendingApplications = async (req, res) => {
     vr.state AS role_state, vr.is_remote AS role_is_remote,
     vr.latitude AS role_latitude, vr.longitude AS role_longitude,
     vr.max_distance_km AS role_max_distance_km, vr.status AS role_status,
-    vr.filled_by AS role_filled_by,
+    vr.filled_by AS role_filled_by, vr.is_synthetic AS role_is_synthetic,
     fu.id AS role_filled_by_user_id,
     fu.first_name AS role_filled_by_user_first_name,
     fu.last_name AS role_filled_by_user_last_name,
@@ -1564,14 +1564,14 @@ const getTeamApplications = async (req, res) => {
         vr.state AS role_state, vr.is_remote AS role_is_remote,
         vr.latitude AS role_latitude, vr.longitude AS role_longitude,
         vr.max_distance_km AS role_max_distance_km, vr.status AS role_status,
-        vr.filled_by AS role_filled_by,
+        vr.filled_by AS role_filled_by, vr.is_synthetic AS role_is_synthetic,
         fu.id AS role_filled_by_user_id,
         fu.first_name AS role_filled_by_user_first_name,
         fu.last_name AS role_filled_by_user_last_name,
         fu.username AS role_filled_by_user_username,
         fu.avatar_url AS role_filled_by_user_avatar_url,
         u.id as applicant_id, u.username, u.first_name, u.last_name,
-        u.bio, u.avatar_url, u.postal_code, u.city, u.country, u.state,
+        u.bio, u.avatar_url, u.postal_code, u.is_synthetic AS applicant_is_synthetic, u.city, u.country, u.state,
         u.latitude AS applicant_latitude, u.longitude AS applicant_longitude
        FROM team_applications ta
        JOIN users u ON ta.applicant_id = u.id
@@ -1713,6 +1713,7 @@ const getTeamApplications = async (req, res) => {
             });
           })()
         : null,
+      role_is_synthetic: row.role_is_synthetic === true,
       applicant: {
         id: row.applicant_id,
         username: row.username,
@@ -1721,6 +1722,7 @@ const getTeamApplications = async (req, res) => {
         bio: row.bio,
         avatar_url: row.avatar_url,
         postal_code: row.postal_code,
+        is_synthetic: row.applicant_is_synthetic === true,
       },
     }));
 
