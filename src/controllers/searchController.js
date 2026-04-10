@@ -290,6 +290,7 @@ async function fetchOpenRoleSearchResults({
       t.teamavatar_url AS team_avatar_url,
       t.city AS team_city,
       t.country AS team_country,
+      t.is_synthetic AS team_is_synthetic,
       t.is_remote AS team_is_remote
     FROM team_vacant_roles vr
     JOIN teams t ON vr.team_id = t.id
@@ -767,6 +768,7 @@ const searchController = {
           t.name,
           t.description,
           t.is_public,
+          t.is_synthetic,
           t.max_members,
           t.owner_id,
           t.teamavatar_url as "teamavatarUrl",
@@ -960,7 +962,7 @@ ${teamDistanceSelect}
 
       teamQuery += `
         GROUP BY
-          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote${teamDistanceGroupBy}
+          t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote${teamDistanceGroupBy}
         ORDER BY ${teamOrderBy}
       `;
 
@@ -1879,6 +1881,7 @@ ${teamDistanceSelect}
           t.name,
           t.description,
           t.is_public,
+          t.is_synthetic,
           t.max_members,
           t.owner_id,
           t.teamavatar_url as "teamavatarUrl",
@@ -2061,7 +2064,7 @@ ${teamDistanceSelect}
 
       teamQuery += `
         GROUP BY
-          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote${teamDistanceGroupBy}
+          t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote${teamDistanceGroupBy}
         ORDER BY ${teamOrderBy}
       `;
 
@@ -2686,6 +2689,7 @@ ${teamDistanceSelect}
           t.name,
           t.description,
           t.is_public,
+          t.is_synthetic,
           t.max_members,
           t.owner_id,
           COUNT(tm.id) as member_count
@@ -2735,7 +2739,7 @@ ${teamDistanceSelect}
         paramIndex++;
       }
 
-      searchQuery += ` GROUP BY t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id `;
+      searchQuery += ` GROUP BY t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id `;
       searchQuery += ` ORDER BY t.name ASC LIMIT 20`;
 
       const result = await db.pool.query(searchQuery, queryParams);
@@ -2768,6 +2772,7 @@ ${teamDistanceSelect}
           t.name,
           t.description,
           t.is_public,
+          t.is_synthetic,
           t.max_members,
           t.owner_id,
           COUNT(tm.id) as member_count
@@ -2797,7 +2802,7 @@ ${teamDistanceSelect}
         searchQuery += ` AND t.is_public = TRUE`;
       }
 
-      searchQuery += ` GROUP BY t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id `;
+      searchQuery += ` GROUP BY t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id `;
       searchQuery += ` ORDER BY t.name ASC LIMIT 20`;
 
       const result = await db.pool.query(searchQuery, queryParams);
@@ -2837,6 +2842,7 @@ ${teamDistanceSelect}
           t.name,
           t.description,
           t.is_public,
+          t.is_synthetic,
           t.max_members,
           t.owner_id,
           t.latitude,
@@ -2877,7 +2883,7 @@ ${teamDistanceSelect}
       }
 
       searchQuery += `
-        GROUP BY t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.latitude, t.longitude
+        GROUP BY t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id, t.latitude, t.longitude
         HAVING (
           6371 * acos(
             cos(radians($1)) * cos(radians(t.latitude)) *
