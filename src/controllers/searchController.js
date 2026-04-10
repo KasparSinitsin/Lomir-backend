@@ -1128,6 +1128,7 @@ ${teamDistanceSelect}
           u.state,
           u.avatar_url,
           u.is_public,
+          u.is_synthetic,
           u.created_at,
           u.updated_at,
           u.latitude,
@@ -1327,7 +1328,7 @@ ${teamDistanceSelect}
 
       userQuery += `
         GROUP BY
-          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.country, u.state, u.avatar_url, u.is_public, u.created_at, u.updated_at, u.latitude, u.longitude${userDistanceGroupBy}
+          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.country, u.state, u.avatar_url, u.is_public, u.is_synthetic, u.created_at, u.updated_at, u.latitude, u.longitude${userDistanceGroupBy}
         ORDER BY ${userOrderBy}
       `;
 
@@ -2206,6 +2207,7 @@ ${teamDistanceSelect}
           u.state,
           u.avatar_url,
           u.is_public,
+          u.is_synthetic,
           u.created_at,
           u.updated_at,
           u.latitude,
