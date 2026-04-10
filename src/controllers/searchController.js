@@ -283,6 +283,7 @@ async function fetchOpenRoleSearchResults({
       vr.longitude,
       vr.max_distance_km,
       vr.is_remote,
+      vr.is_synthetic,
       vr.status,
       vr.created_at,
       vr.team_id,

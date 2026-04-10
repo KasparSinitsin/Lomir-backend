@@ -316,6 +316,14 @@ const createVacantRole = async (req, res) => {
       });
     }
 
+    // Check if parent team is synthetic (new roles inherit this flag)
+    const teamSyntheticCheck = await db.pool.query(
+      `SELECT is_synthetic FROM teams WHERE id = $1`,
+      [teamId],
+    );
+    const isTeamSynthetic =
+      teamSyntheticCheck.rows[0]?.is_synthetic === true;
+
     const {
       role_name,
       bio,
@@ -375,8 +383,9 @@ const createVacantRole = async (req, res) => {
         `INSERT INTO team_vacant_roles (
           team_id, created_by, role_name, bio,
           postal_code, city, country, state,
-          latitude, longitude, max_distance_km, is_remote
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          latitude, longitude, max_distance_km, is_remote,
+          is_synthetic
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING *`,
         [
           teamId,
@@ -391,6 +400,7 @@ const createVacantRole = async (req, res) => {
           finalLongitude,
           finalMaxDistance,
           isRemote,
+          isTeamSynthetic,
         ],
       );
 
