@@ -1571,7 +1571,7 @@ const getTeamApplications = async (req, res) => {
         fu.username AS role_filled_by_user_username,
         fu.avatar_url AS role_filled_by_user_avatar_url,
         u.id as applicant_id, u.username, u.first_name, u.last_name,
-        u.bio, u.avatar_url, u.postal_code, u.city, u.country, u.state,
+        u.bio, u.avatar_url, u.postal_code, u.is_synthetic AS applicant_is_synthetic, u.city, u.country, u.state,
         u.latitude AS applicant_latitude, u.longitude AS applicant_longitude
        FROM team_applications ta
        JOIN users u ON ta.applicant_id = u.id
@@ -1722,6 +1722,7 @@ const getTeamApplications = async (req, res) => {
         bio: row.bio,
         avatar_url: row.avatar_url,
         postal_code: row.postal_code,
+        is_synthetic: row.applicant_is_synthetic === true,
       },
     }));
 

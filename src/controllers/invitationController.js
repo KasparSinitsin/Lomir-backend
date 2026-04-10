@@ -575,7 +575,7 @@ const getTeamSentInvitations = async (req, res) => {
     vr.max_distance_km as role_max_distance_km,
     vr.status as role_status, vr.is_synthetic as role_is_synthetic,
     u.id as invitee_id, u.username, u.first_name, u.last_name,
-    u.avatar_url, u.bio, u.postal_code,
+    u.avatar_url, u.bio, u.postal_code, u.is_synthetic as invitee_is_synthetic,
     u.latitude as invitee_latitude, u.longitude as invitee_longitude,
     inv.id as inviter_id,
     inv.username as inviter_username,
@@ -733,6 +733,7 @@ const getTeamSentInvitations = async (req, res) => {
         avatar_url: row.avatar_url,
         bio: row.bio,
         postal_code: row.postal_code,
+        is_synthetic: row.invitee_is_synthetic === true,
       },
       inviter: {
         id: row.inviter_id,
