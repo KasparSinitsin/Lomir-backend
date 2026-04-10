@@ -50,6 +50,7 @@ const serializeEmbeddedVacantRole = (row, extraFields = {}) => ({
   longitude: row.role_longitude,
   max_distance_km: row.role_max_distance_km,
   status: row.role_status,
+  is_synthetic: row.role_is_synthetic === true,
   filled_by: row.role_filled_by,
   filled_by_user: buildFilledByUserFromRow(row, "role_"),
   ...extraFields,

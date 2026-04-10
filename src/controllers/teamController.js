@@ -630,7 +630,7 @@ const getUserPendingApplications = async (req, res) => {
     vr.state AS role_state, vr.is_remote AS role_is_remote,
     vr.latitude AS role_latitude, vr.longitude AS role_longitude,
     vr.max_distance_km AS role_max_distance_km, vr.status AS role_status,
-    vr.filled_by AS role_filled_by,
+    vr.filled_by AS role_filled_by, vr.is_synthetic AS role_is_synthetic,
     fu.id AS role_filled_by_user_id,
     fu.first_name AS role_filled_by_user_first_name,
     fu.last_name AS role_filled_by_user_last_name,
@@ -1564,7 +1564,7 @@ const getTeamApplications = async (req, res) => {
         vr.state AS role_state, vr.is_remote AS role_is_remote,
         vr.latitude AS role_latitude, vr.longitude AS role_longitude,
         vr.max_distance_km AS role_max_distance_km, vr.status AS role_status,
-        vr.filled_by AS role_filled_by,
+        vr.filled_by AS role_filled_by, vr.is_synthetic AS role_is_synthetic,
         fu.id AS role_filled_by_user_id,
         fu.first_name AS role_filled_by_user_first_name,
         fu.last_name AS role_filled_by_user_last_name,
@@ -1713,6 +1713,7 @@ const getTeamApplications = async (req, res) => {
             });
           })()
         : null,
+      role_is_synthetic: row.role_is_synthetic === true,
       applicant: {
         id: row.applicant_id,
         username: row.username,
