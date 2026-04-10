@@ -158,6 +158,7 @@ const getMatchingRoles = async (req, res) => {
                 t.description AS team_description,
                 t.teamavatar_url,
                 t.is_public AS team_is_public,
+                t.is_synthetic AS team_is_synthetic,
                 t.is_remote AS team_is_remote,
                 (SELECT COUNT(*) FROM team_members WHERE team_id = vr.team_id) AS team_member_count,
                 t.max_members AS team_max_members
@@ -172,6 +173,7 @@ const getMatchingRoles = async (req, res) => {
                 t.description AS team_description,
                 t.teamavatar_url,
                 t.is_public AS team_is_public,
+                t.is_synthetic AS team_is_synthetic,
                 t.is_remote AS team_is_remote,
                 (SELECT COUNT(*) FROM team_members WHERE team_id = vr.team_id) AS team_member_count,
                 t.max_members AS team_max_members
