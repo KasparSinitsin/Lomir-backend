@@ -231,6 +231,12 @@ const createTeam = async (req, res) => {
 
     await client.query("BEGIN");
 
+    const ownerSyntheticResult = await client.query(
+      `SELECT is_synthetic FROM users WHERE id = $1`,
+      [ownerId],
+    );
+    const isOwnerSynthetic = ownerSyntheticResult.rows[0].is_synthetic;
+
     // Ensure is_public is a proper boolean
     const isPublicBoolean =
       value.is_public === true ||
@@ -252,8 +258,9 @@ const createTeam = async (req, res) => {
     country,
     latitude,
     longitude,
-    teamavatar_url
-  ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+    teamavatar_url,
+    is_synthetic
+  ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
   RETURNING *
   `,
       [
@@ -270,6 +277,7 @@ const createTeam = async (req, res) => {
         value.is_remote ? null : (value.latitude ?? null), // $11
         value.is_remote ? null : (value.longitude ?? null), // $12
         value.teamavatar_url ?? null, // $13
+        isOwnerSynthetic, // $14
       ],
     );
 
