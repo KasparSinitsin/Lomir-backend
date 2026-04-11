@@ -27,11 +27,12 @@ const teamModel = {
     is_remote,
     postal_code,
     city,
-    country
-  ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    country,
+    is_synthetic
+  ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
   RETURNING
     id, name, description, is_public, max_members,
-    teamavatar_url, is_remote, postal_code, city, country
+    teamavatar_url, is_remote, postal_code, city, country, is_synthetic
 `,
         [
           teamDetails.name,
@@ -43,6 +44,7 @@ const teamModel = {
           teamDetails.is_remote ? null : (teamDetails.postal_code ?? null),
           teamDetails.is_remote ? null : (teamDetails.city ?? null),
           teamDetails.is_remote ? null : (teamDetails.country ?? null),
+          teamDetails.is_synthetic,
         ],
       );
 
