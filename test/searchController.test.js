@@ -60,6 +60,33 @@ function createUser(id, username) {
   };
 }
 
+function createRole(id, roleName, overrides = {}) {
+  return {
+    id,
+    role_name: roleName,
+    bio: `${roleName} bio`,
+    city: null,
+    country: "DE",
+    state: null,
+    postal_code: null,
+    latitude: null,
+    longitude: null,
+    max_distance_km: null,
+    is_remote: false,
+    is_synthetic: false,
+    status: "open",
+    created_at: new Date("2026-01-01T00:00:00.000Z").toISOString(),
+    team_id: 100 + id,
+    team_name: `Team ${roleName}`,
+    team_avatar_url: null,
+    team_city: null,
+    team_country: "DE",
+    team_is_synthetic: false,
+    team_is_remote: false,
+    ...overrides,
+  };
+}
+
 function buildQueryStub() {
   const calls = [];
   const baselineTeams = [createTeam(1, "Alpha"), createTeam(2, "Beta")];
@@ -243,6 +270,109 @@ function buildTeamMatchSortQueryStub() {
   return { query };
 }
 
+function buildDemoDataQueryStub() {
+  const calls = [];
+  const teams = [
+    { ...createTeam(1, "Demo Team"), is_synthetic: true },
+    { ...createTeam(2, "Real Team"), is_synthetic: false },
+  ];
+  const users = [
+    { ...createUser(11, "demo-user"), is_synthetic: true },
+    { ...createUser(12, "real-user"), is_synthetic: false },
+  ];
+  const roles = [
+    createRole(21, "Demo Role", {
+      is_synthetic: true,
+      team_id: 1,
+      team_name: "Demo Team",
+      team_is_synthetic: true,
+    }),
+    createRole(22, "Real Role", {
+      is_synthetic: false,
+      team_id: 2,
+      team_name: "Real Team",
+      team_is_synthetic: false,
+    }),
+  ];
+
+  const query = async (sql, params = []) => {
+    calls.push({ sql, params });
+
+    const teamRows = sql.includes("t.is_synthetic IS NOT TRUE")
+      ? teams.filter((team) => team.is_synthetic !== true)
+      : teams;
+    const userRows = sql.includes("u.is_synthetic IS NOT TRUE")
+      ? users.filter((user) => user.is_synthetic !== true)
+      : users;
+    const roleRows = sql.includes("vr.is_synthetic IS NOT TRUE")
+      ? roles.filter((role) => role.is_synthetic !== true)
+      : roles;
+
+    if (sql.includes("FROM teams t") && sql.includes("as total")) {
+      return { rows: [{ total: String(teamRows.length) }] };
+    }
+
+    if (sql.includes("FROM users u") && sql.includes("as total")) {
+      return { rows: [{ total: String(userRows.length) }] };
+    }
+
+    if (
+      sql.includes("SELECT COUNT(DISTINCT vr.id) AS total") &&
+      sql.includes("FROM team_vacant_roles vr")
+    ) {
+      return { rows: [{ total: String(roleRows.length) }] };
+    }
+
+    if (sql.includes("FROM teams t") && sql.includes('t.teamavatar_url as "teamavatarUrl"')) {
+      const limit = Number(params.at(-2));
+      const offset = Number(params.at(-1));
+      return {
+        rows:
+          Number.isFinite(limit) && Number.isFinite(offset)
+            ? teamRows.slice(offset, offset + limit)
+            : teamRows,
+      };
+    }
+
+    if (sql.includes("FROM users u") && sql.includes("u.username")) {
+      const limit = Number(params.at(-2));
+      const offset = Number(params.at(-1));
+      return {
+        rows:
+          Number.isFinite(limit) && Number.isFinite(offset)
+            ? userRows.slice(offset, offset + limit)
+            : userRows,
+      };
+    }
+
+    if (
+      sql.includes("FROM team_vacant_roles vr") &&
+      sql.includes("t.teamavatar_url AS team_avatar_url")
+    ) {
+      const limit = Number(params.at(-2));
+      const offset = Number(params.at(-1));
+      return {
+        rows:
+          Number.isFinite(limit) && Number.isFinite(offset)
+            ? roleRows.slice(offset, offset + limit)
+            : roleRows,
+      };
+    }
+
+    if (sql.includes("FROM team_vacant_role_tags vrt")) {
+      return { rows: [] };
+    }
+
+    if (sql.includes("FROM team_vacant_role_badges vrb")) {
+      return { rows: [] };
+    }
+
+    throw new Error(`Unexpected SQL in demo data test stub: ${sql}`);
+  };
+
+  return { query, calls };
+}
+
 function hasTeamExclusion(calls) {
   return calls.some(
     ({ sql }) =>
@@ -254,6 +384,30 @@ function hasTeamExclusion(calls) {
 
 function countTeamQueries(calls) {
   return calls.filter(({ sql }) => sql.includes("FROM teams t")).length;
+}
+
+function hasTeamSyntheticFilter(calls) {
+  return calls.some(
+    ({ sql }) =>
+      sql.includes("FROM teams t") &&
+      sql.includes("t.is_synthetic IS NOT TRUE"),
+  );
+}
+
+function hasUserSyntheticFilter(calls) {
+  return calls.some(
+    ({ sql }) =>
+      sql.includes("FROM users u") &&
+      sql.includes("u.is_synthetic IS NOT TRUE"),
+  );
+}
+
+function hasRoleSyntheticFilter(calls) {
+  return calls.some(
+    ({ sql }) =>
+      sql.includes("FROM team_vacant_roles vr") &&
+      sql.includes("vr.is_synthetic IS NOT TRUE"),
+  );
 }
 
 test.afterEach(() => {
@@ -437,6 +591,114 @@ test("globalSearch ignores excludeOwnTeams for unauthenticated requests", async 
   assert.equal(res.body.pagination.totalTeams, 2);
   assert.equal(res.body.pagination.totalUsers, 2);
   assert.equal(hasTeamExclusion(calls), false);
+});
+
+test("getAllUsersAndTeams with includeDemoData=false excludes synthetic rows", async () => {
+  const { query, calls } = buildDemoDataQueryStub();
+  db.pool.query = query;
+
+  const req = {
+    query: { page: "1", limit: "10", searchType: "all", includeDemoData: "false" },
+    user: null,
+  };
+  const res = createResponse();
+
+  await searchController.getAllUsersAndTeams(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.pagination.totalTeams, 1);
+  assert.equal(res.body.pagination.totalUsers, 1);
+  assert.equal(res.body.pagination.totalRoles, 1);
+  assert.equal(res.body.pagination.totalItems, 2);
+  assert.deepEqual(
+    res.body.data.teams.map((team) => team.id),
+    [2],
+  );
+  assert.deepEqual(
+    res.body.data.users.map((user) => user.id),
+    [12],
+  );
+  assert.deepEqual(
+    res.body.data.roles.map((role) => role.id),
+    [22],
+  );
+  assert.equal(hasTeamSyntheticFilter(calls), true);
+  assert.equal(hasUserSyntheticFilter(calls), true);
+  assert.equal(hasRoleSyntheticFilter(calls), true);
+});
+
+test("globalSearch with includeDemoData=false excludes synthetic rows", async () => {
+  const { query, calls } = buildDemoDataQueryStub();
+  db.pool.query = query;
+
+  const req = {
+    query: {
+      query: "de",
+      page: "1",
+      limit: "10",
+      searchType: "all",
+      includeDemoData: "false",
+    },
+    user: null,
+  };
+  const res = createResponse();
+
+  await searchController.globalSearch(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.pagination.totalTeams, 1);
+  assert.equal(res.body.pagination.totalUsers, 1);
+  assert.equal(res.body.pagination.totalRoles, 1);
+  assert.equal(res.body.pagination.totalItems, 2);
+  assert.deepEqual(
+    res.body.data.teams.map((team) => team.id),
+    [2],
+  );
+  assert.deepEqual(
+    res.body.data.users.map((user) => user.id),
+    [12],
+  );
+  assert.deepEqual(
+    res.body.data.roles.map((role) => role.id),
+    [22],
+  );
+  assert.equal(hasTeamSyntheticFilter(calls), true);
+  assert.equal(hasUserSyntheticFilter(calls), true);
+  assert.equal(hasRoleSyntheticFilter(calls), true);
+});
+
+test("default search behavior includes synthetic rows when includeDemoData is omitted", async () => {
+  const { query, calls } = buildDemoDataQueryStub();
+  db.pool.query = query;
+
+  const req = {
+    query: { page: "1", limit: "10", searchType: "all" },
+    user: null,
+  };
+  const res = createResponse();
+
+  await searchController.getAllUsersAndTeams(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.pagination.totalTeams, 2);
+  assert.equal(res.body.pagination.totalUsers, 2);
+  assert.equal(res.body.pagination.totalRoles, 2);
+  assert.equal(res.body.pagination.totalItems, 4);
+  assert.deepEqual(
+    res.body.data.teams.map((team) => team.id),
+    [1, 2],
+  );
+  assert.deepEqual(
+    res.body.data.users.map((user) => user.id),
+    [11, 12],
+  );
+  assert.deepEqual(
+    res.body.data.roles.map((role) => role.id),
+    [21, 22],
+  );
+  assert.equal(hasTeamSyntheticFilter(calls), false);
+  assert.equal(hasUserSyntheticFilter(calls), false);
+  assert.equal(hasRoleSyntheticFilter(calls), false);
 });
 
 test("getAllUsersAndTeams returns team match scores that stay consistent with match_details", async () => {

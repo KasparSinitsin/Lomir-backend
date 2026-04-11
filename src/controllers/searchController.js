@@ -24,6 +24,10 @@ function parseBooleanFlag(value) {
   return typeof value === "string" && value.toLowerCase() === "true";
 }
 
+function parseIncludeDemoData(value) {
+  return !(typeof value === "string" && value.toLowerCase() === "false");
+}
+
 function parseRoleSort(value) {
   if (typeof value !== "string") return "newest";
 
@@ -248,12 +252,13 @@ async function fetchOpenRoleSearchResults({
   page = 1,
   limit = 20,
   userId = null,
+  includeDemoData = true,
 }) {
   const searchValue = typeof query === "string" ? query.trim() : query;
   const offset = (page - 1) * limit;
   const isMatchSort = sort === "match" && !!userId;
 
-  const roleCountQuery = `
+  let roleCountQuery = `
     SELECT COUNT(DISTINCT vr.id) AS total
     FROM team_vacant_roles vr
     JOIN teams t ON vr.team_id = t.id
@@ -269,6 +274,12 @@ async function fetchOpenRoleSearchResults({
         OR tg.name ILIKE '%' || $1 || '%'
       )
   `;
+
+  if (!includeDemoData) {
+    roleCountQuery += `
+      AND vr.is_synthetic IS NOT TRUE
+    `;
+  }
 
   let roleDataQuery = `
     SELECT
@@ -308,6 +319,15 @@ async function fetchOpenRoleSearchResults({
           WHERE vrt2.role_id = vr.id AND tg2.name ILIKE '%' || $1 || '%'
         )
       )
+  `;
+
+  if (!includeDemoData) {
+    roleDataQuery += `
+      AND vr.is_synthetic IS NOT TRUE
+    `;
+  }
+
+  roleDataQuery += `
     ORDER BY ${buildRoleOrderBy(sort, direction)}
   `;
 
@@ -467,6 +487,7 @@ const searchController = {
       const includeUsers = searchType === "all" || searchType === "users";
       const includeRoles = searchType === "roles";
       const openRolesOnly = parseBooleanFlag(req.query.openRolesOnly);
+      const includeDemoData = parseIncludeDemoData(req.query.includeDemoData);
       const excludeOwnTeams =
         parseBooleanFlag(req.query.excludeOwnTeams) && !!userId;
       const excludeTeamId = req.query.excludeTeamId
@@ -551,6 +572,7 @@ const searchController = {
           page,
           limit,
           userId,
+          includeDemoData,
         });
 
         return res.status(200).json({
@@ -664,6 +686,10 @@ const searchController = {
         teamCountParams.push(userId);
       } else {
         teamCountQuery += ` AND t.is_public = TRUE`;
+      }
+
+      if (!includeDemoData) {
+        teamCountQuery += ` AND t.is_synthetic IS NOT TRUE`;
       }
 
       if (openRolesOnly) {
@@ -849,6 +875,10 @@ ${teamDistanceSelect}
         teamParamIndex++;
       } else {
         teamQuery += ` AND t.is_public = TRUE`;
+      }
+
+      if (!includeDemoData) {
+        teamQuery += ` AND t.is_synthetic IS NOT TRUE`;
       }
 
       if (openRolesOnly) {
@@ -1039,6 +1069,10 @@ ${teamDistanceSelect}
         userCountParams.push(userId);
       } else {
         userCountQuery += ` AND u.is_public = TRUE`;
+      }
+
+      if (!includeDemoData) {
+        userCountQuery += ` AND u.is_synthetic IS NOT TRUE`;
       }
 
       if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
@@ -1244,6 +1278,10 @@ ${teamDistanceSelect}
         userParamIndex++;
       } else {
         userQuery += ` AND u.is_public = TRUE`;
+      }
+
+      if (!includeDemoData) {
+        userQuery += ` AND u.is_synthetic IS NOT TRUE`;
       }
 
       if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
@@ -1559,6 +1597,7 @@ ${teamDistanceSelect}
             page,
             limit,
             userId,
+            includeDemoData,
           }));
       }
 
@@ -1633,6 +1672,7 @@ ${teamDistanceSelect}
       const includeUsers = searchType === "all" || searchType === "users";
       const includeRoles = searchType === "roles";
       const openRolesOnly = parseBooleanFlag(req.query.openRolesOnly);
+      const includeDemoData = parseIncludeDemoData(req.query.includeDemoData);
       const excludeOwnTeams =
         parseBooleanFlag(req.query.excludeOwnTeams) && !!userId;
       const excludeTeamId = req.query.excludeTeamId
@@ -1704,6 +1744,7 @@ ${teamDistanceSelect}
           page,
           limit,
           userId,
+          includeDemoData,
         });
 
         return res.status(200).json({
@@ -1760,6 +1801,10 @@ ${teamDistanceSelect}
         teamCountParams.push(userId);
       } else {
         teamCountQuery += ` AND t.is_public = TRUE`;
+      }
+
+      if (!includeDemoData) {
+        teamCountQuery += ` AND t.is_synthetic IS NOT TRUE`;
       }
 
       if (openRolesOnly) {
@@ -1933,6 +1978,10 @@ ${teamDistanceSelect}
         teamQuery += ` AND t.is_public = TRUE`;
       }
 
+      if (!includeDemoData) {
+        teamQuery += ` AND t.is_synthetic IS NOT TRUE`;
+      }
+
       if (openRolesOnly) {
         teamQuery += `
           AND EXISTS (
@@ -2095,6 +2144,10 @@ ${teamDistanceSelect}
         userCountParams.push(userId);
       } else {
         userCountQuery += ` AND u.is_public = TRUE`;
+      }
+
+      if (!includeDemoData) {
+        userCountQuery += ` AND u.is_synthetic IS NOT TRUE`;
       }
 
       if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
@@ -2277,6 +2330,10 @@ ${teamDistanceSelect}
         userParamIndex++;
       } else {
         userQuery += ` AND u.is_public = TRUE`;
+      }
+
+      if (!includeDemoData) {
+        userQuery += ` AND u.is_synthetic IS NOT TRUE`;
       }
 
       if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
@@ -2615,6 +2672,7 @@ ${teamDistanceSelect}
             page,
             limit,
             userId,
+            includeDemoData,
           }));
       }
 
