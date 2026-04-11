@@ -24,6 +24,10 @@ function parseBooleanFlag(value) {
   return typeof value === "string" && value.toLowerCase() === "true";
 }
 
+function parseIncludeDemoData(value) {
+  return !(typeof value === "string" && value.toLowerCase() === "false");
+}
+
 function parseRoleSort(value) {
   if (typeof value !== "string") return "newest";
 
@@ -248,12 +252,13 @@ async function fetchOpenRoleSearchResults({
   page = 1,
   limit = 20,
   userId = null,
+  includeDemoData = true,
 }) {
   const searchValue = typeof query === "string" ? query.trim() : query;
   const offset = (page - 1) * limit;
   const isMatchSort = sort === "match" && !!userId;
 
-  const roleCountQuery = `
+  let roleCountQuery = `
     SELECT COUNT(DISTINCT vr.id) AS total
     FROM team_vacant_roles vr
     JOIN teams t ON vr.team_id = t.id
@@ -270,6 +275,12 @@ async function fetchOpenRoleSearchResults({
       )
   `;
 
+  if (!includeDemoData) {
+    roleCountQuery += `
+      AND vr.is_synthetic IS NOT TRUE
+    `;
+  }
+
   let roleDataQuery = `
     SELECT
       vr.id,
@@ -283,6 +294,7 @@ async function fetchOpenRoleSearchResults({
       vr.longitude,
       vr.max_distance_km,
       vr.is_remote,
+      vr.is_synthetic,
       vr.status,
       vr.created_at,
       vr.team_id,
@@ -290,6 +302,7 @@ async function fetchOpenRoleSearchResults({
       t.teamavatar_url AS team_avatar_url,
       t.city AS team_city,
       t.country AS team_country,
+      t.is_synthetic AS team_is_synthetic,
       t.is_remote AS team_is_remote
     FROM team_vacant_roles vr
     JOIN teams t ON vr.team_id = t.id
@@ -306,6 +319,15 @@ async function fetchOpenRoleSearchResults({
           WHERE vrt2.role_id = vr.id AND tg2.name ILIKE '%' || $1 || '%'
         )
       )
+  `;
+
+  if (!includeDemoData) {
+    roleDataQuery += `
+      AND vr.is_synthetic IS NOT TRUE
+    `;
+  }
+
+  roleDataQuery += `
     ORDER BY ${buildRoleOrderBy(sort, direction)}
   `;
 
@@ -465,6 +487,7 @@ const searchController = {
       const includeUsers = searchType === "all" || searchType === "users";
       const includeRoles = searchType === "roles";
       const openRolesOnly = parseBooleanFlag(req.query.openRolesOnly);
+      const includeDemoData = parseIncludeDemoData(req.query.includeDemoData);
       const excludeOwnTeams =
         parseBooleanFlag(req.query.excludeOwnTeams) && !!userId;
       const excludeTeamId = req.query.excludeTeamId
@@ -549,6 +572,7 @@ const searchController = {
           page,
           limit,
           userId,
+          includeDemoData,
         });
 
         return res.status(200).json({
@@ -664,6 +688,10 @@ const searchController = {
         teamCountQuery += ` AND t.is_public = TRUE`;
       }
 
+      if (!includeDemoData) {
+        teamCountQuery += ` AND t.is_synthetic IS NOT TRUE`;
+      }
+
       if (openRolesOnly) {
         teamCountQuery += `
           AND EXISTS (
@@ -767,6 +795,7 @@ const searchController = {
           t.name,
           t.description,
           t.is_public,
+          t.is_synthetic,
           t.max_members,
           t.owner_id,
           t.teamavatar_url as "teamavatarUrl",
@@ -846,6 +875,10 @@ ${teamDistanceSelect}
         teamParamIndex++;
       } else {
         teamQuery += ` AND t.is_public = TRUE`;
+      }
+
+      if (!includeDemoData) {
+        teamQuery += ` AND t.is_synthetic IS NOT TRUE`;
       }
 
       if (openRolesOnly) {
@@ -960,7 +993,7 @@ ${teamDistanceSelect}
 
       teamQuery += `
         GROUP BY
-          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote${teamDistanceGroupBy}
+          t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote${teamDistanceGroupBy}
         ORDER BY ${teamOrderBy}
       `;
 
@@ -1036,6 +1069,10 @@ ${teamDistanceSelect}
         userCountParams.push(userId);
       } else {
         userCountQuery += ` AND u.is_public = TRUE`;
+      }
+
+      if (!includeDemoData) {
+        userCountQuery += ` AND u.is_synthetic IS NOT TRUE`;
       }
 
       if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
@@ -1128,6 +1165,7 @@ ${teamDistanceSelect}
           u.state,
           u.avatar_url,
           u.is_public,
+          u.is_synthetic,
           u.created_at,
           u.updated_at,
           u.latitude,
@@ -1242,6 +1280,10 @@ ${teamDistanceSelect}
         userQuery += ` AND u.is_public = TRUE`;
       }
 
+      if (!includeDemoData) {
+        userQuery += ` AND u.is_synthetic IS NOT TRUE`;
+      }
+
       if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
         const distFilter = searchController.buildDistanceFilterSQL(
           userLocation,
@@ -1327,7 +1369,7 @@ ${teamDistanceSelect}
 
       userQuery += `
         GROUP BY
-          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.country, u.state, u.avatar_url, u.is_public, u.created_at, u.updated_at, u.latitude, u.longitude${userDistanceGroupBy}
+          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.country, u.state, u.avatar_url, u.is_public, u.is_synthetic, u.created_at, u.updated_at, u.latitude, u.longitude${userDistanceGroupBy}
         ORDER BY ${userOrderBy}
       `;
 
@@ -1555,6 +1597,7 @@ ${teamDistanceSelect}
             page,
             limit,
             userId,
+            includeDemoData,
           }));
       }
 
@@ -1629,6 +1672,7 @@ ${teamDistanceSelect}
       const includeUsers = searchType === "all" || searchType === "users";
       const includeRoles = searchType === "roles";
       const openRolesOnly = parseBooleanFlag(req.query.openRolesOnly);
+      const includeDemoData = parseIncludeDemoData(req.query.includeDemoData);
       const excludeOwnTeams =
         parseBooleanFlag(req.query.excludeOwnTeams) && !!userId;
       const excludeTeamId = req.query.excludeTeamId
@@ -1700,6 +1744,7 @@ ${teamDistanceSelect}
           page,
           limit,
           userId,
+          includeDemoData,
         });
 
         return res.status(200).json({
@@ -1756,6 +1801,10 @@ ${teamDistanceSelect}
         teamCountParams.push(userId);
       } else {
         teamCountQuery += ` AND t.is_public = TRUE`;
+      }
+
+      if (!includeDemoData) {
+        teamCountQuery += ` AND t.is_synthetic IS NOT TRUE`;
       }
 
       if (openRolesOnly) {
@@ -1878,6 +1927,7 @@ ${teamDistanceSelect}
           t.name,
           t.description,
           t.is_public,
+          t.is_synthetic,
           t.max_members,
           t.owner_id,
           t.teamavatar_url as "teamavatarUrl",
@@ -1926,6 +1976,10 @@ ${teamDistanceSelect}
         teamParamIndex++;
       } else {
         teamQuery += ` AND t.is_public = TRUE`;
+      }
+
+      if (!includeDemoData) {
+        teamQuery += ` AND t.is_synthetic IS NOT TRUE`;
       }
 
       if (openRolesOnly) {
@@ -2060,7 +2114,7 @@ ${teamDistanceSelect}
 
       teamQuery += `
         GROUP BY
-          t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote${teamDistanceGroupBy}
+          t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote${teamDistanceGroupBy}
         ORDER BY ${teamOrderBy}
       `;
 
@@ -2090,6 +2144,10 @@ ${teamDistanceSelect}
         userCountParams.push(userId);
       } else {
         userCountQuery += ` AND u.is_public = TRUE`;
+      }
+
+      if (!includeDemoData) {
+        userCountQuery += ` AND u.is_synthetic IS NOT TRUE`;
       }
 
       if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
@@ -2206,6 +2264,7 @@ ${teamDistanceSelect}
           u.state,
           u.avatar_url,
           u.is_public,
+          u.is_synthetic,
           u.created_at,
           u.updated_at,
           u.latitude,
@@ -2271,6 +2330,10 @@ ${teamDistanceSelect}
         userParamIndex++;
       } else {
         userQuery += ` AND u.is_public = TRUE`;
+      }
+
+      if (!includeDemoData) {
+        userQuery += ` AND u.is_synthetic IS NOT TRUE`;
       }
 
       if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
@@ -2609,6 +2672,7 @@ ${teamDistanceSelect}
             page,
             limit,
             userId,
+            includeDemoData,
           }));
       }
 
@@ -2684,6 +2748,7 @@ ${teamDistanceSelect}
           t.name,
           t.description,
           t.is_public,
+          t.is_synthetic,
           t.max_members,
           t.owner_id,
           COUNT(tm.id) as member_count
@@ -2733,7 +2798,7 @@ ${teamDistanceSelect}
         paramIndex++;
       }
 
-      searchQuery += ` GROUP BY t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id `;
+      searchQuery += ` GROUP BY t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id `;
       searchQuery += ` ORDER BY t.name ASC LIMIT 20`;
 
       const result = await db.pool.query(searchQuery, queryParams);
@@ -2766,6 +2831,7 @@ ${teamDistanceSelect}
           t.name,
           t.description,
           t.is_public,
+          t.is_synthetic,
           t.max_members,
           t.owner_id,
           COUNT(tm.id) as member_count
@@ -2795,7 +2861,7 @@ ${teamDistanceSelect}
         searchQuery += ` AND t.is_public = TRUE`;
       }
 
-      searchQuery += ` GROUP BY t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id `;
+      searchQuery += ` GROUP BY t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id `;
       searchQuery += ` ORDER BY t.name ASC LIMIT 20`;
 
       const result = await db.pool.query(searchQuery, queryParams);
@@ -2835,6 +2901,7 @@ ${teamDistanceSelect}
           t.name,
           t.description,
           t.is_public,
+          t.is_synthetic,
           t.max_members,
           t.owner_id,
           t.latitude,
@@ -2875,7 +2942,7 @@ ${teamDistanceSelect}
       }
 
       searchQuery += `
-        GROUP BY t.id, t.name, t.description, t.is_public, t.max_members, t.owner_id, t.latitude, t.longitude
+        GROUP BY t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id, t.latitude, t.longitude
         HAVING (
           6371 * acos(
             cos(radians($1)) * cos(radians(t.latitude)) *

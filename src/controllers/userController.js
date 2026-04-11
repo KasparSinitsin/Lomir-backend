@@ -166,6 +166,7 @@ const getUserById = async (req, res) => {
     u.longitude,
     u.avatar_url,
     u.is_public,
+    u.is_synthetic,
     u.created_at,
     u.updated_at,
     COALESCE((
@@ -467,7 +468,7 @@ const updateUser = async (req, res) => {
       UPDATE users 
       SET ${updateFields.join(", ")} 
       WHERE id = $${paramPosition}
-      RETURNING id, username, email, first_name, last_name, bio, postal_code, city, country, state, latitude, longitude, avatar_url, is_public, created_at, updated_at
+      RETURNING id, username, email, first_name, last_name, bio, postal_code, city, country, state, latitude, longitude, avatar_url, is_public, is_synthetic, created_at, updated_at
     `;
 
     const result = await pool.query(query, queryParams);
