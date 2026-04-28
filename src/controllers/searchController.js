@@ -757,7 +757,6 @@ const searchController = {
 
       // ========== TEAM DATA QUERY ==========
       let teamDistanceSelect = "";
-      let teamDistanceGroupBy = "";
       if (
         userLocation &&
         ((sort === "proximity" && direction !== "REMOTE") ||
@@ -777,15 +776,12 @@ const searchController = {
                 )
               )
             END as distance_km`;
-          teamDistanceGroupBy = ", t.latitude, t.longitude";
         } else if (userLocation.hasPostalCode) {
           teamDistanceSelect = `,
             ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "t")} as distance_km`;
-          teamDistanceGroupBy = ", t.postal_code";
         } else if (userLocation.hasCity) {
           teamDistanceSelect = `,
             ${searchController.buildCityDistanceSQL(userLocation.city, "t")} as distance_km`;
-          teamDistanceGroupBy = ", t.city";
         }
       }
 
@@ -802,6 +798,12 @@ const searchController = {
           t.created_at,
           t.updated_at,
           t.is_remote,
+          t.postal_code,
+          t.city,
+          t.state,
+          t.country,
+          t.latitude,
+          t.longitude,
           COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
           CASE
             WHEN t.max_members IS NULL THEN NULL
@@ -993,7 +995,7 @@ ${teamDistanceSelect}
 
       teamQuery += `
         GROUP BY
-          t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote${teamDistanceGroupBy}
+          t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote, t.postal_code, t.city, t.state, t.country, t.latitude, t.longitude
         ORDER BY ${teamOrderBy}
       `;
 
@@ -1402,11 +1404,14 @@ ${teamDistanceSelect}
       const teamsWithFixedVisibility = teamResults.rows.map((team) => ({
         ...team,
         is_public: team.is_public === true || team.is_public === "true",
+        is_remote: team.is_remote === true || team.is_remote === "true",
         tags: normalizeJsonArray(team.tags),
         available_capacity:
           team.available_capacity !== null
             ? parseInt(team.available_capacity, 10)
             : null,
+        latitude: normalizeNullableNumber(team.latitude),
+        longitude: normalizeNullableNumber(team.longitude),
         distance_km:
           team.distance_km !== undefined && team.distance_km !== null
             ? parseFloat(Number(team.distance_km).toFixed(1))
@@ -1891,7 +1896,6 @@ ${teamDistanceSelect}
 
       // ========== TEAM DATA QUERY ==========
       let teamDistanceSelect = "";
-      let teamDistanceGroupBy = "";
       if (
         userLocation &&
         ((sort === "proximity" && direction !== "REMOTE") ||
@@ -1911,11 +1915,9 @@ ${teamDistanceSelect}
                 )
               )
             END as distance_km`;
-          teamDistanceGroupBy = ", t.latitude, t.longitude";
         } else if (userLocation.hasPostalCode) {
           teamDistanceSelect = `,
             ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "t")} as distance_km`;
-          teamDistanceGroupBy = ", t.postal_code";
         } else if (userLocation.hasCity) {
           teamDistanceSelect = `, 999999 as distance_km`;
         }
@@ -1934,6 +1936,12 @@ ${teamDistanceSelect}
           t.created_at,
           t.updated_at,
           t.is_remote,
+          t.postal_code,
+          t.city,
+          t.state,
+          t.country,
+          t.latitude,
+          t.longitude,
           COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
           CASE
             WHEN t.max_members IS NULL THEN NULL
@@ -2114,7 +2122,7 @@ ${teamDistanceSelect}
 
       teamQuery += `
         GROUP BY
-          t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote${teamDistanceGroupBy}
+          t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote, t.postal_code, t.city, t.state, t.country, t.latitude, t.longitude
         ORDER BY ${teamOrderBy}
       `;
 
@@ -2478,11 +2486,14 @@ ${teamDistanceSelect}
       const teamsWithFixedVisibility = teamResults.rows.map((team) => ({
         ...team,
         is_public: team.is_public === true || team.is_public === "true",
+        is_remote: team.is_remote === true || team.is_remote === "true",
         tags: normalizeJsonArray(team.tags),
         available_capacity:
           team.available_capacity !== null
             ? parseInt(team.available_capacity, 10)
             : null,
+        latitude: normalizeNullableNumber(team.latitude),
+        longitude: normalizeNullableNumber(team.longitude),
         distance_km:
           team.distance_km !== undefined && team.distance_km !== null
             ? parseFloat(Number(team.distance_km).toFixed(1))

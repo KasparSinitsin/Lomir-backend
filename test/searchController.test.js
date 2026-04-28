@@ -33,6 +33,12 @@ function createTeam(id, name) {
     created_at: new Date("2026-01-01T00:00:00.000Z").toISOString(),
     updated_at: new Date("2026-01-02T00:00:00.000Z").toISOString(),
     is_remote: false,
+    postal_code: id === 1 ? "55116" : null,
+    city: id === 1 ? "Mainz" : null,
+    state: id === 1 ? "Rhineland-Palatinate" : null,
+    country: "DE",
+    latitude: id === 1 ? "49.999" : null,
+    longitude: id === 1 ? "8.271" : null,
     current_members_count: "2",
     available_capacity: "3",
     open_role_count: "1",
@@ -591,6 +597,36 @@ test("globalSearch ignores excludeOwnTeams for unauthenticated requests", async 
   assert.equal(res.body.pagination.totalTeams, 2);
   assert.equal(res.body.pagination.totalUsers, 2);
   assert.equal(hasTeamExclusion(calls), false);
+});
+
+test("search team results include normalized map location fields", async () => {
+  const { query } = buildQueryStub();
+  db.pool.query = query;
+
+  const req = {
+    query: {
+      query: "de",
+      page: "1",
+      limit: "10",
+      searchType: "teams",
+    },
+    user: null,
+  };
+  const res = createResponse();
+
+  await searchController.globalSearch(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.teams.length, 2);
+
+  const team = res.body.data.teams[0];
+  assert.equal(team.postal_code, "55116");
+  assert.equal(team.city, "Mainz");
+  assert.equal(team.state, "Rhineland-Palatinate");
+  assert.equal(team.country, "DE");
+  assert.equal(team.latitude, 49.999);
+  assert.equal(team.longitude, 8.271);
+  assert.equal(team.is_remote, false);
 });
 
 test("getAllUsersAndTeams with includeDemoData=false excludes synthetic rows", async () => {
