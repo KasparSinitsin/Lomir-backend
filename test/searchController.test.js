@@ -93,10 +93,18 @@ function createRole(id, roleName, overrides = {}) {
   };
 }
 
-function buildQueryStub() {
+function buildQueryStub({
+  userLocation = {
+    latitude: null,
+    longitude: null,
+    postal_code: null,
+    city: null,
+  },
+  teams = null,
+} = {}) {
   const calls = [];
-  const baselineTeams = [createTeam(1, "Alpha"), createTeam(2, "Beta")];
-  const filteredTeams = [createTeam(2, "Beta")];
+  const baselineTeams = teams ?? [createTeam(1, "Alpha"), createTeam(2, "Beta")];
+  const filteredTeams = baselineTeams.filter((team) => team.id !== 1);
   const users = [createUser(11, "ada"), createUser(12, "bea")];
 
   const query = async (sql, params = []) => {
@@ -104,21 +112,16 @@ function buildQueryStub() {
 
     if (sql.includes("SELECT latitude, longitude, postal_code, city FROM users")) {
       return {
-        rows: [
-          {
-            latitude: null,
-            longitude: null,
-            postal_code: null,
-            city: null,
-          },
-        ],
+        rows: [userLocation],
       };
     }
 
     const hasExclusion = sql.includes("tm_excluded");
 
     if (sql.includes("FROM teams t") && sql.includes("as total")) {
-      return { rows: [{ total: hasExclusion ? "1" : "2" }] };
+      return {
+        rows: [{ total: String(hasExclusion ? filteredTeams.length : baselineTeams.length) }],
+      };
     }
 
     if (sql.includes("FROM users u") && sql.includes("as total")) {
@@ -416,6 +419,31 @@ function hasRoleSyntheticFilter(calls) {
   );
 }
 
+function getTeamDataQuery(calls) {
+  return calls.find(
+    ({ sql }) =>
+      sql.includes("FROM teams t") &&
+      sql.includes('t.teamavatar_url as "teamavatarUrl"'),
+  )?.sql;
+}
+
+function getRoleDataQuery(calls) {
+  return calls.find(
+    ({ sql }) =>
+      sql.includes("FROM team_vacant_roles vr") &&
+      sql.includes("t.teamavatar_url AS team_avatar_url"),
+  )?.sql;
+}
+
+function hasTeamRemoteOnlyProximityFilter(calls) {
+  return calls.some(
+    ({ sql }) =>
+      sql.includes("FROM teams t") &&
+      (sql.includes("t.is_remote = TRUE") ||
+        sql.includes("t.is_remote IS NOT TRUE")),
+  );
+}
+
 test.afterEach(() => {
   db.pool.query = originalQuery;
 });
@@ -514,6 +542,143 @@ test("getAllUsersAndTeams keeps searchType=users unchanged even if excludeOwnTea
     [11],
   );
   assert.equal(countTeamQueries(calls), 0);
+});
+
+test("getAllUsersAndTeams nearest proximity sort paginates remote teams after local teams", async () => {
+  const remoteTeam = {
+    ...createTeam(3, "Remote"),
+    is_remote: true,
+    postal_code: null,
+    city: null,
+    state: null,
+    latitude: null,
+    longitude: null,
+  };
+  const { query, calls } = buildQueryStub({
+    userLocation: {
+      latitude: "52.52",
+      longitude: "13.405",
+      postal_code: "10115",
+      city: "Berlin",
+    },
+    teams: [createTeam(1, "Alpha"), createTeam(2, "Beta"), remoteTeam],
+  });
+  db.pool.query = query;
+
+  const pageOneReq = {
+    query: {
+      page: "1",
+      limit: "2",
+      sortBy: "proximity",
+      sortDir: "asc",
+      searchType: "teams",
+    },
+    user: { id: 99 },
+  };
+  const pageOneRes = createResponse();
+
+  await searchController.getAllUsersAndTeams(pageOneReq, pageOneRes);
+
+  const teamSql = getTeamDataQuery(calls);
+  assert.equal(pageOneRes.statusCode, 200);
+  assert.deepEqual(
+    pageOneRes.body.data.teams.map((team) => team.id),
+    [1, 2],
+  );
+  assert.equal(pageOneRes.body.data.teams.some((team) => team.is_remote), false);
+  assert.equal(hasTeamRemoteOnlyProximityFilter(calls), false);
+  assert.match(
+    teamSql,
+    /CASE WHEN t\.is_remote IS TRUE THEN 2 WHEN t\.latitude IS NULL OR t\.longitude IS NULL THEN 1 ELSE 0 END\) ASC, distance_km ASC/,
+  );
+  assert.doesNotMatch(teamSql, /WHEN distance_km >= 999999/);
+
+  const pageTwoReq = {
+    ...pageOneReq,
+    query: {
+      ...pageOneReq.query,
+      page: "2",
+    },
+  };
+  const pageTwoRes = createResponse();
+
+  await searchController.getAllUsersAndTeams(pageTwoReq, pageTwoRes);
+
+  assert.equal(pageTwoRes.statusCode, 200);
+  assert.deepEqual(
+    pageTwoRes.body.data.teams.map((team) => team.id),
+    [3],
+  );
+  assert.equal(pageTwoRes.body.data.teams[0].is_remote, true);
+});
+
+test("globalSearch remote proximity sort keeps non-remote teams in the result set", async () => {
+  const { query, calls } = buildQueryStub({
+    userLocation: {
+      latitude: "52.52",
+      longitude: "13.405",
+      postal_code: "10115",
+      city: "Berlin",
+    },
+  });
+  db.pool.query = query;
+
+  const req = {
+    query: {
+      query: "de",
+      page: "1",
+      limit: "10",
+      sortBy: "proximity",
+      sortDir: "remote",
+      searchType: "teams",
+    },
+    user: { id: 99 },
+  };
+  const res = createResponse();
+
+  await searchController.globalSearch(req, res);
+
+  const teamSql = getTeamDataQuery(calls);
+  assert.equal(res.statusCode, 200);
+  assert.equal(hasTeamRemoteOnlyProximityFilter(calls), false);
+  assert.match(
+    teamSql,
+    /CASE WHEN t\.is_remote IS TRUE THEN 0 ELSE 1 END\) ASC, distance_km DESC/,
+  );
+});
+
+test("globalSearch proximity sort applies distance ordering to open roles in all results", async () => {
+  const { query, calls } = buildQueryStub({
+    userLocation: {
+      latitude: "52.52",
+      longitude: "13.405",
+      postal_code: "10115",
+      city: "Berlin",
+    },
+  });
+  db.pool.query = query;
+
+  const req = {
+    query: {
+      query: "de",
+      page: "1",
+      limit: "15",
+      sortBy: "proximity",
+      sortDir: "asc",
+      searchType: "all",
+    },
+    user: { id: 99 },
+  };
+  const res = createResponse();
+
+  await searchController.globalSearch(req, res);
+
+  const roleSql = getRoleDataQuery(calls);
+  assert.equal(res.statusCode, 200);
+  assert.match(roleSql, /distance_km/);
+  assert.match(roleSql, /vr\.is_remote IS TRUE/);
+  assert.match(roleSql, /vr\.latitude IS NULL OR vr\.longitude IS NULL/);
+  assert.match(roleSql, /ORDER BY .*distance_km ASC/s);
 });
 
 test("globalSearch excludes own teams for authenticated users and keeps user results unchanged", async () => {
@@ -645,7 +810,7 @@ test("getAllUsersAndTeams with includeDemoData=false excludes synthetic rows", a
   assert.equal(res.body.pagination.totalTeams, 1);
   assert.equal(res.body.pagination.totalUsers, 1);
   assert.equal(res.body.pagination.totalRoles, 1);
-  assert.equal(res.body.pagination.totalItems, 2);
+  assert.equal(res.body.pagination.totalItems, 3);
   assert.deepEqual(
     res.body.data.teams.map((team) => team.id),
     [2],
@@ -685,7 +850,7 @@ test("globalSearch with includeDemoData=false excludes synthetic rows", async ()
   assert.equal(res.body.pagination.totalTeams, 1);
   assert.equal(res.body.pagination.totalUsers, 1);
   assert.equal(res.body.pagination.totalRoles, 1);
-  assert.equal(res.body.pagination.totalItems, 2);
+  assert.equal(res.body.pagination.totalItems, 3);
   assert.deepEqual(
     res.body.data.teams.map((team) => team.id),
     [2],
@@ -719,7 +884,7 @@ test("default search behavior includes synthetic rows when includeDemoData is om
   assert.equal(res.body.pagination.totalTeams, 2);
   assert.equal(res.body.pagination.totalUsers, 2);
   assert.equal(res.body.pagination.totalRoles, 2);
-  assert.equal(res.body.pagination.totalItems, 4);
+  assert.equal(res.body.pagination.totalItems, 6);
   assert.deepEqual(
     res.body.data.teams.map((team) => team.id),
     [1, 2],
