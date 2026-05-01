@@ -11,7 +11,7 @@ const {
 } = require("../utils/matchingScorer");
 
 const VALID_SEARCH_TYPES = ["all", "teams", "users", "roles"];
-const VALID_ROLE_SORTS = ["recent", "newest", "name", "match"];
+const VALID_ROLE_SORTS = ["recent", "newest", "name", "match", "proximity"];
 
 function parseSearchType(value) {
   if (typeof value !== "string") return "all";
@@ -36,6 +36,10 @@ function parseRoleSort(value) {
 }
 
 function getRolesSortDir(sort, direction) {
+  if (sort === "proximity") {
+    return direction === "REMOTE" ? "remote" : "asc";
+  }
+
   if (sort === "name") {
     return direction === "DESC" ? "desc" : "asc";
   }
@@ -70,25 +74,77 @@ function normalizeJsonArray(value) {
 }
 
 function normalizeRoleSearchRow(role) {
+  const distanceKm = normalizeNullableNumber(role.distance_km);
+
   return {
     ...role,
     latitude: normalizeNullableNumber(role.latitude),
     longitude: normalizeNullableNumber(role.longitude),
     max_distance_km: normalizeNullableNumber(role.max_distance_km),
+    distance_km:
+      distanceKm !== null ? parseFloat(Number(distanceKm).toFixed(1)) : null,
     is_remote: role.is_remote === true || role.is_remote === "true",
     team_is_remote:
       role.team_is_remote === true || role.team_is_remote === "true",
   };
 }
 
-function buildRoleOrderBy(sort, direction) {
+function buildRoleNearestPrioritySQL(userLocation) {
+  if (userLocation?.hasCoordinates) {
+    return "(CASE WHEN vr.is_remote IS TRUE THEN 2 WHEN vr.latitude IS NULL OR vr.longitude IS NULL THEN 1 ELSE 0 END)";
+  }
+
+  if (userLocation?.hasPostalCode) {
+    return "(CASE WHEN vr.is_remote IS TRUE THEN 2 WHEN vr.postal_code IS NULL OR vr.postal_code = '' THEN 1 ELSE 0 END)";
+  }
+
+  if (userLocation?.hasCity) {
+    return "(CASE WHEN vr.is_remote IS TRUE THEN 2 WHEN vr.city IS NULL OR vr.city = '' THEN 1 ELSE 0 END)";
+  }
+
+  return "(CASE WHEN vr.is_remote IS TRUE THEN 1 ELSE 0 END)";
+}
+
+function buildRoleOrderBy(sort, direction, userLocation) {
   if (sort === "name") {
     return direction === "DESC"
       ? "vr.role_name DESC, vr.created_at DESC"
       : "vr.role_name ASC, vr.created_at DESC";
   }
 
+  if (sort === "proximity") {
+    if (direction === "REMOTE" && userLocation) {
+      return "(CASE WHEN vr.is_remote IS TRUE THEN 0 ELSE 1 END) ASC, distance_km DESC, vr.role_name ASC";
+    }
+
+    if (direction === "REMOTE") {
+      return "(CASE WHEN vr.is_remote IS TRUE THEN 0 ELSE 1 END) ASC, vr.role_name ASC";
+    }
+
+    if (userLocation) {
+      return `${buildRoleNearestPrioritySQL(userLocation)} ASC, distance_km ASC, vr.role_name ASC`;
+    }
+
+    return "(CASE WHEN vr.is_remote IS TRUE THEN 1 ELSE 0 END) ASC, vr.role_name ASC";
+  }
+
   return "vr.created_at DESC";
+}
+
+function buildTeamNearestPrioritySQL(userLocation) {
+  if (userLocation?.hasCoordinates) {
+    return "(CASE WHEN t.is_remote IS TRUE THEN 2 WHEN t.latitude IS NULL OR t.longitude IS NULL THEN 1 ELSE 0 END)";
+  }
+
+  if (userLocation?.hasPostalCode) {
+    return "(CASE WHEN t.is_remote IS TRUE THEN 2 WHEN t.postal_code IS NULL OR t.postal_code = '' THEN 1 ELSE 0 END)";
+  }
+
+  if (userLocation?.hasCity) {
+    return "(CASE WHEN t.is_remote IS TRUE THEN 2 WHEN t.city IS NULL OR t.city = '' THEN 1 ELSE 0 END)";
+  }
+
+  return "(CASE WHEN t.is_remote IS TRUE THEN 1 ELSE 0 END)";
 }
 
 function computeJaccardOverlap(baseSet, candidateIds) {
@@ -253,11 +309,16 @@ async function fetchOpenRoleSearchResults({
   limit = 20,
   userId = null,
   includeDemoData = true,
+  userLocation = null,
+  maxDistance = null,
 }) {
   const searchValue = typeof query === "string" ? query.trim() : query;
   const offset = (page - 1) * limit;
   const isMatchSort = sort === "match" && !!userId;
+  const hasValidMaxDistance =
+    maxDistance !== null && Number.isFinite(maxDistance) && maxDistance > 0;
 
+  const roleCountParams = [searchValue];
   let roleCountQuery = `
     SELECT COUNT(DISTINCT vr.id) AS total
     FROM team_vacant_roles vr
@@ -281,6 +342,44 @@ async function fetchOpenRoleSearchResults({
     `;
   }
 
+  if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
+    const distFilter = searchController.buildDistanceFilterSQL(
+      userLocation,
+      "vr",
+      `$${roleCountParams.length + 1}`,
+    );
+    if (distFilter) {
+      roleCountQuery += distFilter;
+      roleCountParams.push(maxDistance);
+    }
+  }
+
+  let roleDistanceSelect = "";
+  if (userLocation && (sort === "proximity" || hasValidMaxDistance)) {
+    if (userLocation.hasCoordinates) {
+      roleDistanceSelect = `,
+      CASE
+        WHEN vr.latitude IS NULL OR vr.longitude IS NULL THEN 999999
+        ELSE (
+          6371 * acos(
+            LEAST(1.0, GREATEST(-1.0,
+              cos(radians(${userLocation.latitude})) * cos(radians(vr.latitude)) *
+              cos(radians(vr.longitude) - radians(${userLocation.longitude})) +
+              sin(radians(${userLocation.latitude})) * sin(radians(vr.latitude))
+            ))
+          )
+        )
+      END as distance_km`;
+    } else if (userLocation.hasPostalCode) {
+      roleDistanceSelect = `,
+      ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "vr")} as distance_km`;
+    } else if (userLocation.hasCity) {
+      roleDistanceSelect = `,
+      ${searchController.buildCityDistanceSQL(userLocation.city, "vr")} as distance_km`;
+    }
+  }
+
+  const roleDataParams = [searchValue];
   let roleDataQuery = `
     SELECT
       vr.id,
@@ -304,6 +403,7 @@ async function fetchOpenRoleSearchResults({
       t.country AS team_country,
       t.is_synthetic AS team_is_synthetic,
       t.is_remote AS team_is_remote
+      ${roleDistanceSelect}
     FROM team_vacant_roles vr
     JOIN teams t ON vr.team_id = t.id
     WHERE vr.status = 'open'
@@ -327,20 +427,31 @@ async function fetchOpenRoleSearchResults({
     `;
   }
 
+  if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
+    const distFilter = searchController.buildDistanceFilterSQL(
+      userLocation,
+      "vr",
+      `$${roleDataParams.length + 1}`,
+    );
+    if (distFilter) {
+      roleDataQuery += distFilter;
+      roleDataParams.push(maxDistance);
+    }
+  }
+
   roleDataQuery += `
-    ORDER BY ${buildRoleOrderBy(sort, direction)}
+    ORDER BY ${buildRoleOrderBy(sort, direction, userLocation)}
   `;
 
-  const roleDataParams = [searchValue];
   if (!isMatchSort) {
     roleDataQuery += `
-      LIMIT $2 OFFSET $3
+      LIMIT $${roleDataParams.length + 1} OFFSET $${roleDataParams.length + 2}
     `;
     roleDataParams.push(limit, offset);
   }
 
   const [roleCountResult, roleDataResult] = await Promise.all([
-    db.pool.query(roleCountQuery, [searchValue]),
+    db.pool.query(roleCountQuery, roleCountParams),
     db.pool.query(roleDataQuery, roleDataParams),
   ]);
 
@@ -564,6 +675,11 @@ const searchController = {
         });
       }
 
+      let userLocation = null;
+      if (userId) {
+        userLocation = await searchController.getUserLocation(userId);
+      }
+
       if (includeRoles) {
         const { roles, totalRoles } = await fetchOpenRoleSearchResults({
           query,
@@ -573,6 +689,8 @@ const searchController = {
           limit,
           userId,
           includeDemoData,
+          userLocation,
+          maxDistance,
         });
 
         return res.status(200).json({
@@ -625,11 +743,6 @@ const searchController = {
       ];
 
       const searchTerm = `%${query.trim()}%`;
-
-      let userLocation = null;
-      if (userId) {
-        userLocation = await searchController.getUserLocation(userId);
-      }
 
       // ========== TEAM COUNT QUERY ==========
       let teamCountQuery = `
@@ -716,12 +829,6 @@ const searchController = {
         teamCountParams.push(userId);
       }
 
-      if (sort === "proximity" && direction === "REMOTE") {
-        teamCountQuery += ` AND t.is_remote = TRUE`;
-      } else if (sort === "proximity") {
-        teamCountQuery += ` AND t.is_remote IS NOT TRUE`;
-      }
-
       if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
         const distFilter = searchController.buildDistanceFilterSQL(
           userLocation,
@@ -759,8 +866,7 @@ const searchController = {
       let teamDistanceSelect = "";
       if (
         userLocation &&
-        ((sort === "proximity" && direction !== "REMOTE") ||
-          hasValidMaxDistance)
+        (sort === "proximity" || hasValidMaxDistance)
       ) {
         if (userLocation.hasCoordinates) {
           teamDistanceSelect = `,
@@ -907,12 +1013,6 @@ ${teamDistanceSelect}
         teamParamIndex++;
       }
 
-      if (sort === "proximity" && direction === "REMOTE") {
-        teamQuery += ` AND t.is_remote = TRUE`;
-      } else if (sort === "proximity") {
-        teamQuery += ` AND t.is_remote IS NOT TRUE`;
-      }
-
       if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
         const distFilter = searchController.buildDistanceFilterSQL(
           userLocation,
@@ -978,13 +1078,20 @@ ${teamDistanceSelect}
           teamOrderBy = "t.name ASC";
           break;
         case "proximity":
-          if (direction === "REMOTE") {
-            teamOrderBy = "t.name ASC";
+          if (direction === "REMOTE" && userLocation) {
+            teamOrderBy =
+              "(CASE WHEN t.is_remote IS TRUE THEN 0 ELSE 1 END) ASC, distance_km DESC, t.name ASC";
+          } else if (direction === "REMOTE") {
+            teamOrderBy =
+              "(CASE WHEN t.is_remote IS TRUE THEN 0 ELSE 1 END) ASC, t.name ASC";
           } else if (userLocation) {
             teamOrderBy =
-              direction === "DESC" ? "distance_km DESC" : "distance_km ASC";
+              direction === "DESC"
+                ? "(CASE WHEN t.is_remote IS TRUE THEN 0 ELSE 1 END) ASC, distance_km DESC, t.name ASC"
+                : `${buildTeamNearestPrioritySQL(userLocation)} ASC, distance_km ASC, t.name ASC`;
           } else {
-            teamOrderBy = "t.name ASC";
+            teamOrderBy =
+              "(CASE WHEN t.is_remote IS TRUE THEN 1 ELSE 0 END) ASC, t.name ASC";
           }
           break;
         case "name":
@@ -993,9 +1100,13 @@ ${teamDistanceSelect}
           break;
       }
 
-      teamQuery += `
+      const teamGroupByClause = `
         GROUP BY
           t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote, t.postal_code, t.city, t.state, t.country, t.latitude, t.longitude
+      `;
+
+      teamQuery += `
+        ${teamGroupByClause}
         ORDER BY ${teamOrderBy}
       `;
 
@@ -1603,6 +1714,8 @@ ${teamDistanceSelect}
             limit,
             userId,
             includeDemoData,
+            userLocation,
+            maxDistance,
           }));
       }
 
@@ -1611,13 +1724,13 @@ ${teamDistanceSelect}
           ? totalTeams
           : searchType === "users"
             ? totalUsers
-            : Math.max(totalTeams, totalUsers);
+            : Math.max(totalTeams, totalUsers, totalRolesForAll);
       const totalItems =
         searchType === "teams"
           ? totalTeams
           : searchType === "users"
             ? totalUsers
-            : totalTeams + totalUsers;
+            : totalTeams + totalUsers + totalRolesForAll;
 
       res.status(200).json({
         success: true,
@@ -1742,6 +1855,11 @@ ${teamDistanceSelect}
         console.log(`Exclude team members: teamId=${excludeTeamId || "none"}`);
       }
 
+      let userLocation = null;
+      if (userId) {
+        userLocation = await searchController.getUserLocation(userId);
+      }
+
       if (includeRoles) {
         const { roles, totalRoles } = await fetchOpenRoleSearchResults({
           sort: roleSort,
@@ -1750,6 +1868,8 @@ ${teamDistanceSelect}
           limit,
           userId,
           includeDemoData,
+          userLocation,
+          maxDistance,
         });
 
         return res.status(200).json({
@@ -1775,12 +1895,6 @@ ${teamDistanceSelect}
             sortDir: getRolesSortDir(roleSort, direction),
           },
         });
-      }
-
-      let userLocation = null;
-
-      if (userId) {
-        userLocation = await searchController.getUserLocation(userId);
       }
 
       // ========== TEAM COUNT QUERY ==========
@@ -1834,12 +1948,6 @@ ${teamDistanceSelect}
           )
         `;
         teamCountParams.push(userId);
-      }
-
-      if (sort === "proximity" && direction === "REMOTE") {
-        teamCountQuery += ` AND t.is_remote = TRUE`;
-      } else if (sort === "proximity") {
-        teamCountQuery += ` AND t.is_remote IS NOT TRUE`;
       }
 
       if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
@@ -1898,8 +2006,7 @@ ${teamDistanceSelect}
       let teamDistanceSelect = "";
       if (
         userLocation &&
-        ((sort === "proximity" && direction !== "REMOTE") ||
-          hasValidMaxDistance)
+        (sort === "proximity" || hasValidMaxDistance)
       ) {
         if (userLocation.hasCoordinates) {
           teamDistanceSelect = `,
@@ -2014,12 +2121,6 @@ ${teamDistanceSelect}
         teamParamIndex++;
       }
 
-      if (sort === "proximity" && direction === "REMOTE") {
-        teamQuery += ` AND t.is_remote = TRUE`;
-      } else if (sort === "proximity") {
-        teamQuery += ` AND t.is_remote IS NOT TRUE`;
-      }
-
       if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
         const distFilter = searchController.buildDistanceFilterSQL(
           userLocation,
@@ -2105,13 +2206,20 @@ ${teamDistanceSelect}
           teamOrderBy = "t.name ASC";
           break;
         case "proximity":
-          if (direction === "REMOTE") {
-            teamOrderBy = "t.name ASC";
+          if (direction === "REMOTE" && userLocation) {
+            teamOrderBy =
+              "(CASE WHEN t.is_remote IS TRUE THEN 0 ELSE 1 END) ASC, distance_km DESC, t.name ASC";
+          } else if (direction === "REMOTE") {
+            teamOrderBy =
+              "(CASE WHEN t.is_remote IS TRUE THEN 0 ELSE 1 END) ASC, t.name ASC";
           } else if (userLocation) {
             teamOrderBy =
-              direction === "DESC" ? "distance_km DESC" : "distance_km ASC";
+              direction === "DESC"
+                ? "(CASE WHEN t.is_remote IS TRUE THEN 0 ELSE 1 END) ASC, distance_km DESC, t.name ASC"
+                : `${buildTeamNearestPrioritySQL(userLocation)} ASC, distance_km ASC, t.name ASC`;
           } else {
-            teamOrderBy = "t.name ASC";
+            teamOrderBy =
+              "(CASE WHEN t.is_remote IS TRUE THEN 1 ELSE 0 END) ASC, t.name ASC";
           }
           break;
         case "name":
@@ -2120,9 +2228,13 @@ ${teamDistanceSelect}
           break;
       }
 
-      teamQuery += `
+      const teamGroupByClause = `
         GROUP BY
           t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote, t.postal_code, t.city, t.state, t.country, t.latitude, t.longitude
+      `;
+
+      teamQuery += `
+        ${teamGroupByClause}
         ORDER BY ${teamOrderBy}
       `;
 
@@ -2684,6 +2796,8 @@ ${teamDistanceSelect}
             limit,
             userId,
             includeDemoData,
+            userLocation,
+            maxDistance,
           }));
       }
 
@@ -2692,13 +2806,13 @@ ${teamDistanceSelect}
           ? totalTeams
           : searchType === "users"
             ? totalUsers
-            : Math.max(totalTeams, totalUsers);
+            : Math.max(totalTeams, totalUsers, totalRolesForAll);
       const totalItems =
         searchType === "teams"
           ? totalTeams
           : searchType === "users"
             ? totalUsers
-            : totalTeams + totalUsers;
+            : totalTeams + totalUsers + totalRolesForAll;
 
       res.status(200).json({
         success: true,
