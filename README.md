@@ -18,21 +18,26 @@ Built with Node.js, Express, PostgreSQL (Neon), and Socket.IO.
 | Backend  | Render   | [lomir-backend-knae.onrender.com](https://lomir-backend-knae.onrender.com) |
 | Database | Neon     | PostgreSQL (remote) |
 
+### Test Credentials
+
+Contact the project owner for a demo login, or register a new account with a valid email address (email verification is required).
+
 ---
 
 ## Features
 
-- **Authentication** - JWT-based registration, login, email verification, and password reset
-- **User Profiles** - CRUD with avatar uploads (ImageKit), interest tags, and badge portfolios
-- **Teams** - Create, join, manage members, assign roles, and archive teams
-- **Vacant Roles** - Post open positions on teams with desired tags, badges, and location preferences
-- **Matching Engine** - Score users against roles (and vice versa) using weighted tag/badge/distance criteria
-- **Search** - Full-text search across teams, users, and roles with tag/badge/location filtering
-- **Chat** - Real-time direct and team group messaging via Socket.IO, including typing indicators and read receipts
-- **Badge System** - 30 badges across 5 categories; award badges to teammates with reasons and context
-- **Notifications** - In-app notifications for invitations, applications, badge awards, and messages
-- **Account Deletion** - Full transactional account deletion with impact preview, automatic team ownership transfer, role reopening, and "Former Lomir User" handling for preserved references
-- **Geocoding** - Postal code lookup via Nominatim with built-in fallback mapping
+- **Authentication** — JWT-based registration, login, email verification, and password reset. Registration protected by Cloudflare Turnstile CAPTCHA (feature-flagged for local dev).
+- **User Profiles** — CRUD with avatar uploads (ImageKit), interest tags, and badge portfolios
+- **Teams** — Create, join, manage members, assign roles, and archive teams
+- **Vacant Roles** — Post open positions on teams with desired tags, badges, and location preferences
+- **Matching Engine** — Score users against roles (and vice versa) using weighted tag/badge/distance criteria
+- **Search** — Full-text search across teams, users, and roles with tag/badge/location filtering and "Best Match" sorting
+- **Chat** — Real-time direct and team group messaging via Socket.IO, including typing indicators and read receipts
+- **Badge System** — 30 badges across 5 categories; award badges to teammates with reasons and context
+- **Notifications** — In-app notifications for invitations, applications, badge awards, and messages
+- **Account Deletion** — Full transactional account deletion with impact preview, automatic team ownership transfer, role reopening, and "Former Lomir User" handling for preserved references
+- **Geocoding** — Postal code lookup via Nominatim with built-in fallback mapping
+- **Security** — Rate limiting on auth endpoints, CORS allowlist, password policy enforcement, production log scrubbing
 
 ---
 
@@ -49,6 +54,8 @@ Built with Node.js, Express, PostgreSQL (Neon), and Socket.IO.
 | File Uploads | ImageKit + Multer |
 | Email | Resend |
 | Scheduling | node-cron |
+| CAPTCHA | Cloudflare Turnstile |
+| Rate Limiting | express-rate-limit |
 
 ---
 
@@ -57,19 +64,17 @@ Built with Node.js, Express, PostgreSQL (Neon), and Socket.IO.
 ### Prerequisites
 
 - **Node.js** v18+ and npm
-- Internet access (database is hosted on Neon - no local PostgreSQL needed)
+- Internet access (database is hosted on Neon — no local PostgreSQL needed)
 - Native build tools for `bcrypt`:
   - macOS: `xcode-select --install`
   - Windows: Visual Studio Build Tools with C++ workload
   - Linux: `sudo apt install build-essential python3`
 
-### 1. Clone and switch to `dev`
+### 1. Clone the repo
 
 ```bash
 git clone https://github.com/KasparSinitsin/Lomir-backend.git
 cd Lomir-backend
-git checkout dev
-git pull origin dev
 ```
 
 ### 2. Install dependencies
@@ -105,14 +110,14 @@ RESEND_API_KEY=<resend-api-key>
 # Frontend URL (for CORS and email links)
 CLIENT_URL=http://localhost:5173
 
-# Skip email verification (interim — set to "true" while no custom domain is configured)
+# Skip email verification (set to "true" while no custom domain is configured)
 SKIP_EMAIL_VERIFICATION=true
 
-# Cloudflare Turnstile (optional for local dev — if unset, CAPTCHA is skipped on registration)
+# Cloudflare Turnstile (optional for local dev — if unset, CAPTCHA is skipped)
 # TURNSTILE_SECRET_KEY=<turnstile-secret-key>
 ```
 
-> Get the ImageKit values from the project owner.
+> Get the ImageKit and database values from the project owner.
 
 ### 4. Run the server
 
@@ -122,7 +127,7 @@ npm run dev
 
 The server starts on `http://localhost:5001` with hot reload via nodemon.
 
-Verify it's running by visiting `http://localhost:5001` - you should see **"Lomir API is running..."**
+Verify it's running by visiting `http://localhost:5001` — you should see **"Lomir API is running..."**
 
 ---
 
@@ -134,7 +139,7 @@ Verify it's running by visiting `http://localhost:5001` - you should see **"Lomi
 | `npm start` | Start production server |
 | `npm run migrate` | Run database migrations |
 | `npm run seed` | Seed the database with initial data |
-| `npm test` | Run tests |
+| `npm test` | Run tests (`node --test`) |
 
 ---
 
@@ -142,57 +147,64 @@ Verify it's running by visiting `http://localhost:5001` - you should see **"Lomi
 
 ```text
 Lomir-backend/
-|- src/
-|  |- app.js                  # Express app setup, middleware, route mounting
-|  |- server.js               # HTTP server + Socket.IO setup
-|  |- config/
-|  |  |- database.js          # PostgreSQL connection pool (Neon)
-|  |  |- imagekit.js          # ImageKit client configuration
-|  |- controllers/
-|  |  |- authController.js
-|  |  |- userController.js
-|  |  |- teamController.js
-|  |  |- searchController.js
-|  |  |- badgeController.js
-|  |  |- messageController.js
-|  |  |- invitationController.js
-|  |  |- notificationController.js
-|  |  |- vacantRoleController.js
-|  |  |- matchingController.js
-|  |- routes/
-|  |  |- index.js            # Central route registry
-|  |  |- authRoutes.js
-|  |  |- userRoutes.js
-|  |  |- teamRoutes.js
-|  |  |- searchRoutes.js
-|  |  |- badgeRoutes.js
-|  |  |- messageRoutes.js
-|  |  |- notificationRoutes.js
-|  |  |- matchingRoutes.js
-|  |  |- imagekitRoutes.js
-|  |  |- geocodingRoutes.js
-|  |  |- api/
-|  |  |  |- tags.js
-|  |- middlewares/
-|  |  |- auth.js             # JWT authentication middleware
-|  |  |- rateLimiter.js      # Rate limiting for auth endpoints
-|  |- utils/
-|  |  |- imagekitUtils.js
-|  |  |- fileValidation.js
-|  |  |- jwtUtils.js
-|  |  |- matchingScorer.js   # Shared scoring utilities
-|  |  |- turnstileVerify.js  # Cloudflare Turnstile CAPTCHA verification
-|  |- jobs/
-|  |  |- fileCleanupScheduler.js
-|  |- database/
-|  |  |- migrations/
-|- scripts/                  # SQL seed and migration scripts
-|- test/                     # Controller unit tests
-|  |- userController.deleteUser.test.js
-|  |- userController.deletionPreview.test.js
-|- .env                      # Environment variables (not committed)
-|- package.json
-|- README.md
+├── src/
+│   ├── app.js                  # Express app setup, middleware, route mounting
+│   ├── server.js               # HTTP server + Socket.IO setup
+│   ├── config/
+│   │   ├── database.js         # PostgreSQL connection pool (Neon)
+│   │   └── imagekit.js         # ImageKit client configuration
+│   ├── controllers/
+│   │   ├── authController.js
+│   │   ├── userController.js
+│   │   ├── teamController.js
+│   │   ├── searchController.js
+│   │   ├── badgeController.js
+│   │   ├── messageController.js
+│   │   ├── invitationController.js
+│   │   ├── notificationController.js
+│   │   ├── vacantRoleController.js
+│   │   └── matchingController.js
+│   ├── routes/
+│   │   ├── index.js            # Central route registry
+│   │   ├── authRoutes.js
+│   │   ├── userRoutes.js
+│   │   ├── teamRoutes.js
+│   │   ├── searchRoutes.js
+│   │   ├── badgeRoutes.js
+│   │   ├── messageRoutes.js
+│   │   ├── notificationRoutes.js
+│   │   ├── matchingRoutes.js
+│   │   ├── imagekitRoutes.js
+│   │   ├── geocodingRoutes.js
+│   │   └── api/
+│   │       └── tags.js
+│   ├── middlewares/
+│   │   ├── auth.js             # JWT authentication middleware
+│   │   └── rateLimiter.js      # Rate limiting for auth endpoints
+│   ├── services/
+│   │   └── emailService.js     # Resend transactional email
+│   ├── utils/
+│   │   ├── imagekitUtils.js
+│   │   ├── fileValidation.js
+│   │   ├── jwtUtils.js
+│   │   ├── matchingScorer.js   # Shared scoring utilities
+│   │   ├── turnstileVerify.js  # Cloudflare Turnstile CAPTCHA verification
+│   │   └── geocodingUtil.js
+│   ├── jobs/
+│   │   └── fileCleanupScheduler.js
+│   └── database/
+│       └── migrations/
+├── scripts/                    # SQL seed, migration, and utility scripts
+│   └── migrate-cloudinary-to-imagekit.js
+├── test/                       # Controller unit tests
+│   ├── userController.deleteUser.test.js
+│   ├── userController.deletionPreview.test.js
+│   └── teamController.applications.test.js
+├── docs/
+│   └── USER_DELETION_SPEC.md   # Full account deletion specification
+├── .env                        # Environment variables (not committed)
+├── package.json
+└── README.md
 ```
 
 ---
@@ -208,13 +220,13 @@ All routes are prefixed with `/api`.
 | `/api/teams` | Team CRUD, members, applications, invitations, badge awards |
 | `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management |
 | `/api/search` | Global search with tag/badge/location/role filtering |
-| `/api/matching` | Role <-> user matching scores and candidate lists |
+| `/api/matching` | Role ↔ user matching scores and candidate lists |
 | `/api/badges` | Badge catalog and awarding |
 | `/api/messages` | Direct and team message history |
 | `/api/notifications` | User notifications |
 | `/api/imagekit` | Auth params for client-side ImageKit uploads |
 | `/api/tags` | Tag catalog (structured by category) |
-| `/api/geocoding` | Postal code -> city/country/coordinates lookup |
+| `/api/geocoding` | Postal code → city/country/coordinates lookup |
 
 ---
 
@@ -226,27 +238,71 @@ The server uses Socket.IO for real-time features. Clients authenticate via JWT t
 
 | Event | Direction | Description |
 |---|---|---|
-| `message:new` | Client -> Server | Send a direct or team message |
-| `message:received` | Server -> Client | New message broadcast |
-| `message:read` | Client -> Server | Mark messages as read |
-| `message:status` | Server -> Client | Read receipt notification |
+| `message:new` | Client → Server | Send a direct or team message |
+| `message:received` | Server → Client | New message broadcast |
+| `message:read` | Client → Server | Mark messages as read |
+| `message:status` | Server → Client | Read receipt notification |
 | `typing:start` / `typing:stop` | Bidirectional | Typing indicators |
-| `users:online` | Server -> Client | Updated list of online user IDs |
-| `team:member_left` | Server -> Client | Emitted when a user is deleted, to each team they were in |
-| `conversation:deleted` | Server -> Client | Emitted to DM partners when a user is deleted |
-| `notification:new` | Server -> Client | Emitted for ownership transfers, role reopenings, and team dissolutions |
+| `users:online` | Server → Client | Updated list of online user IDs |
+| `team:member_left` | Server → Client | Member removal (e.g. account deletion) |
+| `conversation:deleted` | Server → Client | DM conversation removed |
+| `notification:new` | Server → Client | Ownership transfers, role reopenings, team dissolutions |
+
+---
+
+## Matching Engine
+
+The matching system scores users against vacant roles (and vice versa) using three weighted dimensions:
+
+| Dimension | Weight | Calculation |
+|---|---|---|
+| Tags | 40% | Overlap between user's tags and role's desired tags |
+| Badges | 30% | Overlap between user's badges and role's desired badges |
+| Distance | 30% | Haversine distance; remote roles score 1.0 for everyone |
+
+Distance scoring: within `max_distance_km` → 1.0, up to 20 km beyond → 0.25 (grace zone), further → 0.0. No location data on either side → 0.5 (neutral).
+
+The shared scoring logic lives in `src/utils/matchingScorer.js` and is used by both the matching controller (dedicated endpoints) and the search controller (Best Match sort).
+
+---
+
+## Account Deletion
+
+Full transactional account deletion following the spec in `docs/USER_DELETION_SPEC.md`. Key highlights:
+
+- **Impact preview** — `POST /api/users/:id/deletion-preview` returns a password-verified summary of what will happen (teams transferred, teams deleted, roles reopened, counts)
+- **Single transaction** — All cleanup runs in one database transaction with 6 phases (context gathering → message cleanup → team ownership → role/reference cleanup → user row deletion → post-transaction Socket.IO events)
+- **Badge preservation** — Team names copied to `badge_awards.custom_team_name` before sole-owner teams are deleted
+- **"Former Lomir User"** — Deleted user references display a grey silhouette avatar with no personal info
+- **41+ automated tests** covering deletion scenarios and preview logic
+
+---
+
+## Security
+
+| Measure | Details |
+|---|---|
+| Rate limiting | 8 req/15 min on login/password flows, 10 req/hr on registration |
+| CAPTCHA | Cloudflare Turnstile on registration (feature-flagged) |
+| CORS | Allowlist: exact match for production URL + regex for Vercel preview deploys |
+| Password policy | Min 8 chars, at least one letter and one number (registration, reset, change) |
+| Logging | All debug `console.log` gated behind `NODE_ENV`; errors and warnings always logged |
+| SQL injection | Parameterized queries throughout |
+| Auth | JWT on all protected routes, bcrypt with 10 salt rounds |
 
 ---
 
 ## Troubleshooting
 
-- **`npm install` fails on bcrypt** - Install native build tools (see Prerequisites), then `rm -rf node_modules package-lock.json && npm install`
-- **CORS errors** - Make sure `CLIENT_URL` in `.env` matches your frontend origin (`http://localhost:5173`)
-- **Database connection issues** - Verify `DATABASE_URL` is correct and you have internet access
-- **Port already in use** - `lsof -i :5001` to find the process, `kill -9 <PID>` to free the port
+- **`npm install` fails on bcrypt** — Install native build tools (see Prerequisites), then `rm -rf node_modules package-lock.json && npm install`
+- **CORS errors** — Make sure `CLIENT_URL` in `.env` matches your frontend origin (`http://localhost:5173`)
+- **Database connection issues** — Verify `DATABASE_URL` is correct and you have internet access
+- **Port already in use** — `lsof -i :5001` to find the process, `kill -9 <PID>` to free the port
+- **CAPTCHA not loading locally** — This is expected. If `TURNSTILE_SECRET_KEY` is unset, registration skips CAPTCHA.
 
 ---
 
 ## Related
 
 - **Frontend repo:** [Lomir-frontend](https://github.com/KasparSinitsin/Lomir-frontend)
+- **Deletion spec:** [`docs/USER_DELETION_SPEC.md`](docs/USER_DELETION_SPEC.md)
