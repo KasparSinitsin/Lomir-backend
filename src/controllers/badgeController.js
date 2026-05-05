@@ -63,6 +63,42 @@ const refreshBadgeViews = async (clientOrPool) => {
 // ============================================================================
 const VALID_CONTEXT_TYPES = ["personal", "team", "project"];
 
+const recalculateUserTagBadgeCredits = async (client, userId, tagId) => {
+  if (!tagId) return;
+
+  const totalsResult = await client.query(
+    `SELECT
+       COALESCE(SUM(credits), 0)::int AS badge_credits,
+       (
+         SELECT b.category
+         FROM badge_awards ba
+         JOIN badges b ON b.id = ba.badge_id
+         WHERE ba.awarded_to_user_id = $1
+           AND ba.tag_id = $2
+         GROUP BY b.category
+         ORDER BY SUM(ba.credits) DESC, b.category ASC
+         LIMIT 1
+       ) AS dominant_badge_category
+     FROM badge_awards
+     WHERE awarded_to_user_id = $1
+       AND tag_id = $2`,
+    [userId, tagId],
+  );
+
+  const nextCredits = Number(totalsResult.rows[0]?.badge_credits ?? 0);
+  const nextDominantCategory =
+    totalsResult.rows[0]?.dominant_badge_category ?? null;
+
+  await client.query(
+    `UPDATE user_tags
+     SET badge_credits = $1,
+         dominant_badge_category = $2
+     WHERE user_id = $3
+       AND tag_id = $4`,
+    [nextCredits, nextDominantCategory, userId, tagId],
+  );
+};
+
 /**
  * @description Award a badge to a user
  * @route POST /api/badges/award
@@ -415,6 +451,75 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
 };
 
 /**
+ * @description Delete one badge award received by the authenticated user
+ * @route DELETE /api/badges/awards/:awardId
+ * @access Private (recipient only)
+ */
+const deleteBadgeAward = async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    const userId = req.user.id;
+    const awardId = req.params.awardId;
+
+    if (!awardId) {
+      return res.status(400).json({
+        success: false,
+        message: "awardId is required",
+      });
+    }
+
+    await client.query("BEGIN");
+
+    const awardResult = await client.query(
+      `DELETE FROM badge_awards
+       WHERE id = $1
+         AND awarded_to_user_id = $2
+       RETURNING id, awarded_to_user_id, badge_id, credits, tag_id`,
+      [awardId, userId],
+    );
+
+    if (awardResult.rows.length === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        success: false,
+        message: "Badge award not found",
+      });
+    }
+
+    const deletedAward = awardResult.rows[0];
+
+    await recalculateUserTagBadgeCredits(
+      client,
+      deletedAward.awarded_to_user_id,
+      deletedAward.tag_id,
+    );
+
+    await client.query("COMMIT");
+
+    refreshBadgeViews(pool).catch((err) =>
+      console.warn("⚠️ View refresh failed:", err.message),
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Badge award deleted successfully",
+      data: deletedAward,
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Error deleting badge award:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error deleting badge award",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  } finally {
+    client.release();
+  }
+};
+
+/**
  * @description Get teams shared between the authenticated user and another user
  * @route GET /api/badges/shared-teams/:userId
  * @access Private (requires authentication)
@@ -533,6 +638,7 @@ const getUserBadges = async (req, res) => {
 module.exports = {
   getAllBadges,
   awardBadge,
+  deleteBadgeAward,
   getUserBadges,
   getSharedTeams,
 };
