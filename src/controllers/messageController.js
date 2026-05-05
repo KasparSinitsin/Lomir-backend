@@ -437,6 +437,8 @@ const getMessages = async (req, res) => {
       m.file_deleted_at,
       m.deleted_at,
       m.deleted_by,
+      m.edited_at,
+      m.edited_by,
       m.sent_at as created_at,
       m.read_at,
       current_user_read.read_at as current_user_read_at,
@@ -507,6 +509,8 @@ const getMessages = async (req, res) => {
       m.file_deleted_at,
       m.deleted_at,
       m.deleted_by,
+      m.edited_at,
+      m.edited_by,
       m.sent_at as created_at,
       m.read_at,
       u.username as sender_username,
@@ -545,6 +549,9 @@ const getMessages = async (req, res) => {
       fileDeletedAt: row.file_deleted_at,
       deletedAt: row.deleted_at,
       deletedBy: row.deleted_by,
+      editedAt: row.edited_at,
+      editedBy: row.edited_by,
+      isEdited: Boolean(row.edited_at),
       createdAt: row.created_at,
       readAt:
         row.team_id && Number(row.sender_id) !== Number(userId)
@@ -702,6 +709,130 @@ const getMessageById = async (req, res) => {
   }
 };
 
+const updateMessage = async (req, res) => {
+  try {
+    const messageId = req.params.id;
+    const currentUserId = req.user?.id ?? req.userId;
+    const content = typeof req.body?.content === "string" ? req.body.content.trim() : "";
+
+    if (!content) {
+      return res.status(400).json({ message: "Message content is required" });
+    }
+
+    if (content.length > 500) {
+      return res.status(400).json({ message: "Message content is too long" });
+    }
+
+    const msgResult = await db.query(
+      `SELECT id, sender_id, receiver_id, team_id, deleted_at
+       FROM messages
+       WHERE id = $1`,
+      [messageId],
+    );
+
+    if (msgResult.rows.length === 0) {
+      return res.status(404).json({ message: "Message not found" });
+    }
+
+    const msg = msgResult.rows[0];
+
+    if (Number(msg.sender_id) !== Number(currentUserId)) {
+      return res
+        .status(403)
+        .json({ message: "Not authorized to edit this message" });
+    }
+
+    if (msg.deleted_at) {
+      return res.status(400).json({ message: "Cannot edit a deleted message" });
+    }
+
+    const updateResult = await db.query(
+      `UPDATE messages
+       SET content = $2,
+           edited_at = NOW(),
+           edited_by = $3
+       WHERE id = $1
+       RETURNING id, sender_id, receiver_id, team_id, content, edited_at, edited_by`,
+      [messageId, content, currentUserId],
+    );
+
+    const updatedMessage = updateResult.rows[0];
+    const latestMessageResult = updatedMessage.team_id
+      ? await db.query(
+          `SELECT id
+           FROM messages
+           WHERE team_id = $1
+           ORDER BY sent_at DESC, id DESC
+           LIMIT 1`,
+          [updatedMessage.team_id],
+        )
+      : await db.query(
+          `SELECT id
+           FROM messages
+           WHERE team_id IS NULL
+             AND (
+               (sender_id = $1 AND receiver_id = $2)
+               OR (sender_id = $2 AND receiver_id = $1)
+             )
+           ORDER BY sent_at DESC, id DESC
+           LIMIT 1`,
+          [updatedMessage.sender_id, updatedMessage.receiver_id],
+        );
+    const isLatestMessage =
+      String(latestMessageResult.rows[0]?.id) === String(updatedMessage.id);
+    const payload = {
+      messageId: Number(updatedMessage.id),
+      conversationId: updatedMessage.team_id
+        ? String(updatedMessage.team_id)
+        : String(
+            Number(updatedMessage.sender_id) === Number(currentUserId)
+              ? updatedMessage.receiver_id
+              : updatedMessage.sender_id,
+          ),
+      content: updatedMessage.content,
+      editedAt: updatedMessage.edited_at,
+      editedBy: Number(updatedMessage.edited_by),
+      isEdited: true,
+      type: updatedMessage.team_id ? "team" : "direct",
+      teamId: updatedMessage.team_id ? Number(updatedMessage.team_id) : null,
+      senderId: updatedMessage.sender_id ? Number(updatedMessage.sender_id) : null,
+      receiverId: updatedMessage.receiver_id
+        ? Number(updatedMessage.receiver_id)
+        : null,
+      isLatestMessage,
+    };
+
+    const io = req.app.get("io");
+
+    if (io) {
+      if (updatedMessage.team_id) {
+        io.to(`team:${updatedMessage.team_id}`).emit("message:edited", payload);
+      } else {
+        io.to(`user:${updatedMessage.sender_id}`).emit("message:edited", payload);
+        io.to(`user:${updatedMessage.receiver_id}`).emit("message:edited", payload);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        id: updatedMessage.id,
+        senderId: updatedMessage.sender_id,
+        receiverId: updatedMessage.receiver_id,
+        teamId: updatedMessage.team_id,
+        content: updatedMessage.content,
+        editedAt: updatedMessage.edited_at,
+        editedBy: updatedMessage.edited_by,
+        isEdited: true,
+        isLatestMessage,
+      },
+    });
+  } catch (error) {
+    console.error("updateMessage error:", error);
+    return res.status(500).json({ message: "Failed to edit message" });
+  }
+};
+
 const deleteMessage = async (req, res) => {
   try {
     const messageId = req.params.id;
@@ -789,6 +920,7 @@ module.exports = {
   sendMessage,
   getMessages,
   getMessageById,
+  updateMessage,
   deleteMessage,
   getUnreadCount,
 };
