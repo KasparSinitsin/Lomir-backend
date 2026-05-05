@@ -13,6 +13,7 @@ const addUserVisibilityColumn = require("./add_visibility_to_users");
 const createTeamApplicationsTable = require("./create_team_applications");
 const fixMessagesTimestamps = require("./fix_messages_timestamps");
 const createMessageReads = require("./create_message_reads");
+const addMessageEditColumns = require("./add_message_edit_columns");
 
 const runMigrations = async () => {
   try {
@@ -32,6 +33,7 @@ const runMigrations = async () => {
     await createTeamApplicationsTable();
     await fixMessagesTimestamps();
     await createMessageReads();
+    await addMessageEditColumns();
 
     console.log("All migrations completed successfully!");
   } catch (error) {

@@ -48,6 +48,9 @@ router.post(
 // Get specific message
 router.get("/:id", authenticateToken, messageController.getMessageById);
 
+// Edit a message
+router.patch("/:id", authenticateToken, messageController.updateMessage);
+
 // Delete a message
 router.delete("/:id", authenticateToken, messageController.deleteMessage);
 
