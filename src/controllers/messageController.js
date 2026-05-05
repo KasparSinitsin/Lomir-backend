@@ -27,7 +27,14 @@ const getUnreadCount = async (req, res) => {
            MAX(m.sent_at) AS latest
          FROM messages m
          JOIN team_members tm ON m.team_id = tm.team_id AND tm.user_id = $1
-         WHERE m.sender_id != $1 AND m.read_at IS NULL AND m.team_id IS NOT NULL
+         WHERE m.sender_id != $1
+           AND m.team_id IS NOT NULL
+           AND NOT EXISTS (
+             SELECT 1
+             FROM message_reads mr
+             WHERE mr.message_id = m.id
+               AND mr.user_id = $1
+           )
          GROUP BY m.team_id
        ),
        combined AS (
@@ -212,8 +219,13 @@ const getConversations = async (req, res) => {
         JOIN team_members tm ON m.team_id = tm.team_id
         WHERE tm.user_id = $1 
           AND m.sender_id != $1
-          AND m.read_at IS NULL
           AND m.team_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM message_reads mr
+            WHERE mr.message_id = m.id
+              AND mr.user_id = $1
+          )
         GROUP BY m.team_id
       )
       SELECT 
@@ -427,20 +439,59 @@ const getMessages = async (req, res) => {
       m.deleted_by,
       m.sent_at as created_at,
       m.read_at,
+      current_user_read.read_at as current_user_read_at,
+      COALESCE(read_stats.read_count, 0)::int as read_count,
+      read_stats.first_read_at,
+      COALESCE(read_stats.read_by_users, '[]'::jsonb) as read_by_users,
+      COALESCE(recipient_stats.recipient_count, 0)::int as recipient_count,
       u.username as sender_username,
       u.first_name as sender_first_name,
       u.last_name as sender_last_name,
       u.avatar_url as sender_avatar_url
     FROM messages m
     LEFT JOIN users u ON m.sender_id = u.id
+    LEFT JOIN LATERAL (
+      SELECT mr.read_at
+      FROM message_reads mr
+      WHERE mr.message_id = m.id
+        AND mr.user_id = $2
+      LIMIT 1
+    ) current_user_read ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT
+        COUNT(*)::int as read_count,
+        MIN(mr.read_at) as first_read_at,
+        COALESCE(
+          jsonb_agg(
+            jsonb_build_object(
+              'id', u.id,
+              'username', u.username,
+              'firstName', u.first_name,
+              'lastName', u.last_name
+            )
+            ORDER BY mr.read_at
+          ) FILTER (WHERE u.id IS NOT NULL),
+          '[]'::jsonb
+        ) as read_by_users
+      FROM message_reads mr
+      LEFT JOIN users u ON u.id = mr.user_id
+      WHERE mr.message_id = m.id
+        AND mr.user_id != m.sender_id
+    ) read_stats ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*)::int as recipient_count
+      FROM team_members tm
+      WHERE tm.team_id = m.team_id
+        AND tm.user_id != m.sender_id
+    ) recipient_stats ON TRUE
     WHERE m.team_id = $1
-    ${before ? "AND m.id < $2" : ""}
+    ${before ? "AND m.id < $3" : ""}
     ORDER BY m.sent_at DESC, m.id DESC
-    LIMIT $${before ? "3" : "2"}
+    LIMIT $${before ? "4" : "3"}
   `;
       queryParams = before
-        ? [conversationId, before, limit]
-        : [conversationId, limit];
+        ? [conversationId, userId, before, limit]
+        : [conversationId, userId, limit];
     } else {
       messagesQuery = `
     SELECT 
@@ -495,7 +546,13 @@ const getMessages = async (req, res) => {
       deletedAt: row.deleted_at,
       deletedBy: row.deleted_by,
       createdAt: row.created_at,
-      readAt: row.read_at,
+      readAt:
+        row.team_id && Number(row.sender_id) !== Number(userId)
+          ? row.current_user_read_at
+          : row.first_read_at || row.read_at,
+      readCount: parseInt(row.read_count, 10) || 0,
+      recipientCount: parseInt(row.recipient_count, 10) || 0,
+      readByUsers: row.read_by_users || [],
       senderUsername: row.sender_username,
       senderFirstName: row.sender_first_name,
       senderLastName: row.sender_last_name,
