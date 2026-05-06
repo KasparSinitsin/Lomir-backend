@@ -184,9 +184,13 @@ const getUserById = async (req, res) => {
     u.created_at,
     u.updated_at,
     COALESCE((
-      SELECT total_badge_credits
-      FROM v_user_total_badge_credits
-      WHERE user_id = u.id
+      SELECT SUM(ba.credits)
+      FROM badge_awards ba
+      WHERE ba.awarded_to_user_id = u.id
+        AND (
+          $2::BOOLEAN = TRUE
+          OR NOT (ba.id = ANY(COALESCE(u.hidden_award_ids, '{}'::INTEGER[])))
+        )
     ), 0) AS total_badge_credits,
 
     (
@@ -1480,30 +1484,61 @@ const deletionPreview = async (req, res) => {
 /**
  * @description Get tags for a specific user
  * @route GET /api/users/:id/tags
- * @access Public
+ * @access Public, with optional auth for own-profile hidden award visibility
  */
 const getUserTags = async (req, res) => {
   try {
     const userId = req.params.id;
+    const canViewHiddenAwards = Number(req.user?.id) === Number(userId);
+
+    await ensureBadgeVisibilityColumns();
 
     const result = await pool.query(
       `
-      SELECT 
-  t.id,
-  t.name,
-  t.category,
-  t.supercategory,
-  ut.experience_level,
-  ut.interest_level,
-  ut.badge_credits,
-  ut.dominant_badge_category,
-  (SELECT COUNT(*) FROM badge_awards ba WHERE ba.tag_id = t.id AND ba.awarded_to_user_id = ut.user_id) AS linked_badge_count,
-  (SELECT COUNT(DISTINCT ba.awarded_by_user_id) FROM badge_awards ba WHERE ba.tag_id = t.id AND ba.awarded_to_user_id = ut.user_id) AS awarder_count
-FROM user_tags ut
-JOIN tags t ON ut.tag_id = t.id
-WHERE ut.user_id = $1
+      SELECT
+        t.id,
+        t.name,
+        t.category,
+        t.supercategory,
+        ut.experience_level,
+        ut.interest_level,
+        COALESCE(tag_award_stats.badge_credits, 0)::INT AS badge_credits,
+        tag_award_stats.dominant_badge_category,
+        COALESCE(tag_award_stats.linked_badge_count, 0)::INT AS linked_badge_count,
+        COALESCE(tag_award_stats.awarder_count, 0)::INT AS awarder_count
+      FROM user_tags ut
+      JOIN users u ON u.id = ut.user_id
+      JOIN tags t ON ut.tag_id = t.id
+      LEFT JOIN LATERAL (
+        SELECT
+          COALESCE(SUM(ba.credits), 0)::INT AS badge_credits,
+          COUNT(*)::INT AS linked_badge_count,
+          COUNT(DISTINCT ba.awarded_by_user_id)::INT AS awarder_count,
+          (
+            SELECT b2.category
+            FROM badge_awards ba2
+            JOIN badges b2 ON b2.id = ba2.badge_id
+            WHERE ba2.tag_id = t.id
+              AND ba2.awarded_to_user_id = ut.user_id
+              AND (
+                $2::BOOLEAN = TRUE
+                OR NOT (ba2.id = ANY(COALESCE(u.hidden_award_ids, '{}'::INTEGER[])))
+              )
+            GROUP BY b2.category
+            ORDER BY SUM(ba2.credits) DESC, b2.category ASC
+            LIMIT 1
+          ) AS dominant_badge_category
+        FROM badge_awards ba
+        WHERE ba.tag_id = t.id
+          AND ba.awarded_to_user_id = ut.user_id
+          AND (
+            $2::BOOLEAN = TRUE
+            OR NOT (ba.id = ANY(COALESCE(u.hidden_award_ids, '{}'::INTEGER[])))
+          )
+      ) tag_award_stats ON TRUE
+      WHERE ut.user_id = $1
     `,
-      [userId],
+      [userId, canViewHiddenAwards],
     );
 
     res.status(200).json({
