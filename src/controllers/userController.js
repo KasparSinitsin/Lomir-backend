@@ -62,6 +62,15 @@ const insertNotificationRecord = async (
   );
 };
 
+const ensureBadgeVisibilityColumns = async () => {
+  await pool.query(
+    `ALTER TABLE users
+     ADD COLUMN IF NOT EXISTS hide_badges BOOLEAN DEFAULT FALSE,
+     ADD COLUMN IF NOT EXISTS hidden_badge_ids INTEGER[] DEFAULT '{}'::INTEGER[],
+     ADD COLUMN IF NOT EXISTS hidden_award_ids INTEGER[] DEFAULT '{}'::INTEGER[]`,
+  );
+};
+
 const getSuccessorCandidatesByTeam = async (queryable, teamIds, excludedUserId) => {
   if (teamIds.length === 0) {
     return new Map();
@@ -148,6 +157,8 @@ const getUserById = async (req, res) => {
       console.log(`Fetching user with ID: ${userId}`);
     }
 
+    await ensureBadgeVisibilityColumns();
+
     // Fetch user with tags as a comma-separated string
     const result = await pool.query(
       `
@@ -167,12 +178,19 @@ const getUserById = async (req, res) => {
     u.avatar_url,
     u.is_public,
     u.is_synthetic,
+    COALESCE(u.hide_badges, FALSE) AS hide_badges,
+    COALESCE(u.hidden_badge_ids, '{}'::INTEGER[]) AS hidden_badge_ids,
+    COALESCE(u.hidden_award_ids, '{}'::INTEGER[]) AS hidden_award_ids,
     u.created_at,
     u.updated_at,
     COALESCE((
-      SELECT total_badge_credits
-      FROM v_user_total_badge_credits
-      WHERE user_id = u.id
+      SELECT SUM(ba.credits)
+      FROM badge_awards ba
+      WHERE ba.awarded_to_user_id = u.id
+        AND (
+          $2::BOOLEAN = TRUE
+          OR NOT (ba.id = ANY(COALESCE(u.hidden_award_ids, '{}'::INTEGER[])))
+        )
     ), 0) AS total_badge_credits,
 
     (
@@ -185,35 +203,84 @@ const getUserById = async (req, res) => {
       SELECT COALESCE(
         json_agg(
           json_build_object(
-            'id', v.badge_id,
-            'name', v.badge_name,
-            'category', v.category,
-            'color', v.badge_color,
-            'cat_image_url', v.cat_image_url,
-            'total_credits', v.total_credits,
-            'award_count', v.award_count,
-            'awarder_count', v.awarder_count,
-            'category_total_credits', v.category_total_credits,
-            'category_award_count', v.category_award_count,
-            'category_awarder_count', v.category_awarder_count,
-            'last_awarded_at', v.last_awarded_at
+            'id', badge_rows.badge_id,
+            'name', badge_rows.badge_name,
+            'category', badge_rows.category,
+            'color', badge_rows.badge_color,
+            'cat_image_url', badge_rows.cat_image_url,
+            'total_credits', badge_rows.total_credits,
+            'award_count', badge_rows.award_count,
+            'awarder_count', badge_rows.awarder_count,
+            'category_total_credits', badge_rows.category_total_credits,
+            'category_award_count', badge_rows.category_award_count,
+            'category_awarder_count', badge_rows.category_awarder_count,
+            'last_awarded_at', badge_rows.last_awarded_at
           )
           ORDER BY
-            v.category_total_credits DESC,
-            v.category ASC,
-            v.total_credits DESC,
-            v.badge_name ASC
+            badge_rows.category_total_credits DESC,
+            badge_rows.category ASC,
+            badge_rows.total_credits DESC,
+            badge_rows.badge_name ASC
         ),
         '[]'::json
       )
-      FROM v_user_badges_with_category_totals v
-      WHERE v.user_id = u.id
+      FROM (
+        WITH visible_awards AS (
+          SELECT
+            ba.id,
+            ba.badge_id,
+            ba.credits,
+            ba.awarded_by_user_id,
+            ba.created_at,
+            b.name AS badge_name,
+            b.category,
+            b.color AS badge_color,
+            b.cat_image_url
+          FROM badge_awards ba
+          JOIN badges b ON b.id = ba.badge_id
+          WHERE ba.awarded_to_user_id = u.id
+            AND (
+              $2::BOOLEAN = TRUE
+              OR NOT (ba.id = ANY(COALESCE(u.hidden_award_ids, '{}'::INTEGER[])))
+            )
+        ),
+        badge_totals AS (
+          SELECT
+            badge_id,
+            badge_name,
+            category,
+            badge_color,
+            cat_image_url,
+            COALESCE(SUM(credits), 0)::INT AS total_credits,
+            COUNT(*)::INT AS award_count,
+            COUNT(DISTINCT awarded_by_user_id)::INT AS awarder_count,
+            MAX(created_at) AS last_awarded_at
+          FROM visible_awards
+          GROUP BY badge_id, badge_name, category, badge_color, cat_image_url
+        ),
+        category_totals AS (
+          SELECT
+            category,
+            COALESCE(SUM(credits), 0)::INT AS category_total_credits,
+            COUNT(*)::INT AS category_award_count,
+            COUNT(DISTINCT awarded_by_user_id)::INT AS category_awarder_count
+          FROM visible_awards
+          GROUP BY category
+        )
+        SELECT
+          bt.*,
+          ct.category_total_credits,
+          ct.category_award_count,
+          ct.category_awarder_count
+        FROM badge_totals bt
+        JOIN category_totals ct ON ct.category = bt.category
+      ) badge_rows
     ) as badges
 
   FROM users u
   WHERE u.id = $1
 `,
-      [userId],
+      [userId, Number(req.user?.id) === Number(userId)],
     );
 
     if (result.rows.length === 0) {
@@ -1417,30 +1484,61 @@ const deletionPreview = async (req, res) => {
 /**
  * @description Get tags for a specific user
  * @route GET /api/users/:id/tags
- * @access Public
+ * @access Public, with optional auth for own-profile hidden award visibility
  */
 const getUserTags = async (req, res) => {
   try {
     const userId = req.params.id;
+    const canViewHiddenAwards = Number(req.user?.id) === Number(userId);
+
+    await ensureBadgeVisibilityColumns();
 
     const result = await pool.query(
       `
-      SELECT 
-  t.id,
-  t.name,
-  t.category,
-  t.supercategory,
-  ut.experience_level,
-  ut.interest_level,
-  ut.badge_credits,
-  ut.dominant_badge_category,
-  (SELECT COUNT(*) FROM badge_awards ba WHERE ba.tag_id = t.id AND ba.awarded_to_user_id = ut.user_id) AS linked_badge_count,
-  (SELECT COUNT(DISTINCT ba.awarded_by_user_id) FROM badge_awards ba WHERE ba.tag_id = t.id AND ba.awarded_to_user_id = ut.user_id) AS awarder_count
-FROM user_tags ut
-JOIN tags t ON ut.tag_id = t.id
-WHERE ut.user_id = $1
+      SELECT
+        t.id,
+        t.name,
+        t.category,
+        t.supercategory,
+        ut.experience_level,
+        ut.interest_level,
+        COALESCE(tag_award_stats.badge_credits, 0)::INT AS badge_credits,
+        tag_award_stats.dominant_badge_category,
+        COALESCE(tag_award_stats.linked_badge_count, 0)::INT AS linked_badge_count,
+        COALESCE(tag_award_stats.awarder_count, 0)::INT AS awarder_count
+      FROM user_tags ut
+      JOIN users u ON u.id = ut.user_id
+      JOIN tags t ON ut.tag_id = t.id
+      LEFT JOIN LATERAL (
+        SELECT
+          COALESCE(SUM(ba.credits), 0)::INT AS badge_credits,
+          COUNT(*)::INT AS linked_badge_count,
+          COUNT(DISTINCT ba.awarded_by_user_id)::INT AS awarder_count,
+          (
+            SELECT b2.category
+            FROM badge_awards ba2
+            JOIN badges b2 ON b2.id = ba2.badge_id
+            WHERE ba2.tag_id = t.id
+              AND ba2.awarded_to_user_id = ut.user_id
+              AND (
+                $2::BOOLEAN = TRUE
+                OR NOT (ba2.id = ANY(COALESCE(u.hidden_award_ids, '{}'::INTEGER[])))
+              )
+            GROUP BY b2.category
+            ORDER BY SUM(ba2.credits) DESC, b2.category ASC
+            LIMIT 1
+          ) AS dominant_badge_category
+        FROM badge_awards ba
+        WHERE ba.tag_id = t.id
+          AND ba.awarded_to_user_id = ut.user_id
+          AND (
+            $2::BOOLEAN = TRUE
+            OR NOT (ba.id = ANY(COALESCE(u.hidden_award_ids, '{}'::INTEGER[])))
+          )
+      ) tag_award_stats ON TRUE
+      WHERE ut.user_id = $1
     `,
-      [userId],
+      [userId, canViewHiddenAwards],
     );
 
     res.status(200).json({
@@ -1574,6 +1672,87 @@ WHERE ut.user_id = $1
   }
 };
 
+const updateUserBadgeVisibility = async (req, res) => {
+  try {
+    const userId = Number(req.params.id);
+    const awardId = Number(req.params.awardId);
+    const hidden = req.body?.hidden !== false;
+
+    if (!Number.isFinite(userId) || !Number.isFinite(awardId)) {
+      return res.status(400).json({
+        success: false,
+        message: "Valid user ID and award ID are required",
+      });
+    }
+
+    if (Number(req.user.id) !== userId) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only update badge visibility on your own profile",
+      });
+    }
+
+    await ensureBadgeVisibilityColumns();
+
+    const awardResult = await pool.query(
+      `SELECT id, badge_id
+       FROM badge_awards
+       WHERE id = $1
+         AND awarded_to_user_id = $2
+       LIMIT 1`,
+      [awardId, userId],
+    );
+
+    if (awardResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Badge award not found",
+      });
+    }
+
+    const result = await pool.query(
+      hidden
+        ? `UPDATE users
+           SET hidden_award_ids = (
+                 SELECT ARRAY(
+                   SELECT DISTINCT value
+                   FROM unnest(COALESCE(hidden_award_ids, '{}'::INTEGER[]) || $2::INTEGER) AS hidden_ids(value)
+                   ORDER BY value
+                 )
+               ),
+               updated_at = NOW()
+           WHERE id = $1
+           RETURNING hidden_award_ids`
+        : `UPDATE users
+           SET hidden_award_ids = array_remove(COALESCE(hidden_award_ids, '{}'::INTEGER[]), $2::INTEGER),
+               updated_at = NOW()
+           WHERE id = $1
+           RETURNING hidden_award_ids`,
+      [userId, awardId],
+    );
+
+    res.status(200).json({
+      success: true,
+      message: hidden
+        ? "Badge hidden successfully"
+        : "Badge made visible successfully",
+      data: {
+        awardId,
+        badgeId: awardResult.rows[0].badge_id,
+        hidden,
+        hiddenAwardIds: result.rows[0]?.hidden_award_ids ?? [],
+      },
+    });
+  } catch (error) {
+    console.error("Error updating badge visibility:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error updating badge visibility",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
 /**
  * @description Get badges for a specific user
  * @route GET /api/users/:id/badges
@@ -1582,6 +1761,9 @@ WHERE ut.user_id = $1
 const getUserBadges = async (req, res) => {
   try {
     const userId = req.params.id;
+    const canViewHiddenAwards = Number(req.user?.id) === Number(userId);
+
+    await ensureBadgeVisibilityColumns();
 
     const result = await pool.query(
       `
@@ -1622,10 +1804,15 @@ const getUserBadges = async (req, res) => {
       LEFT JOIN users awarder ON ba.awarded_by_user_id = awarder.id
       LEFT JOIN teams t ON ba.team_id = t.id
       LEFT JOIN tags tag ON ba.tag_id = tag.id
+      LEFT JOIN users awardee ON awardee.id = ba.awarded_to_user_id
       WHERE ba.awarded_to_user_id = $1
+        AND (
+          $2::BOOLEAN = TRUE
+          OR NOT (ba.id = ANY(COALESCE(awardee.hidden_award_ids, '{}'::INTEGER[])))
+        )
       ORDER BY ba.created_at DESC, ba.id DESC
       `,
-      [userId],
+      [userId, canViewHiddenAwards],
     );
 
     res.status(200).json({ success: true, data: result.rows });
@@ -1648,5 +1835,6 @@ module.exports = {
   deleteAvatar,
   getUserTags,
   updateUserTags,
+  updateUserBadgeVisibility,
   getUserBadges,
 };
