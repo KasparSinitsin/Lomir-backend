@@ -45,8 +45,12 @@ router.delete(
 // router.get("/:id/teams", auth.authenticateToken, userController.getUserTeams);
 
 // GET /api/users/:id/tags - Get tags associated with a specific user
-// Access: Public (as written - add auth.authenticateToken if it should be private)
-router.get("/:id/tags", userController.getUserTags);
+// Access: Public, with optional auth for own-profile hidden award visibility
+router.get(
+  "/:id/tags",
+  auth.optionalAuthenticateToken,
+  userController.getUserTags,
+);
 
 // PUT /api/users/:id/tags - Update tags associated with a specific user
 // Access: Private (Requires valid token)

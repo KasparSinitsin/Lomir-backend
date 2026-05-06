@@ -58,6 +58,15 @@ const refreshBadgeViews = async (clientOrPool) => {
   }
 };
 
+const ensureBadgeVisibilityColumns = async (clientOrPool = pool) => {
+  await clientOrPool.query(
+    `ALTER TABLE users
+     ADD COLUMN IF NOT EXISTS hide_badges BOOLEAN DEFAULT FALSE,
+     ADD COLUMN IF NOT EXISTS hidden_badge_ids INTEGER[] DEFAULT '{}'::INTEGER[],
+     ADD COLUMN IF NOT EXISTS hidden_award_ids INTEGER[] DEFAULT '{}'::INTEGER[]`,
+  );
+};
+
 // ============================================================================
 // Allowed context types for badge awards
 // ============================================================================
@@ -287,6 +296,7 @@ const awardBadge = async (req, res) => {
 
     // ── Insert award (main transaction) ──
     await client.query("BEGIN");
+    await ensureBadgeVisibilityColumns(client);
 
     const insertResult = await client.query(
       `INSERT INTO badge_awards
@@ -311,6 +321,23 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
     if (process.env.NODE_ENV !== "production") {
       console.log("🏅 badge_awards INSERT success! ID:", insertResult.rows[0].id);
     }
+
+    // New awards start private so the receiver can confirm them before they
+    // become visible on their public profile.
+    const hiddenAwardsResult = await client.query(
+      `UPDATE users
+       SET hidden_award_ids = (
+             SELECT ARRAY(
+               SELECT DISTINCT value
+               FROM unnest(COALESCE(hidden_award_ids, '{}'::INTEGER[]) || $2::INTEGER) AS hidden_ids(value)
+               ORDER BY value
+             )
+           ),
+           updated_at = NOW()
+       WHERE id = $1
+       RETURNING hidden_award_ids`,
+      [awarded_to_user_id, insertResult.rows[0].id],
+    );
 
     // ── Non-critical: Update user_badges summary table (SAVEPOINT) ──
     try {
@@ -435,7 +462,11 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
     res.status(201).json({
       success: true,
       message: "Badge awarded successfully",
-      data: insertResult.rows[0],
+      data: {
+        ...insertResult.rows[0],
+        hidden: true,
+        hidden_award_ids: hiddenAwardsResult.rows[0]?.hidden_award_ids ?? [],
+      },
     });
   } catch (error) {
     await client.query("ROLLBACK");
