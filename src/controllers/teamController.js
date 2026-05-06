@@ -917,6 +917,16 @@ const cancelApplication = async (req, res) => {
       applicationId,
     ]);
 
+    // Remove stale application_received notifications for this team + applicant
+    await db.pool.query(
+      `DELETE FROM notifications
+       WHERE type = 'application_received'
+         AND team_id = $1
+         AND actor_id = $2
+         AND read_at IS NULL`,
+      [application.team_id, userId],
+    );
+
     // Get team admins and owners to notify
     const adminsResult = await db.pool.query(
       `SELECT tm.user_id, u.first_name, u.last_name, u.username
@@ -1805,6 +1815,18 @@ const handleTeamApplication = async (req, res) => {
     try {
       await client.query("BEGIN");
 
+      // Remove unread application_received notifications for all admins now that the application is being handled
+      const deletedAdminNotifs = await client.query(
+        `DELETE FROM notifications
+         WHERE type = 'application_received'
+           AND team_id = $1
+           AND actor_id = $2
+           AND read_at IS NULL
+         RETURNING user_id`,
+        [application.team_id, application.applicant_id],
+      );
+      const affectedAdminIds = [...new Set(deletedAdminNotifs.rows.map((r) => r.user_id))];
+
       if (action === "approve") {
         // Check if applicant is already a member (internal role application)
         const existingMember = await client.query(
@@ -1948,6 +1970,9 @@ const handleTeamApplication = async (req, res) => {
               type: "member_joined",
               teamId: application.team_id,
             });
+            for (const adminId of affectedAdminIds) {
+              io.to(`user:${adminId}`).emit("notification:updated");
+            }
           }
         } catch (notificationError) {
           console.error(
@@ -2044,13 +2069,16 @@ const handleTeamApplication = async (req, res) => {
             actorId: userId,
           });
 
-          // Emit socket event
+          // Emit socket events
           const io = req.app.get("io");
           if (io) {
             io.to(`user:${application.applicant_id}`).emit("notification:new", {
               type: "application_rejected",
               teamId: application.team_id,
             });
+            for (const adminId of affectedAdminIds) {
+              io.to(`user:${adminId}`).emit("notification:updated");
+            }
           }
         } catch (notificationError) {
           console.error(

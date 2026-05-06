@@ -215,7 +215,7 @@ const getUnreadCount = async (req, res) => {
            )
            FROM notifications n2
            WHERE n2.user_id = $1 AND n2.read_at IS NULL
-           ORDER BY n2.created_at DESC
+           ORDER BY n2.created_at ASC
            LIMIT 1
          ) AS first_unread_json
        FROM notifications
@@ -243,11 +243,25 @@ const getUnreadCount = async (req, res) => {
       };
     }
 
+    const typeCountResult = await db.query(
+      `SELECT type, COUNT(*)::int AS count
+       FROM notifications
+       WHERE user_id = $1 AND read_at IS NULL
+       GROUP BY type`,
+      [userId],
+    );
+
+    const typeCounts = {};
+    for (const row of typeCountResult.rows) {
+      typeCounts[row.type] = row.count;
+    }
+
     res.status(200).json({
       success: true,
       data: {
         count: unreadCount,
         firstUnread,
+        typeCounts,
       },
     });
   } catch (error) {
