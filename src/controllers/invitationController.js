@@ -1117,10 +1117,19 @@ const cancelInvitation = async (req, res) => {
 
     // Cancel the invitation
     await db.pool.query(
-      `UPDATE team_invitations 
+      `UPDATE team_invitations
        SET status = 'canceled', responded_at = NOW()
        WHERE id = $1`,
       [invitationId],
+    );
+
+    // Remove stale invitation_received notification for the invitee
+    await db.pool.query(
+      `DELETE FROM notifications
+       WHERE type = 'invitation_received'
+         AND reference_id = $1
+         AND read_at IS NULL`,
+      [parseInt(invitationId)],
     );
 
     // System message format (parseable + clickable team/user)

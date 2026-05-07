@@ -169,6 +169,11 @@ io.on("connection", (socket) => {
       }
 
       const db = require("./config/database");
+      const senderResult = await db.query(
+        `SELECT username, first_name, last_name FROM users WHERE id = $1`,
+        [userId],
+      );
+      const sender = senderResult.rows[0] || {};
       let messageResult;
 
       if (type === "team") {
@@ -201,7 +206,9 @@ io.on("connection", (socket) => {
           conversationId: String(conversationId),
           teamId: parseInt(conversationId),
           senderId: userId,
-          senderUsername: socket.username,
+          senderUsername: sender.username || socket.username,
+          senderFirstName: sender.first_name,
+          senderLastName: sender.last_name,
           content: messageResult.rows[0].content,
           imageUrl: messageResult.rows[0].image_url,
           fileUrl: messageResult.rows[0].file_url,
@@ -237,7 +244,9 @@ io.on("connection", (socket) => {
           id: messageResult.rows[0].id,
           conversationId: String(conversationId),
           senderId: userId,
-          senderUsername: socket.username,
+          senderUsername: sender.username || socket.username,
+          senderFirstName: sender.first_name,
+          senderLastName: sender.last_name,
           content: messageResult.rows[0].content,
           imageUrl: messageResult.rows[0].image_url,
           fileUrl: messageResult.rows[0].file_url,

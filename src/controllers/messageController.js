@@ -16,7 +16,7 @@ const getUnreadCount = async (req, res) => {
            COUNT(*) AS cnt,
            MAX(sent_at) AS latest
          FROM messages
-         WHERE receiver_id = $1 AND read_at IS NULL AND team_id IS NULL
+         WHERE receiver_id = $1 AND read_at IS NULL AND team_id IS NULL AND deleted_at IS NULL
          GROUP BY sender_id
        ),
        team_unread AS (
@@ -29,6 +29,7 @@ const getUnreadCount = async (req, res) => {
          JOIN team_members tm ON m.team_id = tm.team_id AND tm.user_id = $1
          WHERE m.sender_id != $1
            AND m.team_id IS NOT NULL
+           AND m.deleted_at IS NULL
            AND NOT EXISTS (
              SELECT 1
              FROM message_reads mr
@@ -45,7 +46,15 @@ const getUnreadCount = async (req, res) => {
        SELECT
          COALESCE(SUM(cnt), 0)::int AS total_count,
          (SELECT conversation_id FROM combined ORDER BY latest DESC LIMIT 1) AS first_conversation_id,
-         (SELECT type FROM combined ORDER BY latest DESC LIMIT 1) AS first_type
+         (SELECT type FROM combined ORDER BY latest DESC LIMIT 1) AS first_type,
+         (SELECT COUNT(*)::int FROM team_unread) AS team_count,
+         (SELECT COUNT(DISTINCT m.sender_id)::int
+          FROM messages m
+          WHERE (m.receiver_id = $1 AND m.read_at IS NULL AND m.team_id IS NULL AND m.deleted_at IS NULL)
+             OR (m.team_id IS NOT NULL AND m.sender_id != $1 AND m.deleted_at IS NULL
+                 AND EXISTS (SELECT 1 FROM team_members tm WHERE tm.team_id = m.team_id AND tm.user_id = $1)
+                 AND NOT EXISTS (SELECT 1 FROM message_reads mr WHERE mr.message_id = m.id AND mr.user_id = $1))
+         ) AS sender_count
        FROM combined`,
       [userId],
     );
@@ -64,7 +73,9 @@ const getUnreadCount = async (req, res) => {
       success: true,
       data: {
         count: totalUnreadCount,
-        firstUnread: firstUnread,
+        firstUnread,
+        teamCount: parseInt(unreadRow.team_count, 10) || 0,
+        senderCount: parseInt(unreadRow.sender_count, 10) || 0,
       },
     });
   } catch (error) {
