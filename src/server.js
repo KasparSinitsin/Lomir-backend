@@ -260,6 +260,66 @@ io.on("connection", (socket) => {
         io.to(`user:${userId}`).emit("message:received", message);
         io.to(`user:${conversationId}`).emit("message:received", message);
       }
+
+      // Notify mentioned users
+      if (content) {
+        const { createNotification } = require("./controllers/notificationController");
+        const MENTION_RE = /@\[([^\]]+)\]\(([^)]+)\)/g;
+        const senderName =
+          `${sender.first_name || ""} ${sender.last_name || ""}`.trim() ||
+          sender.username ||
+          "Someone";
+        let mentionMatch;
+        const notified = new Set();
+
+        // Expand @all into every participant except the sender
+        if (content.includes("@[all](all)")) {
+          let allUserIds = [];
+          if (type === "team") {
+            const allMembersResult = await db.query(
+              `SELECT user_id FROM team_members WHERE team_id = $1 AND user_id != $2`,
+              [conversationId, userId],
+            );
+            allUserIds = allMembersResult.rows.map((r) => String(r.user_id));
+          } else {
+            allUserIds = [String(conversationId)];
+          }
+          for (const uid of allUserIds) notified.add(uid);
+        }
+
+        // Collect individual mentions
+        while ((mentionMatch = MENTION_RE.exec(content)) !== null) {
+          const mentionedUserId = mentionMatch[2];
+          if (mentionedUserId === "all" || mentionedUserId === String(userId)) continue;
+          notified.add(mentionedUserId);
+        }
+
+        for (const mentionedUserId of notified) {
+          try {
+            await createNotification({
+              userId: mentionedUserId,
+              type: "message_mention",
+              title: `${senderName} mentioned you`,
+              message:
+                content.length > 100 ? `${content.slice(0, 97)}…` : content,
+              referenceType: type === "team" ? "team" : "direct",
+              referenceId: messageResult.rows[0].id,
+              teamId: type === "team" ? parseInt(conversationId) : null,
+              actorId: userId,
+            });
+            io.to(`user:${mentionedUserId}`).emit("notification:new", {
+              type: "message_mention",
+              teamId: type === "team" ? parseInt(conversationId) : null,
+              actorId: userId,
+            });
+          } catch (mentionErr) {
+            console.error(
+              `Error creating mention notification for ${mentionedUserId}:`,
+              mentionErr,
+            );
+          }
+        }
+      }
     } catch (error) {
       console.error("Error handling new message:", error);
       socket.emit("error", { message: "Error sending message" });

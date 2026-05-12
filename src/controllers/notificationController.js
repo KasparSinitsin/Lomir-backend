@@ -69,6 +69,11 @@ const getNavigationUrl = (notification) => {
       return `/profile?scrollTo=badges&highlightBadge=${encodeURIComponent(badgeName)}`;
     }
 
+    case "message_mention":
+      // Navigate to team chat if mentioned there, otherwise to DM with sender
+      if (team_id) return `/chat/${team_id}?type=team`;
+      return `/chat/${actor_id}?type=direct`;
+
     default:
       return "/teams/my-teams";
   }
