@@ -126,6 +126,7 @@ io.on("connection", (socket) => {
         imageUrl,
         fileUrl,
         fileName,
+        replyToId,
       } = data;
 
       // Allow content OR imageUrl OR fileUrl
@@ -175,16 +176,18 @@ io.on("connection", (socket) => {
       );
       const sender = senderResult.rows[0] || {};
       let messageResult;
+      let replyTo = null;
 
       if (type === "team") {
         messageResult = await db.query(
-          `INSERT INTO messages (sender_id, team_id, content, image_url, file_url, file_name, file_size, file_expires_at, sent_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-         RETURNING id, sender_id, team_id, content, image_url, file_url, file_name, file_size, file_expires_at, sent_at`,
+          `INSERT INTO messages (sender_id, team_id, content, reply_to_id, image_url, file_url, file_name, file_size, file_expires_at, sent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+         RETURNING id, sender_id, team_id, content, reply_to_id, image_url, file_url, file_name, file_size, file_expires_at, sent_at`,
           [
             userId,
             conversationId,
             content?.trim() || null,
+            replyToId || null,
             imageUrl || null,
             fileUrl || null,
             fileName || null,
@@ -192,6 +195,28 @@ io.on("connection", (socket) => {
             fileExpiresAt,
           ],
         );
+
+        if (replyToId) {
+          const replyResult = await db.query(
+            `SELECT m.id, m.content, m.sender_id,
+                    u.username, u.first_name
+             FROM messages m
+             LEFT JOIN users u ON m.sender_id = u.id
+             WHERE m.id = $1`,
+            [replyToId],
+          );
+
+          if (replyResult.rows.length > 0) {
+            const r = replyResult.rows[0];
+            replyTo = {
+              id: r.id,
+              content: r.content ? r.content.slice(0, 150) : null,
+              senderId: r.sender_id,
+              senderUsername: r.username,
+              senderFirstName: r.first_name,
+            };
+          }
+        }
 
         const recipientCountResult = await db.query(
           `SELECT COUNT(*)::int as recipient_count
@@ -210,6 +235,8 @@ io.on("connection", (socket) => {
           senderFirstName: sender.first_name,
           senderLastName: sender.last_name,
           content: messageResult.rows[0].content,
+          replyToId: messageResult.rows[0].reply_to_id,
+          replyTo,
           imageUrl: messageResult.rows[0].image_url,
           fileUrl: messageResult.rows[0].file_url,
           fileName: messageResult.rows[0].file_name,
@@ -225,13 +252,14 @@ io.on("connection", (socket) => {
         io.to(`team:${conversationId}`).emit("message:received", message);
       } else {
         messageResult = await db.query(
-          `INSERT INTO messages (sender_id, receiver_id, content, image_url, file_url, file_name, file_size, file_expires_at, sent_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-         RETURNING id, sender_id, receiver_id, content, image_url, file_url, file_name, file_size, file_expires_at, sent_at`,
+          `INSERT INTO messages (sender_id, receiver_id, content, reply_to_id, image_url, file_url, file_name, file_size, file_expires_at, sent_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+         RETURNING id, sender_id, receiver_id, content, reply_to_id, image_url, file_url, file_name, file_size, file_expires_at, sent_at`,
           [
             userId,
             conversationId,
             content?.trim() || null,
+            replyToId || null,
             imageUrl || null,
             fileUrl || null,
             fileName || null,
@@ -239,6 +267,28 @@ io.on("connection", (socket) => {
             fileExpiresAt,
           ],
         );
+
+        if (replyToId) {
+          const replyResult = await db.query(
+            `SELECT m.id, m.content, m.sender_id,
+                    u.username, u.first_name
+             FROM messages m
+             LEFT JOIN users u ON m.sender_id = u.id
+             WHERE m.id = $1`,
+            [replyToId],
+          );
+
+          if (replyResult.rows.length > 0) {
+            const r = replyResult.rows[0];
+            replyTo = {
+              id: r.id,
+              content: r.content ? r.content.slice(0, 150) : null,
+              senderId: r.sender_id,
+              senderUsername: r.username,
+              senderFirstName: r.first_name,
+            };
+          }
+        }
 
         const message = {
           id: messageResult.rows[0].id,
@@ -248,6 +298,8 @@ io.on("connection", (socket) => {
           senderFirstName: sender.first_name,
           senderLastName: sender.last_name,
           content: messageResult.rows[0].content,
+          replyToId: messageResult.rows[0].reply_to_id,
+          replyTo,
           imageUrl: messageResult.rows[0].image_url,
           fileUrl: messageResult.rows[0].file_url,
           fileName: messageResult.rows[0].file_name,
@@ -259,6 +311,66 @@ io.on("connection", (socket) => {
 
         io.to(`user:${userId}`).emit("message:received", message);
         io.to(`user:${conversationId}`).emit("message:received", message);
+      }
+
+      // Notify mentioned users
+      if (content) {
+        const { createNotification } = require("./controllers/notificationController");
+        const MENTION_RE = /@\[([^\]]+)\]\(([^)]+)\)/g;
+        const senderName =
+          `${sender.first_name || ""} ${sender.last_name || ""}`.trim() ||
+          sender.username ||
+          "Someone";
+        let mentionMatch;
+        const notified = new Set();
+
+        // Expand @all into every participant except the sender
+        if (content.includes("@[all](all)")) {
+          let allUserIds = [];
+          if (type === "team") {
+            const allMembersResult = await db.query(
+              `SELECT user_id FROM team_members WHERE team_id = $1 AND user_id != $2`,
+              [conversationId, userId],
+            );
+            allUserIds = allMembersResult.rows.map((r) => String(r.user_id));
+          } else {
+            allUserIds = [String(conversationId)];
+          }
+          for (const uid of allUserIds) notified.add(uid);
+        }
+
+        // Collect individual mentions
+        while ((mentionMatch = MENTION_RE.exec(content)) !== null) {
+          const mentionedUserId = mentionMatch[2];
+          if (mentionedUserId === "all" || mentionedUserId === String(userId)) continue;
+          notified.add(mentionedUserId);
+        }
+
+        for (const mentionedUserId of notified) {
+          try {
+            await createNotification({
+              userId: mentionedUserId,
+              type: "message_mention",
+              title: `${senderName} mentioned you`,
+              message:
+                content.length > 100 ? `${content.slice(0, 97)}…` : content,
+              referenceType: type === "team" ? "team" : "direct",
+              referenceId: messageResult.rows[0].id,
+              teamId: type === "team" ? parseInt(conversationId) : null,
+              actorId: userId,
+            });
+            io.to(`user:${mentionedUserId}`).emit("notification:new", {
+              type: "message_mention",
+              teamId: type === "team" ? parseInt(conversationId) : null,
+              actorId: userId,
+            });
+          } catch (mentionErr) {
+            console.error(
+              `Error creating mention notification for ${mentionedUserId}:`,
+              mentionErr,
+            );
+          }
+        }
       }
     } catch (error) {
       console.error("Error handling new message:", error);
