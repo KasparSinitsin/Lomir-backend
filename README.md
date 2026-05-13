@@ -32,9 +32,9 @@ Contact the project owner for a demo login, or register a new account with a val
 - **Vacant Roles** — Post open positions on teams with desired tags, badges, and location preferences
 - **Matching Engine** — Score users against roles (and vice versa) using weighted tag/badge/distance criteria
 - **Search** — Full-text search across teams, users, and roles with tag/badge/location filtering and "Best Match" sorting
-- **Chat** — Real-time direct and team group messaging via Socket.IO, including typing indicators and read receipts
+- **Chat** — Real-time direct and team group messaging via Socket.IO, including typing indicators, read receipts, message replies (reply-to with sender preview), and @mention notifications
 - **Badge System** — 30 badges across 5 categories; award badges to teammates with reasons and context
-- **Notifications** — In-app notifications for invitations, applications, badge awards, and messages
+- **Notifications** — In-app notifications for invitations, applications, badge awards, messages, and @mentions; each type navigates to the relevant context
 - **Account Deletion** — Full transactional account deletion with impact preview, automatic team ownership transfer, role reopening, and "Former Lomir User" handling for preserved references
 - **Geocoding** — Postal code lookup via Nominatim with built-in fallback mapping
 - **Security** — Rate limiting on auth endpoints, CORS allowlist, password policy enforcement, production log scrubbing
@@ -238,15 +238,15 @@ The server uses Socket.IO for real-time features. Clients authenticate via JWT t
 
 | Event | Direction | Description |
 |---|---|---|
-| `message:new` | Client → Server | Send a direct or team message |
-| `message:received` | Server → Client | New message broadcast |
+| `message:new` | Client → Server | Send a direct or team message; accepts `replyToId` for threaded replies |
+| `message:received` | Server → Client | New message broadcast; includes `replyTo` object (id, content preview, sender) when replying |
 | `message:read` | Client → Server | Mark messages as read |
 | `message:status` | Server → Client | Read receipt notification |
 | `typing:start` / `typing:stop` | Bidirectional | Typing indicators |
 | `users:online` | Server → Client | Updated list of online user IDs |
 | `team:member_left` | Server → Client | Member removal (e.g. account deletion) |
 | `conversation:deleted` | Server → Client | DM conversation removed |
-| `notification:new` | Server → Client | Ownership transfers, role reopenings, team dissolutions |
+| `notification:new` | Server → Client | Ownership transfers, role reopenings, team dissolutions, and `message_mention` events for @mentions |
 
 ---
 
