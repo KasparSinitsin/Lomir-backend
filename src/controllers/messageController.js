@@ -440,6 +440,7 @@ const getMessages = async (req, res) => {
       m.sender_id,
       m.team_id,
       m.content,
+      m.reply_to_id,
       m.image_url,
       m.file_url,
       m.file_name,
@@ -460,9 +461,16 @@ const getMessages = async (req, res) => {
       u.username as sender_username,
       u.first_name as sender_first_name,
       u.last_name as sender_last_name,
-      u.avatar_url as sender_avatar_url
+      u.avatar_url as sender_avatar_url,
+      rm.id as reply_to_message_id,
+      rm.content as reply_to_content,
+      rm.sender_id as reply_to_sender_id,
+      ru.username as reply_to_sender_username,
+      ru.first_name as reply_to_sender_first_name
     FROM messages m
     LEFT JOIN users u ON m.sender_id = u.id
+    LEFT JOIN messages rm ON m.reply_to_id = rm.id
+    LEFT JOIN users ru ON rm.sender_id = ru.id
     LEFT JOIN LATERAL (
       SELECT mr.read_at
       FROM message_reads mr
@@ -512,6 +520,7 @@ const getMessages = async (req, res) => {
       m.sender_id,
       m.receiver_id,
       m.content,
+      m.reply_to_id,
       m.image_url,
       m.file_url,
       m.file_name,
@@ -527,9 +536,16 @@ const getMessages = async (req, res) => {
       u.username as sender_username,
       u.first_name as sender_first_name,
       u.last_name as sender_last_name,
-      u.avatar_url as sender_avatar_url
+      u.avatar_url as sender_avatar_url,
+      rm.id as reply_to_message_id,
+      rm.content as reply_to_content,
+      rm.sender_id as reply_to_sender_id,
+      ru.username as reply_to_sender_username,
+      ru.first_name as reply_to_sender_first_name
     FROM messages m
     LEFT JOIN users u ON m.sender_id = u.id
+    LEFT JOIN messages rm ON m.reply_to_id = rm.id
+    LEFT JOIN users ru ON rm.sender_id = ru.id
     WHERE ((m.sender_id = $1 AND m.receiver_id = $2) 
        OR (m.sender_id = $2 AND m.receiver_id = $1))
       AND m.team_id IS NULL
@@ -552,6 +568,18 @@ const getMessages = async (req, res) => {
       receiverId: row.receiver_id,
       teamId: row.team_id,
       content: row.content,
+      replyToId: row.reply_to_id,
+      replyTo: row.reply_to_message_id
+        ? {
+            id: row.reply_to_message_id,
+            content: row.reply_to_content
+              ? row.reply_to_content.slice(0, 150)
+              : null,
+            senderId: row.reply_to_sender_id,
+            senderUsername: row.reply_to_sender_username,
+            senderFirstName: row.reply_to_sender_first_name,
+          }
+        : null,
       imageUrl: row.image_url,
       fileUrl: row.file_url,
       fileName: row.file_name,
@@ -597,7 +625,16 @@ const sendMessage = async (req, res) => {
   try {
     const userId = req.user.id;
     const conversationId = req.params.id;
-    const { content, type, imageUrl, fileUrl, fileName } = req.body;
+    const {
+      content,
+      type,
+      imageUrl,
+      fileUrl,
+      fileName,
+      replyToId: bodyReplyToId,
+      reply_to_id: bodyReplyToIdSnake,
+    } = req.body;
+    const replyToId = bodyReplyToId || bodyReplyToIdSnake || null;
 
     // Allow content OR imageUrl OR fileUrl (or combinations)
     if ((!content || content.trim() === "") && !imageUrl && !fileUrl) {
@@ -637,13 +674,14 @@ const sendMessage = async (req, res) => {
 
     if (type === "team") {
       messageResult = await db.query(
-        `INSERT INTO messages (sender_id, team_id, content, image_url, file_url, file_name, sent_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NOW())
-     RETURNING id, sender_id, team_id, content, image_url, file_url, file_name, sent_at`,
+        `INSERT INTO messages (sender_id, team_id, content, reply_to_id, image_url, file_url, file_name, sent_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+     RETURNING id, sender_id, team_id, content, reply_to_id, image_url, file_url, file_name, sent_at`,
         [
           userId,
           conversationId,
           content?.trim() || null,
+          replyToId || null,
           imageUrl || null,
           fileUrl || null,
           fileName || null,
@@ -651,13 +689,14 @@ const sendMessage = async (req, res) => {
       );
     } else {
       messageResult = await db.query(
-        `INSERT INTO messages (sender_id, receiver_id, content, image_url, file_url, file_name, sent_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NOW())
-     RETURNING id, sender_id, receiver_id, content, image_url, file_url, file_name, sent_at`,
+        `INSERT INTO messages (sender_id, receiver_id, content, reply_to_id, image_url, file_url, file_name, sent_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+     RETURNING id, sender_id, receiver_id, content, reply_to_id, image_url, file_url, file_name, sent_at`,
         [
           userId,
           conversationId,
           content?.trim() || null,
+          replyToId || null,
           imageUrl || null,
           fileUrl || null,
           fileName || null,
@@ -690,11 +729,19 @@ const getMessageById = async (req, res) => {
         m.receiver_id,
         m.team_id,
         m.content,
+        m.reply_to_id,
         m.sent_at,
         m.read_at,
-        u.username as sender_username
+        u.username as sender_username,
+        rm.id as reply_to_message_id,
+        rm.content as reply_to_content,
+        rm.sender_id as reply_to_sender_id,
+        ru.username as reply_to_sender_username,
+        ru.first_name as reply_to_sender_first_name
       FROM messages m
       LEFT JOIN users u ON m.sender_id = u.id
+      LEFT JOIN messages rm ON m.reply_to_id = rm.id
+      LEFT JOIN users ru ON rm.sender_id = ru.id
       WHERE m.id = $1
     `;
 
@@ -707,9 +754,24 @@ const getMessageById = async (req, res) => {
       });
     }
 
+    const row = result.rows[0];
+
     res.status(200).json({
       success: true,
-      data: result.rows[0],
+      data: {
+        ...row,
+        replyTo: row.reply_to_message_id
+          ? {
+              id: row.reply_to_message_id,
+              content: row.reply_to_content
+                ? row.reply_to_content.slice(0, 150)
+                : null,
+              senderId: row.reply_to_sender_id,
+              senderUsername: row.reply_to_sender_username,
+              senderFirstName: row.reply_to_sender_first_name,
+            }
+          : null,
+      },
     });
   } catch (error) {
     res.status(500).json({
