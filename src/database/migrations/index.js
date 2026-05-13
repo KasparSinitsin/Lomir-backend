@@ -14,6 +14,7 @@ const createTeamApplicationsTable = require("./create_team_applications");
 const fixMessagesTimestamps = require("./fix_messages_timestamps");
 const createMessageReads = require("./create_message_reads");
 const addMessageEditColumns = require("./add_message_edit_columns");
+const addReplyToId = require("./add_reply_to_id");
 
 const runMigrations = async () => {
   try {
@@ -34,6 +35,7 @@ const runMigrations = async () => {
     await fixMessagesTimestamps();
     await createMessageReads();
     await addMessageEditColumns();
+    await addReplyToId();
 
     console.log("All migrations completed successfully!");
   } catch (error) {
