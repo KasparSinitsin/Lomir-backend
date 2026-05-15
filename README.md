@@ -32,9 +32,9 @@ Contact the project owner for a demo login, or register a new account with a val
 - **Vacant Roles** — Post open positions on teams with desired tags, badges, and location preferences
 - **Matching Engine** — Score users against roles (and vice versa) using weighted tag/badge/distance criteria
 - **Search** — Full-text search across teams, users, and roles with tag/badge/location filtering and "Best Match" sorting
-- **Chat** — Real-time direct and team group messaging via Socket.IO, including typing indicators, read receipts, message replies (reply-to with sender preview), and @mention notifications
+- **Chat** — Real-time direct and team group messaging via Socket.IO, including typing indicators, read receipts, message replies (reply-to with sender preview), @mention notifications, and structured system messages for team events (member join/leave/removal, role changes, invitation responses, application decisions, role lifecycle, team deletion)
 - **Badge System** — 30 badges across 5 categories; award badges to teammates with reasons and context
-- **Notifications** — In-app notifications for invitations, applications, badge awards, messages, and @mentions; each type navigates to the relevant context
+- **Notifications** — In-app notifications for invitations, applications, badge awards, messages, @mentions, and role lifecycle events; each notification deep-links to the exact message that triggered it; stale notifications are cleaned up automatically on member removal, role deletion, and team deletion
 - **Account Deletion** — Full transactional account deletion with impact preview, automatic team ownership transfer, role reopening, and "Former Lomir User" handling for preserved references
 - **Geocoding** — Postal code lookup via Nominatim with built-in fallback mapping
 - **Security** — Rate limiting on auth endpoints, CORS allowlist, password policy enforcement, production log scrubbing
@@ -217,13 +217,13 @@ All routes are prefixed with `/api`.
 |---|---|
 | `/api/auth` | Register, login, email verification, password reset |
 | `/api/users` | User CRUD, tags, badges, avatar, account deletion with preview |
-| `/api/teams` | Team CRUD, members, applications, invitations, badge awards |
+| `/api/teams` | Team CRUD, members, applications, invitations, badge awards; `DELETE /invitations/:id/role` cancels only the role portion of a pending invitation |
 | `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management |
 | `/api/search` | Global search with tag/badge/location/role filtering |
 | `/api/matching` | Role ↔ user matching scores and candidate lists |
 | `/api/badges` | Badge catalog and awarding |
 | `/api/messages` | Direct and team message history |
-| `/api/notifications` | User notifications |
+| `/api/notifications` | User notifications (includes `referenceType`, `typeTeamCounts` in unread count response) |
 | `/api/imagekit` | Auth params for client-side ImageKit uploads |
 | `/api/tags` | Tag catalog (structured by category) |
 | `/api/geocoding` | Postal code → city/country/coordinates lookup |
@@ -239,14 +239,16 @@ The server uses Socket.IO for real-time features. Clients authenticate via JWT t
 | Event | Direction | Description |
 |---|---|---|
 | `message:new` | Client → Server | Send a direct or team message; accepts `replyToId` for threaded replies |
-| `message:received` | Server → Client | New message broadcast; includes `replyTo` object (id, content preview, sender) when replying |
+| `message:received` | Server → Client | New message broadcast; includes `replyTo` object (id, content preview, sender) when replying; also emitted for server-inserted system messages (role events, member changes, etc.) |
 | `message:read` | Client → Server | Mark messages as read |
 | `message:status` | Server → Client | Read receipt notification |
 | `typing:start` / `typing:stop` | Bidirectional | Typing indicators |
 | `users:online` | Server → Client | Updated list of online user IDs |
 | `team:member_left` | Server → Client | Member removal (e.g. account deletion) |
+| `team:member_kicked` | Server → Client | Emitted to the removed member to kick them from the team chat |
 | `conversation:deleted` | Server → Client | DM conversation removed |
-| `notification:new` | Server → Client | Ownership transfers, role reopenings, team dissolutions, and `message_mention` events for @mentions |
+| `notification:new` | Server → Client | New notification for the user — covers invitations, applications, member changes, role lifecycle events (`role_created`, `role_updated`, `role_deleted`, `role_closed`, `role_filled`, `role_reopened`), badge awards, `message_mention`, team deletion, and ownership transfers |
+| `notification:updated` | Server → Client | Tells the client to re-fetch notifications — emitted on invitation cancellation, role invitation cancellation, stale notification cleanup (e.g. after member removal or role deletion), and admin action acknowledgements |
 
 ---
 
