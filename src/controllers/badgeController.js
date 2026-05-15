@@ -411,6 +411,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
     }
 
     // ── Non-critical: Create notification (SAVEPOINT) ──
+    let notificationCreated = false;
     try {
       await client.query("SAVEPOINT notification_sp");
 
@@ -430,6 +431,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
         ],
       );
       await client.query("RELEASE SAVEPOINT notification_sp");
+      notificationCreated = true;
       if (process.env.NODE_ENV !== "production") {
         console.log("🏅 Notification created");
       }
@@ -454,6 +456,20 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
     refreshBadgeViews(pool).catch((err) =>
       console.warn("⚠️ View refresh failed:", err.message),
     );
+
+    // Notify recipient instantly via socket
+    if (notificationCreated) {
+      try {
+        const io = req.app.get("io");
+        if (io) {
+          io.to(`user:${awarded_to_user_id}`).emit("notification:new", {
+            type: "badge_awarded",
+          });
+        }
+      } catch (socketError) {
+        console.warn("⚠️ Socket emit failed (non-critical):", socketError.message);
+      }
+    }
 
     if (process.env.NODE_ENV !== "production") {
       console.log("🏅 ====== AWARD BADGE COMPLETE ======");

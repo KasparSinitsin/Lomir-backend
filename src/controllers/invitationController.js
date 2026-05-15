@@ -5,6 +5,7 @@ const {
 } = require("./notificationController");
 const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer");
+const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
 
 /**
  * Send a team invitation to a user
@@ -248,6 +249,15 @@ const sendTeamInvitation = async (req, res) => {
             teamId: parseInt(teamId),
           });
         }
+      }
+
+      if (io) {
+        io.to(`team:${teamId}`).emit("notification:updated", {
+          type: isInternalInvite ? "role_invitation_sent" : "invitation_sent",
+          teamId: parseInt(teamId),
+          invitationId: invitationResult.rows[0].id,
+          roleId: finalRoleId,
+        });
       }
     } catch (notificationError) {
       console.error(
@@ -883,11 +893,13 @@ const respondToInvitation = async (req, res) => {
             ? `${joinLine}\n\n"${response_message.trim()}"`
             : joinLine;
 
-        await client.query(
+        const teamMessageResult = await client.query(
           `INSERT INTO messages (sender_id, team_id, content, sent_at)
-           VALUES ($1, $2, $3, NOW())`,
+           VALUES ($1, $2, $3, NOW())
+           RETURNING id, sender_id, team_id, content, sent_at`,
           [userId, invitation.team_id, formattedMessage],
         );
+        await emitInsertedMessage(req, teamMessageResult.rows[0]);
 
         // === CREATE NOTIFICATIONS FOR TEAM MEMBERS ===
         try {
@@ -901,8 +913,8 @@ const respondToInvitation = async (req, res) => {
             excludeUserId: userId,
             type: notificationType,
             title: notificationTitle,
-            referenceType: "team_member",
-            referenceId: userId,
+            referenceType: "message",
+            referenceId: teamMessageResult.rows[0]?.id || userId,
             actorId: userId,
           });
 
@@ -921,8 +933,8 @@ const respondToInvitation = async (req, res) => {
               userId: invitation.inviter_id,
               type: "invitation_accepted",
               title: `${inviteeName} accepted your invitation and joined ${invitation.team_name} as ${filledRoleName}`,
-              referenceType: "team_invitation",
-              referenceId: parseInt(invitationId),
+              referenceType: "message",
+              referenceId: teamMessageResult.rows[0]?.id || parseInt(invitationId),
               teamId: invitation.team_id,
               actorId: userId,
             });
@@ -977,11 +989,13 @@ const respondToInvitation = async (req, res) => {
 
         const declineSystemMessage = `🚫 INVITATION_DECLINED: ${teamToken} | ${inviterToken} | ${inviteeToken} | ${hasPersonalMessage}`;
 
-        await client.query(
+        const declineMessageResult = await client.query(
           `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-           VALUES ($1, $2, $3, NOW())`,
+           VALUES ($1, $2, $3, NOW())
+           RETURNING id, sender_id, receiver_id, content, sent_at`,
           [userId, invitation.inviter_id, declineSystemMessage],
         );
+        await emitInsertedMessage(req, declineMessageResult.rows[0]);
 
         // If there's a personal message, send it as a separate regular message
         if (response_message && response_message.trim()) {
@@ -1001,8 +1015,8 @@ const respondToInvitation = async (req, res) => {
             type: "invitation_declined",
             title: `${inviteeName} declined your invitation to ${invitation.team_name}`,
             message: response_message || null,
-            referenceType: "team_invitation",
-            referenceId: parseInt(invitationId),
+            referenceType: "message",
+            referenceId: declineMessageResult.rows[0]?.id || parseInt(invitationId),
             teamId: invitation.team_id,
             actorId: userId,
           });
@@ -1139,11 +1153,13 @@ const cancelInvitation = async (req, res) => {
 
     const cancelSystemMessage = `🚫 INVITATION_CANCELLED: ${teamToken} | ${cancellerToken} | ${inviteeToken}`;
 
-    await db.pool.query(
+    const cancelMessageResult = await db.pool.query(
       `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-   VALUES ($1, $2, $3, NOW())`,
+   VALUES ($1, $2, $3, NOW())
+   RETURNING id, sender_id, receiver_id, content, sent_at`,
       [userId, invitation.invitee_id, cancelSystemMessage],
     );
+    await emitInsertedMessage(req, cancelMessageResult.rows[0]);
 
     // === CREATE NOTIFICATION FOR INVITEE ===
     try {
@@ -1154,8 +1170,8 @@ const cancelInvitation = async (req, res) => {
         type: "invitation_cancelled",
         title: `${cancellerName} cancelled your invitation to ${invitation.team_name}`,
         message: null,
-        referenceType: "team_invitation",
-        referenceId: parseInt(invitationId),
+        referenceType: "message",
+        referenceId: cancelMessageResult.rows[0]?.id || parseInt(invitationId),
         teamId: teamId,
         actorId: userId,
       });
@@ -1166,6 +1182,11 @@ const cancelInvitation = async (req, res) => {
         io.to(`user:${invitation.invitee_id}`).emit("notification:new", {
           type: "invitation_cancelled",
           teamId: teamId,
+        });
+        io.to(`team:${teamId}`).emit("notification:updated", {
+          type: "invitation_cancelled",
+          teamId,
+          invitationId: parseInt(invitationId),
         });
       }
     } catch (notificationError) {
@@ -1189,6 +1210,129 @@ const cancelInvitation = async (req, res) => {
     });
   }
 };
+
+/**
+ * Cancel only the role part of a pending invitation.
+ * For internal role invitations this cancels the whole invitation because there
+ * is no separate team invitation to keep.
+ */
+const cancelRoleInvitation = async (req, res) => {
+  try {
+    const invitationId = req.params.invitationId;
+    const userId = req.user.id;
+
+    const invitationResult = await db.pool.query(
+      `SELECT ti.*, t.name as team_name,
+              u.first_name as invitee_first_name,
+              u.last_name as invitee_last_name,
+              u.username as invitee_username,
+              EXISTS (
+                SELECT 1 FROM team_members tm
+                WHERE tm.team_id = ti.team_id AND tm.user_id = ti.invitee_id
+              ) AS is_internal
+       FROM team_invitations ti
+       JOIN teams t ON ti.team_id = t.id
+       JOIN users u ON ti.invitee_id = u.id
+       WHERE ti.id = $1 AND ti.status = 'pending'`,
+      [invitationId],
+    );
+
+    if (invitationResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Invitation not found or already responded to",
+      });
+    }
+
+    const invitation = invitationResult.rows[0];
+    const teamId = invitation.team_id;
+
+    if (!invitation.role_id) {
+      return res.status(400).json({
+        success: false,
+        message: "This invitation is not linked to a role",
+      });
+    }
+
+    const authCheck = await db.pool.query(
+      `SELECT role FROM team_members
+       WHERE team_id = $1 AND user_id = $2 AND role IN ('owner', 'admin')`,
+      [teamId, userId],
+    );
+
+    if (authCheck.rows.length === 0) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to cancel this role invitation",
+      });
+    }
+
+    const isInternal = invitation.is_internal === true || invitation.is_internal === "true";
+
+    if (isInternal) {
+      await db.pool.query(
+        `UPDATE team_invitations
+         SET status = 'canceled', responded_at = NOW()
+         WHERE id = $1`,
+        [invitationId],
+      );
+    } else {
+      await db.pool.query(
+        `UPDATE team_invitations
+         SET role_id = NULL
+         WHERE id = $1`,
+        [invitationId],
+      );
+    }
+
+    await db.pool.query(
+      `DELETE FROM notifications
+       WHERE reference_type = 'team_invitation'
+         AND reference_id = $1
+         AND read_at IS NULL
+       AND type IN ('role_invitation')`,
+      [parseInt(invitationId)],
+    );
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`user:${invitation.invitee_id}`).emit("notification:updated", {
+        type: "role_invitation_cancelled",
+        teamId,
+        invitationId: parseInt(invitationId),
+      });
+      io.to(`team:${teamId}`).emit("notification:updated", {
+        type: "role_invitation_cancelled",
+        teamId,
+        invitationId: parseInt(invitationId),
+        canceledInvitation: isInternal,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: isInternal
+        ? "Role invitation canceled successfully"
+        : "Role invitation removed from team invitation",
+      data: {
+        invitationId: parseInt(invitationId),
+        canceledInvitation: isInternal,
+      },
+    });
+  } catch (error) {
+    console.error("Error canceling role invitation:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error canceling role invitation",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
+/**
+ * Get teams where user can invite others (is owner or admin)
+ * Optionally filters out teams where inviteeId is already a member
+ */
 
 /**
  * Get teams where user can invite others (is owner or admin)
@@ -1279,5 +1423,6 @@ module.exports = {
   getTeamSentInvitations,
   respondToInvitation,
   cancelInvitation,
+  cancelRoleInvitation,
   getTeamsWhereUserCanInvite,
 };

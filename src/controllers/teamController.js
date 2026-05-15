@@ -12,6 +12,7 @@ const {
 const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer");
 const { deleteImageKitFile } = require("../utils/imagekitUtils");
+const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
 
 const permanentlyDeleteTeam = async (teamId) => {
   const client = await db.pool.connect();
@@ -889,7 +890,12 @@ const cancelApplication = async (req, res) => {
       `SELECT ta.*, t.name as team_name,
               u.first_name as applicant_first_name,
               u.last_name as applicant_last_name,
-              u.username as applicant_username
+              u.username as applicant_username,
+              EXISTS (
+                SELECT 1 FROM team_members applicant_tm
+                WHERE applicant_tm.team_id = ta.team_id
+                  AND applicant_tm.user_id = ta.applicant_id
+              ) AS is_internal_role_application
        FROM team_applications ta
        JOIN teams t ON ta.team_id = t.id
        JOIN users u ON ta.applicant_id = u.id
@@ -951,21 +957,26 @@ const cancelApplication = async (req, res) => {
 
       const cancelSystemMessage = `🚫 APPLICATION_CANCELLED: ${teamToken} | ${applicantToken} | ${adminToken}`;
 
-      await db.pool.query(
+      const cancelMessageResult = await db.pool.query(
         `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-   VALUES ($1, $2, $3, NOW())`,
+   VALUES ($1, $2, $3, NOW())
+   RETURNING id, sender_id, receiver_id, content, sent_at`,
         [userId, admin.user_id, cancelSystemMessage],
       );
+      await emitInsertedMessage(req, cancelMessageResult.rows[0]);
 
       // Create notification for admin
       try {
+        const cancelNotificationType = application.is_internal_role_application
+          ? "role_application_cancelled"
+          : "application_cancelled";
         await createNotification({
           userId: admin.user_id,
-          type: "application_cancelled",
+          type: cancelNotificationType,
           title: `${applicantName} withdrew their application for ${application.team_name}`,
           message: null,
-          referenceType: "team_application",
-          referenceId: parseInt(applicationId),
+          referenceType: "message",
+          referenceId: cancelMessageResult.rows[0]?.id || parseInt(applicationId),
           teamId: application.team_id,
           actorId: userId,
         });
@@ -974,7 +985,7 @@ const cancelApplication = async (req, res) => {
         const io = req.app.get("io");
         if (io) {
           io.to(`user:${admin.user_id}`).emit("notification:new", {
-            type: "application_cancelled",
+            type: cancelNotificationType,
             teamId: application.team_id,
           });
         }
@@ -1215,11 +1226,13 @@ const updateTeam = async (req, res) => {
 
             const roleChangeMessage = `🔄 ROLE_CHANGED: ${teamToken} | ${userId}:${changerName} | ${memberId}:${memberName} | ${memberCurrentRole} | ${roleToUpdate}`;
 
-            await db.pool.query(
+            const roleChangeMessageResult = await db.pool.query(
               `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-               VALUES ($1, $2, $3, NOW())`,
+               VALUES ($1, $2, $3, NOW())
+               RETURNING id, sender_id, receiver_id, content, sent_at`,
               [userId, memberId, roleChangeMessage],
             );
+            await emitInsertedMessage(req, roleChangeMessageResult.rows[0]);
 
             // Create notification for affected member
             await createNotification({
@@ -1227,8 +1240,8 @@ const updateTeam = async (req, res) => {
               type: "role_changed",
               title: `You were ${action} to ${roleToUpdate} in ${teamName}`,
               message: null,
-              referenceType: "team_member",
-              referenceId: parseInt(teamId),
+              referenceType: "message",
+              referenceId: roleChangeMessageResult.rows[0]?.id || parseInt(teamId),
               teamId: parseInt(teamId),
               actorId: parseInt(userId),
             });
@@ -1590,7 +1603,13 @@ const getTeamApplications = async (req, res) => {
         fu.avatar_url AS role_filled_by_user_avatar_url,
         u.id as applicant_id, u.username, u.first_name, u.last_name,
         u.bio, u.avatar_url, u.postal_code, u.is_synthetic AS applicant_is_synthetic, u.city, u.country, u.state,
-        u.latitude AS applicant_latitude, u.longitude AS applicant_longitude
+        u.latitude AS applicant_latitude, u.longitude AS applicant_longitude,
+        EXISTS (
+          SELECT 1
+          FROM team_members applicant_tm
+          WHERE applicant_tm.team_id = ta.team_id
+            AND applicant_tm.user_id = ta.applicant_id
+        ) AS is_team_member
        FROM team_applications ta
        JOIN users u ON ta.applicant_id = u.id
        LEFT JOIN team_vacant_roles vr ON ta.role_id = vr.id
@@ -1732,6 +1751,8 @@ const getTeamApplications = async (req, res) => {
           })()
         : null,
       role_is_synthetic: row.role_is_synthetic === true,
+      isInternalRoleApplication: row.is_team_member === true && row.role_id != null,
+      is_internal_role_application: row.is_team_member === true && row.role_id != null,
       applicant: {
         id: row.applicant_id,
         username: row.username,
@@ -1889,24 +1910,19 @@ const handleTeamApplication = async (req, res) => {
             ? `${approver.first_name} ${approver.last_name}`
             : approver.username;
 
-        let roleName = null;
-        if (application.role_id) {
-          const roleResult = await client.query(
-            `SELECT role_name FROM team_vacant_roles WHERE id = $1`,
-            [application.role_id]
+        let teamMessageResult = null;
+
+        if (!isInternalRoleApp) {
+          const systemMessage = `🎉 ${applicantName} has applied successfully to your team and has been added as a team member by ${approverName}. Say hello to them!`;
+
+          teamMessageResult = await client.query(
+            `INSERT INTO messages (sender_id, team_id, content, sent_at)
+             VALUES ($1, $2, $3, NOW())
+             RETURNING id, sender_id, team_id, content, sent_at`,
+            [userId, application.team_id, systemMessage],
           );
-          roleName = roleResult.rows[0]?.role_name ?? null;
+          await emitInsertedMessage(req, teamMessageResult.rows[0]);
         }
-
-        const systemMessage = isInternalRoleApp && roleName
-          ? `${applicantName}'s application for ${roleName} was approved`
-          : `🎉 ${applicantName} has applied successfully to your team and has been added as a team member by ${approverName}. Say hello to them!`;
-
-        await client.query(
-          `INSERT INTO messages (sender_id, team_id, content, sent_at)
-           VALUES ($1, $2, $3, NOW())`,
-          [application.applicant_id, application.team_id, systemMessage],
-        );
 
         // Include whether there's a personal message
         const hasPersonalMessage =
@@ -1919,57 +1935,67 @@ const handleTeamApplication = async (req, res) => {
 
         const approvalSystemMessage = `✅ APPLICATION_APPROVED: ${teamToken} | ${approverToken} | ${applicantToken} | ${hasPersonalMessage}`;
 
-        await client.query(
-          `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-           VALUES ($1, $2, $3, NOW())`,
-          [userId, application.applicant_id, approvalSystemMessage],
-        );
-
-        // If there's a personal message, send it as a separate regular message
-        if (response && response.trim()) {
-          await client.query(
+        let approvalMessageResult = null;
+        if (!isInternalRoleApp) {
+          approvalMessageResult = await client.query(
             `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-             VALUES ($1, $2, $3, NOW())`,
-            [userId, application.applicant_id, response.trim()],
+             VALUES ($1, $2, $3, NOW())
+             RETURNING id, sender_id, receiver_id, content, sent_at`,
+            [userId, application.applicant_id, approvalSystemMessage],
           );
+          await emitInsertedMessage(req, approvalMessageResult.rows[0]);
+
+          // If there's a personal message, send it as a separate regular message
+          if (response && response.trim()) {
+            await client.query(
+              `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
+               VALUES ($1, $2, $3, NOW())`,
+              [userId, application.applicant_id, response.trim()],
+            );
+          }
         }
 
         // === CREATE NOTIFICATIONS ===
         try {
-          // Notify the applicant that they were approved
-          await createNotification({
-            userId: application.applicant_id,
-            type: "application_approved",
-            title: `Your application to ${application.team_name} was approved!`,
-            message: response || "Welcome to the team!",
-            referenceType: "team_application",
-            referenceId: parseInt(applicationId),
-            teamId: application.team_id,
-            actorId: userId,
-          });
+          if (!isInternalRoleApp) {
+            // Notify the applicant that they were approved for team membership.
+            await createNotification({
+              userId: application.applicant_id,
+              type: "application_approved",
+              title: `Your application to ${application.team_name} was approved!`,
+              message: response || "Welcome to the team!",
+              referenceType: "message",
+              referenceId: approvalMessageResult?.rows[0]?.id || parseInt(applicationId),
+              teamId: application.team_id,
+              actorId: userId,
+            });
 
-          // Notify other team members about the new member
-          await notifyTeamMembers({
-            teamId: application.team_id,
-            excludeUserId: application.applicant_id,
-            type: "member_joined",
-            title: `${applicantName} joined ${application.team_name}`,
-            referenceType: "team_member",
-            referenceId: application.applicant_id,
-            actorId: application.applicant_id,
-          });
+            // Notify other team members about the new member.
+            await notifyTeamMembers({
+              teamId: application.team_id,
+              excludeUserId: application.applicant_id,
+              type: "member_joined",
+              title: `${applicantName} joined ${application.team_name}`,
+              referenceType: "message",
+              referenceId:
+                teamMessageResult?.rows[0]?.id || application.applicant_id,
+              actorId: userId,
+            });
+          }
 
           // Emit socket events
           const io = req.app.get("io");
           if (io) {
-            io.to(`user:${application.applicant_id}`).emit("notification:new", {
-              type: "application_approved",
-              teamId: application.team_id,
-            });
-            io.to(`team:${application.team_id}`).emit("notification:new", {
-              type: "member_joined",
-              teamId: application.team_id,
-            });
+            if (!isInternalRoleApp) {
+              io.to(`user:${application.applicant_id}`).emit("notification:new", {
+                type: "application_approved",
+                teamId: application.team_id,
+              });
+              io.to(`team:${application.team_id}`).emit("notification:new", {
+                type: "member_joined",
+                teamId: application.team_id,
+              });
+            }
             for (const adminId of affectedAdminIds) {
               io.to(`user:${adminId}`).emit("notification:updated");
             }
@@ -2042,11 +2068,13 @@ const handleTeamApplication = async (req, res) => {
 
         const declineSystemMessage = `🚫 APPLICATION_DECLINED: ${teamToken} | ${approverToken} | ${applicantToken} | ${hasPersonalMessage}`;
 
-        await client.query(
+        const declineMessageResult = await client.query(
           `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-           VALUES ($1, $2, $3, NOW())`,
+           VALUES ($1, $2, $3, NOW())
+           RETURNING id, sender_id, receiver_id, content, sent_at`,
           [userId, application.applicant_id, declineSystemMessage],
         );
+        await emitInsertedMessage(req, declineMessageResult.rows[0]);
 
         // If there's a personal message, send it as a separate regular message
         if (response && response.trim()) {
@@ -2063,8 +2091,8 @@ const handleTeamApplication = async (req, res) => {
             type: "application_rejected",
             title: `Your application to ${application.team_name} was declined`,
             message: response || null,
-            referenceType: "team_application",
-            referenceId: parseInt(applicationId),
+            referenceType: "message",
+            referenceId: declineMessageResult.rows[0]?.id || parseInt(applicationId),
             teamId: application.team_id,
             actorId: userId,
           });
@@ -2183,13 +2211,22 @@ const deleteTeam = async (req, res) => {
         // Send ONE system message to the team chat (not DM)
         const deleteMessage = `🗑️ TEAM_DELETED: ${teamName} | ${ownerName}`;
 
-        await db.pool.query(
+        const deleteMessageResult = await db.pool.query(
           `INSERT INTO messages (sender_id, team_id, content, sent_at)
-   VALUES ($1, $2, $3, NOW())`,
+   VALUES ($1, $2, $3, NOW())
+   RETURNING id, sender_id, team_id, content, sent_at`,
           [userId, teamId, deleteMessage],
+        );
+        await emitInsertedMessage(req, deleteMessageResult.rows[0]);
+
+        // Remove all stale unread notifications for this team before notifying members
+        await db.pool.query(
+          `DELETE FROM notifications WHERE team_id = $1 AND type != 'team_deleted' AND read_at IS NULL`,
+          [teamId],
         );
 
         // Send notification to each member (no DM needed)
+        const io = req.app.get("io");
         for (const member of membersResult.rows) {
           // Create notification
           await createNotification({
@@ -2197,14 +2234,13 @@ const deleteTeam = async (req, res) => {
             type: "team_deleted",
             title: `${teamName} has been deleted`,
             message: `${ownerName} has deleted the team.`,
-            referenceType: "team",
-            referenceId: parseInt(teamId),
+            referenceType: "message",
+            referenceId: deleteMessageResult.rows[0]?.id || parseInt(teamId),
             teamId: parseInt(teamId),
             actorId: parseInt(userId),
           });
 
           // Emit socket event
-          const io = req.app.get("io");
           if (io) {
             io.to(`user:${member.user_id}`).emit("notification:new", {
               type: "team_deleted",
@@ -2755,11 +2791,13 @@ const removeTeamMember = async (req, res) => {
       // Insert appropriate messages
       if (isSelfRemoval) {
         const leaveMessage = `🚪 MEMBER_LEFT:${memberId}:${memberName}`;
-        await db.pool.query(
+        const leaveMessageResult = await db.pool.query(
           `INSERT INTO messages (sender_id, team_id, content, sent_at)
-           VALUES ($1, $2, $3, NOW())`,
+           VALUES ($1, $2, $3, NOW())
+           RETURNING id, sender_id, team_id, content, sent_at`,
           [memberId, teamId, leaveMessage],
         );
+        await emitInsertedMessage(req, leaveMessageResult.rows[0]);
       } else {
         // Get team name and remover name for proper message formatting
         const teamResult = await db.pool.query(
@@ -2792,11 +2830,13 @@ const removeTeamMember = async (req, res) => {
 
         // 2. Send message to team chat
         const teamChatMessage = `🚫 MEMBER_REMOVED_PUBLIC: ${teamToken} | ${memberToken}`;
-        await db.pool.query(
+        const teamChatMessageResult = await db.pool.query(
           `INSERT INTO messages (sender_id, team_id, content, sent_at)
-           VALUES ($1, $2, $3, NOW())`,
+           VALUES ($1, $2, $3, NOW())
+           RETURNING id, sender_id, team_id, content, sent_at`,
           [userId, teamId, teamChatMessage],
         );
+        await emitInsertedMessage(req, teamChatMessageResult.rows[0]);
       }
 
       // Cleanup archived team if empty
@@ -2810,16 +2850,23 @@ const removeTeamMember = async (req, res) => {
       const io = req.app.get("io");
 
       if (!isSelfRemoval && io) {
+        // Remove all stale unread team notifications for the removed member
+        try {
+          await db.pool.query(
+            `DELETE FROM notifications WHERE user_id = $1 AND team_id = $2 AND read_at IS NULL`,
+            [memberId, teamId],
+          );
+        } catch (cleanupError) {
+          console.error("Error cleaning up stale notifications for removed member:", cleanupError);
+        }
+
         // Notify the removed member to kick them from the chat
         io.to(`user:${memberId}`).emit("team:member_kicked", {
           teamId: parseInt(teamId),
           memberId: parseInt(memberId),
         });
 
-        io.to(`user:${memberId}`).emit("notification:new", {
-          type: "member_removed",
-          teamId: parseInt(teamId),
-        });
+        io.to(`user:${memberId}`).emit("notification:updated");
       }
 
       return res.status(200).json({
@@ -2904,6 +2951,7 @@ const removeTeamMember = async (req, res) => {
     let teamName = "the team";
     let memberName = "A member";
     let removerName = "Someone";
+    let teamChatMessageRow = null;
 
     try {
       await client.query("BEGIN");
@@ -2955,11 +3003,13 @@ const removeTeamMember = async (req, res) => {
         senderForTeamChat = userId;
       }
 
-      await client.query(
+      const teamChatMessageResult = await client.query(
         `INSERT INTO messages (sender_id, team_id, content, sent_at)
-         VALUES ($1, $2, $3, NOW())`,
+         VALUES ($1, $2, $3, NOW())
+         RETURNING id, sender_id, team_id, content, sent_at`,
         [senderForTeamChat, teamId, teamChatMessage],
       );
+      teamChatMessageRow = teamChatMessageResult.rows[0];
 
       await client.query("COMMIT");
     } catch (dbError) {
@@ -2971,6 +3021,7 @@ const removeTeamMember = async (req, res) => {
 
     // === After commit: notifications + DM ===
     const io = req.app.get("io");
+    await emitInsertedMessage(req, teamChatMessageRow);
 
     if (isSelfRemoval) {
       try {
@@ -2979,8 +3030,8 @@ const removeTeamMember = async (req, res) => {
           excludeUserId: parseInt(memberId),
           type: "member_left",
           title: `${memberName} left ${teamName}`,
-          referenceType: "team_member",
-          referenceId: parseInt(memberId),
+          referenceType: "message",
+          referenceId: teamChatMessageRow?.id || parseInt(memberId),
           actorId: parseInt(memberId),
         });
 
@@ -2993,25 +3044,33 @@ const removeTeamMember = async (req, res) => {
       }
     } else {
       try {
+        // Remove all stale unread team notifications for the removed member
+        await db.pool.query(
+          `DELETE FROM notifications WHERE user_id = $1 AND team_id = $2 AND read_at IS NULL`,
+          [memberId, teamId],
+        );
+
         // DM to removed member
         const teamToken = `${teamId}:${teamName}`;
         const removerToken = `${userId}:${removerName}`;
         const memberToken = `${memberId}:${memberName}`;
         const removeSystemMessage = `🚫 MEMBER_REMOVED: ${teamToken} | ${removerToken} | ${memberToken}`;
 
-        await db.pool.query(
+        const removedMemberMessageResult = await db.pool.query(
           `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-           VALUES ($1, $2, $3, NOW())`,
+           VALUES ($1, $2, $3, NOW())
+           RETURNING id, sender_id, receiver_id, content, sent_at`,
           [userId, memberId, removeSystemMessage],
         );
+        await emitInsertedMessage(req, removedMemberMessageResult.rows[0]);
 
         await createNotification({
           userId: parseInt(memberId),
           type: "member_removed",
           title: `You were removed from ${teamName}`,
           message: null,
-          referenceType: "team_member",
-          referenceId: parseInt(teamId),
+          referenceType: "message",
+          referenceId: removedMemberMessageResult.rows[0]?.id || parseInt(teamId),
           teamId: parseInt(teamId),
           actorId: parseInt(userId),
         });
@@ -3027,8 +3086,8 @@ const removeTeamMember = async (req, res) => {
           excludeUserId: parseInt(memberId),
           type: "member_left",
           title: `${memberName} was removed from ${teamName}`,
-          referenceType: "team_member",
-          referenceId: parseInt(memberId),
+          referenceType: "message",
+          referenceId: teamChatMessageRow?.id || parseInt(memberId),
           actorId: parseInt(userId),
         });
 
@@ -3210,11 +3269,13 @@ const updateMemberRole = async (req, res) => {
 
           const ownershipMessage = `👑 OWNERSHIP_TRANSFERRED: ${teamToken} | ${prevToken} | ${newToken}`;
 
-          await db.pool.query(
+          const ownershipDmResult = await db.pool.query(
             `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-         VALUES ($1, $2, $3, NOW())`,
+         VALUES ($1, $2, $3, NOW())
+         RETURNING id, sender_id, receiver_id, content, sent_at`,
             [userId, memberId, ownershipMessage],
           );
+          await emitInsertedMessage(req, ownershipDmResult.rows[0]);
 
           // Notification for new owner
           await createNotification({
@@ -3222,8 +3283,8 @@ const updateMemberRole = async (req, res) => {
             type: "ownership_transferred",
             title: `You are now the owner of ${teamName}`,
             message: null,
-            referenceType: "team_member",
-            referenceId: parseInt(teamId),
+            referenceType: "message",
+            referenceId: ownershipDmResult.rows[0]?.id || parseInt(teamId),
             teamId: parseInt(teamId),
             actorId: parseInt(userId),
           });
@@ -3239,11 +3300,13 @@ const updateMemberRole = async (req, res) => {
 
           // Team chat message for everyone
           const teamChatMessage = `👑 OWNERSHIP_TEAM: ${prevOwnerName} | ${newOwnerName}`;
-          await db.pool.query(
+          const ownershipTeamMessageResult = await db.pool.query(
             `INSERT INTO messages (sender_id, team_id, content, sent_at)
-         VALUES ($1, $2, $3, NOW())`,
+         VALUES ($1, $2, $3, NOW())
+         RETURNING id, sender_id, team_id, content, sent_at`,
             [userId, teamId, teamChatMessage],
           );
+          await emitInsertedMessage(req, ownershipTeamMessageResult.rows[0]);
         } catch (notificationError) {
           console.error(
             "Error creating ownership transfer notification:",
@@ -3327,11 +3390,13 @@ const updateMemberRole = async (req, res) => {
           `${memberId}:${memberName} | ` +
           `${memberCurrentRole} | ${new_role}`;
 
-        await db.pool.query(
+        const roleChangeMessageResult = await db.pool.query(
           `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-             VALUES ($1, $2, $3, NOW())`,
+             VALUES ($1, $2, $3, NOW())
+             RETURNING id, sender_id, receiver_id, content, sent_at`,
           [userId, memberId, roleChangeMessage],
         );
+        await emitInsertedMessage(req, roleChangeMessageResult.rows[0]);
 
         // Create notification for affected member
         await createNotification({
@@ -3339,8 +3404,8 @@ const updateMemberRole = async (req, res) => {
           type: "role_changed",
           title: `You were ${action} to ${new_role} in ${teamName}`,
           message: null,
-          referenceType: "team_member",
-          referenceId: parseInt(teamId),
+          referenceType: "message",
+          referenceId: roleChangeMessageResult.rows[0]?.id || parseInt(teamId),
           teamId: parseInt(teamId),
           actorId: parseInt(userId),
         });
