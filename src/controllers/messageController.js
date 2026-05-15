@@ -4,6 +4,54 @@ const {
   isImageKitUrl,
 } = require("../utils/imagekitUtils");
 
+const emitMessageReceived = async (req, messageRow, type, conversationId) => {
+  const io = req.app.get("io");
+  if (!io || !messageRow) return;
+
+  const senderResult = await db.query(
+    `SELECT username, first_name, last_name FROM users WHERE id = $1`,
+    [messageRow.sender_id],
+  );
+  const sender = senderResult.rows[0] || {};
+  const baseMessage = {
+    id: messageRow.id,
+    conversationId: String(conversationId),
+    senderId: messageRow.sender_id,
+    senderUsername: sender.username,
+    senderFirstName: sender.first_name,
+    senderLastName: sender.last_name,
+    content: messageRow.content,
+    replyToId: messageRow.reply_to_id,
+    imageUrl: messageRow.image_url,
+    fileUrl: messageRow.file_url,
+    fileName: messageRow.file_name,
+    createdAt: messageRow.sent_at,
+    type,
+  };
+
+  if (type === "team") {
+    const recipientCountResult = await db.query(
+      `SELECT COUNT(*)::int AS recipient_count
+       FROM team_members
+       WHERE team_id = $1
+         AND user_id != $2`,
+      [conversationId, messageRow.sender_id],
+    );
+
+    io.to(`team:${conversationId}`).emit("message:received", {
+      ...baseMessage,
+      teamId: parseInt(conversationId, 10),
+      readCount: 0,
+      recipientCount:
+        Number(recipientCountResult.rows[0]?.recipient_count) || 0,
+    });
+    return;
+  }
+
+  io.to(`user:${messageRow.sender_id}`).emit("message:received", baseMessage);
+  io.to(`user:${conversationId}`).emit("message:received", baseMessage);
+};
+
 const getUnreadCount = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -703,6 +751,13 @@ const sendMessage = async (req, res) => {
         ],
       );
     }
+
+    await emitMessageReceived(
+      req,
+      messageResult.rows[0],
+      type === "team" ? "team" : "direct",
+      conversationId,
+    );
 
     res.status(201).json({
       success: true,

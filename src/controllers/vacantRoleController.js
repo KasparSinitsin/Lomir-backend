@@ -2,6 +2,8 @@ const db = require("../config/database");
 const { geocodeAddress } = require("../utils/geocodingUtil");
 const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 const { serializeVacantRole } = require("../utils/vacantRoleSerializer");
+const { createNotification } = require("./notificationController");
+const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
 
 const VACANT_ROLE_SELECT = `SELECT vr.*,
               u.first_name AS creator_first_name,
@@ -61,6 +63,131 @@ const fetchRoleBadges = async (clientOrPool, roleId) => {
   );
 
   return result.rows;
+};
+
+const getUserDisplayName = (userRow) => {
+  if (!userRow) return "Someone";
+  const fullName = [userRow.first_name, userRow.last_name]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  return fullName || userRow.username || "Someone";
+};
+
+const ROLE_EVENT_MESSAGE_TYPES = {
+  role_created: { marker: "ROLE_CREATED", emoji: "🆕" },
+  role_updated: { marker: "ROLE_UPDATED", emoji: "✏️" },
+  role_deleted: { marker: "ROLE_DELETED", emoji: "🗑️" },
+  role_closed: { marker: "ROLE_CLOSED", emoji: "🔒" },
+  role_filled: { marker: "ROLE_FILLED", emoji: "✅" },
+  role_reopened: { marker: "ROLE_REOPENED", emoji: "🔓" },
+  role_reopened_admin: { marker: "ROLE_REOPENED_ADMIN", emoji: "🔓" },
+};
+
+const buildRoleEventMessage = ({
+  type,
+  teamId,
+  teamName,
+  roleId,
+  roleName,
+  actorId,
+  actorName,
+  filledUserId = null,
+  filledUserName = null,
+}) => {
+  const config = ROLE_EVENT_MESSAGE_TYPES[type];
+  if (!config || !teamId || !roleId) return null;
+
+  const baseMessage = `${config.emoji} ${config.marker}: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || "Vacant Role"}`;
+
+  if (type === "role_filled") {
+    const filledToken = `${filledUserId ?? actorId}:${filledUserName || actorName || "Someone"}`;
+    const actorToken = `${actorId}:${actorName || "Someone"}`;
+    return filledUserId != null || filledUserName
+      ? `${baseMessage} | ${filledToken} | ${actorToken}`
+      : `${baseMessage} | ${actorToken}`;
+  }
+
+  return `${baseMessage} | ${actorId}:${actorName || "Someone"}`;
+};
+
+const notifyTeamMembersOfRoleEvent = async ({
+  req,
+  teamId,
+  actorId,
+  type,
+  title,
+  message = null,
+  referenceId = null,
+  teamName = null,
+  roleName = null,
+  actorName = null,
+  filledUserId = null,
+  filledUserName = null,
+}) => {
+  if (typeof req?.app?.get !== "function") return;
+
+  try {
+    const eventContent = buildRoleEventMessage({
+      type,
+      teamId,
+      teamName,
+      roleId: referenceId,
+      roleName,
+      actorId,
+      actorName,
+      filledUserId,
+      filledUserName,
+    });
+    let messageRow = null;
+
+    if (eventContent) {
+      const messageResult = await db.pool.query(
+        `INSERT INTO messages (sender_id, team_id, content, sent_at)
+         VALUES ($1, $2, $3, NOW())
+         RETURNING id, sender_id, team_id, content, sent_at`,
+        [actorId, teamId, eventContent],
+      );
+      messageRow = messageResult.rows[0] || null;
+      await emitInsertedMessage(req, messageRow);
+    }
+
+    const membersResult = await db.pool.query(
+      `SELECT user_id
+       FROM team_members
+       WHERE team_id = $1
+         AND user_id != $2`,
+      [teamId, actorId],
+    );
+
+    for (const member of membersResult.rows) {
+      await createNotification({
+        userId: member.user_id,
+        type,
+        title,
+        message,
+        referenceType: messageRow?.id ? "message" : "vacant_role",
+        referenceId: messageRow?.id || referenceId,
+        teamId,
+        actorId,
+      });
+    }
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`team:${teamId}`).emit("notification:new", {
+        type,
+        teamId: Number(teamId),
+        referenceId: messageRow?.id
+          ? Number(messageRow.id)
+          : referenceId != null ? Number(referenceId) : null,
+        messageId: messageRow?.id ? Number(messageRow.id) : null,
+        actorId: actorId != null ? Number(actorId) : null,
+      });
+    }
+  } catch (error) {
+    console.error(`Error creating ${type} notifications:`, error);
+  }
 };
 
 // ============================================================
@@ -318,11 +445,12 @@ const createVacantRole = async (req, res) => {
 
     // Check if parent team is synthetic (new roles inherit this flag)
     const teamSyntheticCheck = await db.pool.query(
-      `SELECT is_synthetic FROM teams WHERE id = $1`,
+      `SELECT name, is_synthetic FROM teams WHERE id = $1`,
       [teamId],
     );
     const isTeamSynthetic =
       teamSyntheticCheck.rows[0]?.is_synthetic === true;
+    const teamName = teamSyntheticCheck.rows[0]?.name || "your team";
 
     const {
       role_name,
@@ -472,6 +600,30 @@ const createVacantRole = async (req, res) => {
         desiredTags: tags,
         desiredBadges: badges,
       };
+
+      if (typeof req?.app?.get === "function") try {
+        const actorResult = await db.pool.query(
+          `SELECT username, first_name, last_name FROM users WHERE id = $1`,
+          [userId],
+        );
+        const actorName = getUserDisplayName(actorResult.rows[0]);
+        const roleName = role.roleName || role.role_name || "Vacant Role";
+        await notifyTeamMembersOfRoleEvent({
+          req,
+          teamId,
+          actorId: userId,
+          type: "role_created",
+          title: `New role opened in ${teamName}: ${roleName}`,
+          message: `New role ${roleName} created.`,
+          referenceId: role.id,
+          teamName,
+          roleName,
+          actorName,
+        });
+      } catch (notificationError) {
+        console.error("Error creating role_created notification:", notificationError);
+      }
+
       res.status(201).json({
         success: true,
         message: "Vacant role created successfully",
@@ -688,6 +840,33 @@ const updateVacantRole = async (req, res) => {
         desiredBadges: badges,
       };
 
+      if (typeof req?.app?.get === "function") try {
+        const [teamResult, actorResult] = await Promise.all([
+          db.pool.query(`SELECT name FROM teams WHERE id = $1`, [teamId]),
+          db.pool.query(
+            `SELECT username, first_name, last_name FROM users WHERE id = $1`,
+            [userId],
+          ),
+        ]);
+        const teamName = teamResult.rows[0]?.name || "your team";
+        const actorName = getUserDisplayName(actorResult.rows[0]);
+        const roleName = updatedRole.roleName || updatedRole.role_name || "Vacant Role";
+        await notifyTeamMembersOfRoleEvent({
+          req,
+          teamId,
+          actorId: userId,
+          type: "role_updated",
+          title: `Role updated in ${teamName}: ${roleName}`,
+          message: `${actorName} updated the role: ${roleName}`,
+          referenceId: updatedRole.id,
+          teamName,
+          roleName,
+          actorName,
+        });
+      } catch (notificationError) {
+        console.error("Error creating role_updated notification:", notificationError);
+      }
+
       res.status(200).json({
         success: true,
         message: "Vacant role updated successfully",
@@ -745,6 +924,51 @@ const deleteVacantRole = async (req, res) => {
         success: false,
         message: "Vacant role not found",
       });
+    }
+
+    if (typeof req?.app?.get === "function") try {
+      const [teamResult, actorResult] = await Promise.all([
+        db.pool.query(`SELECT name FROM teams WHERE id = $1`, [teamId]),
+        db.pool.query(
+          `SELECT username, first_name, last_name FROM users WHERE id = $1`,
+          [userId],
+        ),
+      ]);
+      const teamName = teamResult.rows[0]?.name || "your team";
+      const actorName = getUserDisplayName(actorResult.rows[0]);
+      const roleName = result.rows[0].role_name || "Vacant Role";
+
+      // Remove stale unread notifications about this specific role before sending role_deleted
+      await db.pool.query(
+        `DELETE FROM notifications
+         WHERE team_id = $1
+           AND type IN ('role_created', 'role_updated', 'role_closed', 'role_reopened', 'role_reopened_admin')
+           AND read_at IS NULL
+           AND (
+             (reference_type = 'vacant_role' AND reference_id = $2)
+             OR reference_id IN (
+               SELECT id FROM messages WHERE team_id = $1 AND content LIKE $3
+             )
+           )`,
+        [teamId, roleId, `%| ${roleId}:%`],
+      );
+      const io = req.app.get("io");
+      io?.to(`team:${teamId}`).emit("notification:updated");
+
+      await notifyTeamMembersOfRoleEvent({
+        req,
+        teamId,
+        actorId: userId,
+        type: "role_deleted",
+        title: `Role deleted in ${teamName}: ${roleName}`,
+        message: `${actorName} deleted the role: ${roleName}`,
+        referenceId: result.rows[0].id,
+        teamName,
+        roleName,
+        actorName,
+      });
+    } catch (notificationError) {
+      console.error("Error creating role_deleted notification:", notificationError);
     }
 
     res.status(200).json({
@@ -819,11 +1043,64 @@ const updateVacantRoleStatus = async (req, res) => {
        WHERE vr.id = $1 AND vr.team_id = $2`,
       [roleId, teamId],
     );
+    const updatedRole = serializeVacantRole(updatedRoleResult.rows[0]);
+
+    if (typeof req?.app?.get === "function") try {
+      const [teamResult, actorResult] = await Promise.all([
+        db.pool.query(`SELECT name FROM teams WHERE id = $1`, [teamId]),
+        db.pool.query(
+          `SELECT username, first_name, last_name FROM users WHERE id = $1`,
+          [userId],
+        ),
+      ]);
+      const teamName = teamResult.rows[0]?.name || "your team";
+      const actorName = getUserDisplayName(actorResult.rows[0]);
+      const roleName = updatedRole.roleName || updatedRole.role_name || "Vacant Role";
+      const filledUser = updatedRole.filled_by_user || updatedRole.filledByUser || null;
+      const filledUserName = filledUser ? getUserDisplayName(filledUser) : null;
+      const notificationByStatus = {
+        open: {
+          type: "role_reopened",
+          title: `Role reopened in ${teamName}: ${roleName}`,
+          message: `${actorName} reopened the role: ${roleName}`,
+        },
+        filled: {
+          type: "role_filled",
+          title: `Role filled in ${teamName}: ${roleName}`,
+          message: `${roleName} was marked as filled`,
+        },
+        closed: {
+          type: "role_closed",
+          title: `Role closed in ${teamName}: ${roleName}`,
+          message: `${actorName} closed the role: ${roleName}`,
+        },
+      };
+      const notificationConfig = notificationByStatus[status];
+
+      if (notificationConfig) {
+        await notifyTeamMembersOfRoleEvent({
+          req,
+          teamId,
+          actorId: userId,
+          type: notificationConfig.type,
+          title: notificationConfig.title,
+          message: notificationConfig.message,
+          referenceId: updatedRole.id,
+          teamName,
+          roleName,
+          actorName,
+          filledUserId: status === "filled" ? filledUser?.id ?? null : null,
+          filledUserName: status === "filled" ? filledUserName : null,
+        });
+      }
+    } catch (notificationError) {
+      console.error(`Error creating role_${status} notification:`, notificationError);
+    }
 
     res.status(200).json({
       success: true,
       message: `Vacant role status updated to "${status}"`,
-      data: serializeVacantRole(updatedRoleResult.rows[0]),
+      data: updatedRole,
     });
   } catch (error) {
     console.error("Update vacant role status error:", error);

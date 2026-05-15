@@ -80,6 +80,12 @@ router.put(
 
 // Cancel an invitation (by team owner/admin)
 router.delete(
+  "/invitations/:invitationId/role",
+  auth.authenticateToken,
+  invitationController.cancelRoleInvitation,
+);
+
+router.delete(
   "/invitations/:invitationId",
   auth.authenticateToken,
   invitationController.cancelInvitation,
