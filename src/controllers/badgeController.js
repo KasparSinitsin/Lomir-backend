@@ -411,12 +411,16 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
     }
 
     // ── Non-critical: Create notification (SAVEPOINT) ──
+    const badgeName = badgeCheck.rows[0].name;
+    const awarderRow = (await client.query(
+      "SELECT first_name, last_name, username FROM users WHERE id = $1",
+      [req.user.id],
+    )).rows[0];
+    const awarderName = [awarderRow?.first_name, awarderRow?.last_name].filter(Boolean).join(" ") || awarderRow?.username || "Someone";
+
     let notificationCreated = false;
     try {
       await client.query("SAVEPOINT notification_sp");
-
-      const badgeName = badgeCheck.rows[0].name;
-      const awarderName = req.user.first_name || req.user.username || "Someone";
 
       await client.query(
         `INSERT INTO notifications (user_id, type, title, message, reference_type, reference_id, team_id, actor_id)
@@ -458,17 +462,23 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
     );
 
     // Notify recipient instantly via socket
-    if (notificationCreated) {
-      try {
-        const io = req.app.get("io");
-        if (io) {
+    try {
+      const io = req.app.get("io");
+      if (io) {
+        if (notificationCreated) {
           io.to(`user:${awarded_to_user_id}`).emit("notification:new", {
             type: "badge_awarded",
           });
         }
-      } catch (socketError) {
-        console.warn("⚠️ Socket emit failed (non-critical):", socketError.message);
+        io.to(`user:${awarded_to_user_id}`).emit("badge:awarded", {
+          badgeName,
+          badgeCategory: badgeCheck.rows[0].category || null,
+          awarderName,
+          badgeId: badge_id,
+        });
       }
+    } catch (socketError) {
+      console.warn("⚠️ Socket emit failed (non-critical):", socketError.message);
     }
 
     if (process.env.NODE_ENV !== "production") {

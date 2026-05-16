@@ -39,6 +39,10 @@ const isAllowedOrigin = (origin) => {
   try {
     const url = new URL(normalized);
 
+    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+      return true;
+    }
+
     if (
       url.protocol === "https:" &&
       (url.hostname === "lomir-frontend.vercel.app" ||
