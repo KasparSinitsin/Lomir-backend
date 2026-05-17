@@ -9,6 +9,13 @@ const {
   computeUserProfileOverlap,
   scoreUserAgainstRole,
 } = require("../utils/matchingScorer");
+const {
+  buildCityDistanceSQL,
+  buildDistanceFilterSQL,
+  buildDistanceSelectSQL,
+  buildNearestPrioritySQL,
+  buildPostalCodeDistanceSQL,
+} = require("../utils/searchQueryBuilder");
 
 const VALID_SEARCH_TYPES = ["all", "teams", "users", "roles"];
 const VALID_ROLE_SORTS = ["recent", "newest", "name", "match", "proximity"];
@@ -90,19 +97,7 @@ function normalizeRoleSearchRow(role) {
 }
 
 function buildRoleNearestPrioritySQL(userLocation) {
-  if (userLocation?.hasCoordinates) {
-    return "(CASE WHEN vr.is_remote IS TRUE THEN 2 WHEN vr.latitude IS NULL OR vr.longitude IS NULL THEN 1 ELSE 0 END)";
-  }
-
-  if (userLocation?.hasPostalCode) {
-    return "(CASE WHEN vr.is_remote IS TRUE THEN 2 WHEN vr.postal_code IS NULL OR vr.postal_code = '' THEN 1 ELSE 0 END)";
-  }
-
-  if (userLocation?.hasCity) {
-    return "(CASE WHEN vr.is_remote IS TRUE THEN 2 WHEN vr.city IS NULL OR vr.city = '' THEN 1 ELSE 0 END)";
-  }
-
-  return "(CASE WHEN vr.is_remote IS TRUE THEN 1 ELSE 0 END)";
+  return buildNearestPrioritySQL("vr", userLocation);
 }
 
 function buildRoleOrderBy(sort, direction, userLocation) {
@@ -132,19 +127,7 @@ function buildRoleOrderBy(sort, direction, userLocation) {
 }
 
 function buildTeamNearestPrioritySQL(userLocation) {
-  if (userLocation?.hasCoordinates) {
-    return "(CASE WHEN t.is_remote IS TRUE THEN 2 WHEN t.latitude IS NULL OR t.longitude IS NULL THEN 1 ELSE 0 END)";
-  }
-
-  if (userLocation?.hasPostalCode) {
-    return "(CASE WHEN t.is_remote IS TRUE THEN 2 WHEN t.postal_code IS NULL OR t.postal_code = '' THEN 1 ELSE 0 END)";
-  }
-
-  if (userLocation?.hasCity) {
-    return "(CASE WHEN t.is_remote IS TRUE THEN 2 WHEN t.city IS NULL OR t.city = '' THEN 1 ELSE 0 END)";
-  }
-
-  return "(CASE WHEN t.is_remote IS TRUE THEN 1 ELSE 0 END)";
+  return buildNearestPrioritySQL("t", userLocation);
 }
 
 function computeJaccardOverlap(baseSet, candidateIds) {
@@ -356,27 +339,7 @@ async function fetchOpenRoleSearchResults({
 
   let roleDistanceSelect = "";
   if (userLocation && (sort === "proximity" || hasValidMaxDistance)) {
-    if (userLocation.hasCoordinates) {
-      roleDistanceSelect = `,
-      CASE
-        WHEN vr.latitude IS NULL OR vr.longitude IS NULL THEN 999999
-        ELSE (
-          6371 * acos(
-            LEAST(1.0, GREATEST(-1.0,
-              cos(radians(${userLocation.latitude})) * cos(radians(vr.latitude)) *
-              cos(radians(vr.longitude) - radians(${userLocation.longitude})) +
-              sin(radians(${userLocation.latitude})) * sin(radians(vr.latitude))
-            ))
-          )
-        )
-      END as distance_km`;
-    } else if (userLocation.hasPostalCode) {
-      roleDistanceSelect = `,
-      ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "vr")} as distance_km`;
-    } else if (userLocation.hasCity) {
-      roleDistanceSelect = `,
-      ${searchController.buildCityDistanceSQL(userLocation.city, "vr")} as distance_km`;
-    }
+    roleDistanceSelect = buildDistanceSelectSQL("vr", userLocation);
   }
 
   const roleDataParams = [searchValue];
@@ -534,18 +497,11 @@ const searchController = {
     tableAlias,
     postalCodeColumn = "postal_code",
   ) {
-    const sanitizedPostalCode = userPostalCode.replace(/'/g, "''");
-    return `
-      CASE
-        WHEN ${tableAlias}.${postalCodeColumn} IS NULL OR ${tableAlias}.${postalCodeColumn} = '' THEN 999999
-        WHEN ${tableAlias}.${postalCodeColumn} = '${sanitizedPostalCode}' THEN 0
-        WHEN LEFT(${tableAlias}.${postalCodeColumn}::text, 4) = LEFT('${sanitizedPostalCode}', 4) THEN 1
-        WHEN LEFT(${tableAlias}.${postalCodeColumn}::text, 3) = LEFT('${sanitizedPostalCode}', 3) THEN 2
-        WHEN LEFT(${tableAlias}.${postalCodeColumn}::text, 2) = LEFT('${sanitizedPostalCode}', 2) THEN 3
-        WHEN LEFT(${tableAlias}.${postalCodeColumn}::text, 1) = LEFT('${sanitizedPostalCode}', 1) THEN 4
-        ELSE 5
-      END
-    `;
+    return buildPostalCodeDistanceSQL(
+      userPostalCode,
+      tableAlias,
+      postalCodeColumn,
+    );
   },
 
   /**
@@ -553,14 +509,7 @@ const searchController = {
    * Returns 0 for same city, 999999 for different/no city
    */
   buildCityDistanceSQL(userCity, tableAlias) {
-    const sanitizedCity = userCity.replace(/'/g, "''");
-    return `
-      CASE
-        WHEN ${tableAlias}.city IS NULL OR ${tableAlias}.city = '' THEN 999999
-        WHEN LOWER(${tableAlias}.city) = '${sanitizedCity}' THEN 0
-        ELSE 999998
-      END
-    `;
+    return buildCityDistanceSQL(userCity, tableAlias);
   },
 
   /**
@@ -568,21 +517,7 @@ const searchController = {
    * Only works with coordinate-based (Haversine) distance
    */
   buildDistanceFilterSQL(userLocation, tableAlias, paramPlaceholder) {
-    if (!userLocation || !userLocation.hasCoordinates) return null;
-
-    return `
-      AND ${tableAlias}.latitude IS NOT NULL
-      AND ${tableAlias}.longitude IS NOT NULL
-      AND (
-        6371 * acos(
-          LEAST(1.0, GREATEST(-1.0,
-            cos(radians(${userLocation.latitude})) * cos(radians(${tableAlias}.latitude)) *
-            cos(radians(${tableAlias}.longitude) - radians(${userLocation.longitude})) +
-            sin(radians(${userLocation.latitude})) * sin(radians(${tableAlias}.latitude))
-          ))
-        )
-      ) <= ${paramPlaceholder}
-    `;
+    return buildDistanceFilterSQL(userLocation, tableAlias, paramPlaceholder);
   },
 
   /**
@@ -868,27 +803,7 @@ const searchController = {
         userLocation &&
         (sort === "proximity" || hasValidMaxDistance)
       ) {
-        if (userLocation.hasCoordinates) {
-          teamDistanceSelect = `,
-            CASE
-              WHEN t.latitude IS NULL OR t.longitude IS NULL THEN 999999
-              ELSE (
-                6371 * acos(
-                  LEAST(1.0, GREATEST(-1.0,
-                    cos(radians(${userLocation.latitude})) * cos(radians(t.latitude)) *
-                    cos(radians(t.longitude) - radians(${userLocation.longitude})) +
-                    sin(radians(${userLocation.latitude})) * sin(radians(t.latitude))
-                  ))
-                )
-              )
-            END as distance_km`;
-        } else if (userLocation.hasPostalCode) {
-          teamDistanceSelect = `,
-            ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "t")} as distance_km`;
-        } else if (userLocation.hasCity) {
-          teamDistanceSelect = `,
-            ${searchController.buildCityDistanceSQL(userLocation.city, "t")} as distance_km`;
-        }
+        teamDistanceSelect = buildDistanceSelectSQL("t", userLocation);
       }
 
       let teamQuery = `
@@ -1241,28 +1156,7 @@ ${teamDistanceSelect}
         ((sort === "proximity" && direction !== "REMOTE") ||
           hasValidMaxDistance)
       ) {
-        if (userLocation.hasCoordinates) {
-          userDistanceSelect = `,
-            CASE
-              WHEN u.latitude IS NULL OR u.longitude IS NULL THEN 999999
-              ELSE (
-                6371 * acos(
-                  LEAST(1.0, GREATEST(-1.0,
-                    cos(radians(${userLocation.latitude})) * cos(radians(u.latitude)) *
-                    cos(radians(u.longitude) - radians(${userLocation.longitude})) +
-                    sin(radians(${userLocation.latitude})) * sin(radians(u.latitude))
-                  ))
-                )
-              )
-            END as distance_km`;
-          userDistanceGroupBy = "";
-        } else if (userLocation.hasPostalCode) {
-          userDistanceSelect = `,
-            ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "u")} as distance_km`;
-        } else if (userLocation.hasCity) {
-          userDistanceSelect = `,
-            ${searchController.buildCityDistanceSQL(userLocation.city, "u")} as distance_km`;
-        }
+        userDistanceSelect = buildDistanceSelectSQL("u", userLocation);
       }
 
       let userQuery = `
@@ -2008,26 +1902,9 @@ ${teamDistanceSelect}
         userLocation &&
         (sort === "proximity" || hasValidMaxDistance)
       ) {
-        if (userLocation.hasCoordinates) {
-          teamDistanceSelect = `,
-            CASE
-              WHEN t.latitude IS NULL OR t.longitude IS NULL THEN 999999
-              ELSE (
-                6371 * acos(
-                  LEAST(1.0, GREATEST(-1.0,
-                    cos(radians(${userLocation.latitude})) * cos(radians(t.latitude)) *
-                    cos(radians(t.longitude) - radians(${userLocation.longitude})) +
-                    sin(radians(${userLocation.latitude})) * sin(radians(t.latitude))
-                  ))
-                )
-              )
-            END as distance_km`;
-        } else if (userLocation.hasPostalCode) {
-          teamDistanceSelect = `,
-            ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "t")} as distance_km`;
-        } else if (userLocation.hasCity) {
-          teamDistanceSelect = `, 999999 as distance_km`;
-        }
+        teamDistanceSelect = buildDistanceSelectSQL("t", userLocation, {
+          cityFallback: "constant",
+        });
       }
 
       let teamQuery = `
@@ -2347,28 +2224,7 @@ ${teamDistanceSelect}
         ((sort === "proximity" && direction !== "REMOTE") ||
           hasValidMaxDistance)
       ) {
-        if (userLocation.hasCoordinates) {
-          userDistanceSelect = `,
-            CASE
-              WHEN u.latitude IS NULL OR u.longitude IS NULL THEN 999999
-              ELSE (
-                6371 * acos(
-                  LEAST(1.0, GREATEST(-1.0,
-                    cos(radians(${userLocation.latitude})) * cos(radians(u.latitude)) *
-                    cos(radians(u.longitude) - radians(${userLocation.longitude})) +
-                    sin(radians(${userLocation.latitude})) * sin(radians(u.latitude))
-                  ))
-                )
-              )
-            END as distance_km`;
-          userDistanceGroupBy = "";
-        } else if (userLocation.hasPostalCode) {
-          userDistanceSelect = `,
-            ${searchController.buildPostalCodeDistanceSQL(userLocation.postal_code, "u")} as distance_km`;
-        } else if (userLocation.hasCity) {
-          userDistanceSelect = `,
-            ${searchController.buildCityDistanceSQL(userLocation.city, "u")} as distance_km`;
-        }
+        userDistanceSelect = buildDistanceSelectSQL("u", userLocation);
       }
 
       let userQuery = `
