@@ -1990,6 +1990,7 @@ const handleTeamApplication = async (req, res) => {
               io.to(`user:${application.applicant_id}`).emit("notification:new", {
                 type: "application_approved",
                 teamId: application.team_id,
+                title: `Your application to ${application.team_name} was approved!`,
               });
               io.to(`team:${application.team_id}`).emit("notification:new", {
                 type: "member_joined",
@@ -2103,6 +2104,7 @@ const handleTeamApplication = async (req, res) => {
             io.to(`user:${application.applicant_id}`).emit("notification:new", {
               type: "application_rejected",
               teamId: application.team_id,
+              title: `Your application to ${application.team_name} was declined`,
             });
             for (const adminId of affectedAdminIds) {
               io.to(`user:${adminId}`).emit("notification:updated");
@@ -2464,6 +2466,9 @@ const applyToJoinTeam = async (req, res) => {
             io.to(`team:${teamId}`).emit("notification:new", {
               type: "application_received",
               teamId: parseInt(teamId),
+              title: isAlreadyMember
+                ? `${applicantName} applied for a role in ${team.name}`
+                : `${applicantName} applied to join ${team.name}`,
             });
           }
         } catch (notificationError) {

@@ -229,6 +229,7 @@ const sendTeamInvitation = async (req, res) => {
             type: "role_invitation",
             teamId: parseInt(teamId),
             roleId: finalRoleId,
+            title: `You've been invited to fill the role '${roleName}' in ${team.name}`,
           });
         }
       } else {
@@ -247,6 +248,7 @@ const sendTeamInvitation = async (req, res) => {
           io.to(`user:${finalInviteeId}`).emit("notification:new", {
             type: "invitation_received",
             teamId: parseInt(teamId),
+            title: `${inviterName} invited you to join ${team.name}`,
           });
         }
       }
@@ -254,6 +256,7 @@ const sendTeamInvitation = async (req, res) => {
       if (io) {
         io.to(`team:${teamId}`).emit("notification:updated", {
           type: isInternalInvite ? "role_invitation_sent" : "invitation_sent",
+          notificationType: isInternalInvite ? "role_invitation" : "invitation_received",
           teamId: parseInt(teamId),
           invitationId: invitationResult.rows[0].id,
           roleId: finalRoleId,
@@ -945,6 +948,7 @@ const respondToInvitation = async (req, res) => {
                 teamId: invitation.team_id,
                 roleFilled,
                 filledRoleName,
+                title: `${inviteeName} accepted your invitation and joined ${invitation.team_name} as ${filledRoleName}`,
               });
             }
           }
@@ -1027,6 +1031,7 @@ const respondToInvitation = async (req, res) => {
             io.to(`user:${invitation.inviter_id}`).emit("notification:new", {
               type: "invitation_declined",
               teamId: invitation.team_id,
+              title: `${inviteeName} declined your invitation to ${invitation.team_name}`,
             });
           }
         } catch (notificationError) {
@@ -1182,6 +1187,7 @@ const cancelInvitation = async (req, res) => {
         io.to(`user:${invitation.invitee_id}`).emit("notification:new", {
           type: "invitation_cancelled",
           teamId: teamId,
+          title: `${cancellerName} cancelled your invitation to ${invitation.team_name}`,
         });
         io.to(`team:${teamId}`).emit("notification:updated", {
           type: "invitation_cancelled",
