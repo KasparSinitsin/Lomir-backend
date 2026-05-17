@@ -463,6 +463,76 @@ function buildUserFilters(config, startParamIndex = 1) {
   return { nextParamIndex, params, whereFragments };
 }
 
+function buildTeamOrderBy(sort, direction, capacityMode, userLocation) {
+  switch (sort) {
+    case "recent":
+      return direction === "DESC"
+        ? "t.updated_at DESC NULLS LAST"
+        : "t.updated_at ASC NULLS LAST";
+    case "newest":
+      return direction === "DESC" ? "t.created_at DESC" : "t.created_at ASC";
+    case "capacity":
+      if (capacityMode === "roles") {
+        return direction === "ASC"
+          ? "open_role_count ASC, t.name ASC"
+          : "open_role_count DESC, t.name ASC";
+      }
+
+      return direction === "ASC"
+        ? "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC"
+        : "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC";
+    case "match":
+      return "t.name ASC";
+    case "proximity":
+      if (direction === "REMOTE" && userLocation) {
+        return "(CASE WHEN t.is_remote IS TRUE THEN 0 ELSE 1 END) ASC, distance_km DESC, t.name ASC";
+      }
+
+      if (direction === "REMOTE") {
+        return "(CASE WHEN t.is_remote IS TRUE THEN 0 ELSE 1 END) ASC, t.name ASC";
+      }
+
+      if (userLocation) {
+        return direction === "DESC"
+          ? "(CASE WHEN t.is_remote IS TRUE THEN 0 ELSE 1 END) ASC, distance_km DESC, t.name ASC"
+          : `${buildTeamNearestPrioritySQL(userLocation)} ASC, distance_km ASC, t.name ASC`;
+      }
+
+      return "(CASE WHEN t.is_remote IS TRUE THEN 1 ELSE 0 END) ASC, t.name ASC";
+    case "name":
+    default:
+      return direction === "DESC" ? "t.name DESC" : "t.name ASC";
+  }
+}
+
+function buildUserOrderBy(sort, direction, userLocation) {
+  switch (sort) {
+    case "recent":
+      return direction === "DESC"
+        ? "u.updated_at DESC NULLS LAST"
+        : "u.updated_at ASC NULLS LAST";
+    case "newest":
+      return direction === "DESC" ? "u.created_at DESC" : "u.created_at ASC";
+    case "capacity":
+      return "u.username ASC";
+    case "match":
+      return "u.username ASC";
+    case "proximity":
+      if (direction === "REMOTE") {
+        return "u.username ASC";
+      }
+
+      if (userLocation) {
+        return direction === "DESC" ? "distance_km DESC" : "distance_km ASC";
+      }
+
+      return "u.username ASC";
+    case "name":
+    default:
+      return direction === "DESC" ? "u.username DESC" : "u.username ASC";
+  }
+}
+
 function computeJaccardOverlap(baseSet, candidateIds) {
   const candidateSet = new Set(
     candidateIds.map((id) => Number(id)).filter(Number.isFinite),
@@ -1133,56 +1203,12 @@ ${teamDistanceSelect}
       teamParams.push(...teamFilters.params);
       teamParamIndex = teamFilters.nextParamIndex;
 
-      let teamOrderBy;
-      switch (sort) {
-        case "recent":
-          teamOrderBy =
-            direction === "DESC"
-              ? "t.updated_at DESC NULLS LAST"
-              : "t.updated_at ASC NULLS LAST";
-          break;
-        case "newest":
-          teamOrderBy =
-            direction === "DESC" ? "t.created_at DESC" : "t.created_at ASC";
-          break;
-        case "capacity":
-          if (capacityMode === "roles") {
-            teamOrderBy =
-              direction === "ASC"
-                ? "open_role_count ASC, t.name ASC"
-                : "open_role_count DESC, t.name ASC";
-          } else {
-            teamOrderBy =
-              direction === "ASC"
-                ? "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC"
-                : "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC";
-          }
-          break;
-        case "match":
-          teamOrderBy = "t.name ASC";
-          break;
-        case "proximity":
-          if (direction === "REMOTE" && userLocation) {
-            teamOrderBy =
-              "(CASE WHEN t.is_remote IS TRUE THEN 0 ELSE 1 END) ASC, distance_km DESC, t.name ASC";
-          } else if (direction === "REMOTE") {
-            teamOrderBy =
-              "(CASE WHEN t.is_remote IS TRUE THEN 0 ELSE 1 END) ASC, t.name ASC";
-          } else if (userLocation) {
-            teamOrderBy =
-              direction === "DESC"
-                ? "(CASE WHEN t.is_remote IS TRUE THEN 0 ELSE 1 END) ASC, distance_km DESC, t.name ASC"
-                : `${buildTeamNearestPrioritySQL(userLocation)} ASC, distance_km ASC, t.name ASC`;
-          } else {
-            teamOrderBy =
-              "(CASE WHEN t.is_remote IS TRUE THEN 1 ELSE 0 END) ASC, t.name ASC";
-          }
-          break;
-        case "name":
-        default:
-          teamOrderBy = direction === "DESC" ? "t.name DESC" : "t.name ASC";
-          break;
-      }
+      const teamOrderBy = buildTeamOrderBy(
+        sort,
+        direction,
+        capacityMode,
+        userLocation,
+      );
 
       const teamGroupByClause = `
         GROUP BY
@@ -1393,40 +1419,7 @@ ${teamDistanceSelect}
       userParams.push(...userFilters.params);
       userParamIndex = userFilters.nextParamIndex;
 
-      let userOrderBy;
-      switch (sort) {
-        case "recent":
-          userOrderBy =
-            direction === "DESC"
-              ? "u.updated_at DESC NULLS LAST"
-              : "u.updated_at ASC NULLS LAST";
-          break;
-        case "newest":
-          userOrderBy =
-            direction === "DESC" ? "u.created_at DESC" : "u.created_at ASC";
-          break;
-        case "capacity":
-          userOrderBy = "u.username ASC";
-          break;
-        case "match":
-          userOrderBy = "u.username ASC";
-          break;
-        case "proximity":
-          if (direction === "REMOTE") {
-            userOrderBy = "u.username ASC";
-          } else if (userLocation) {
-            userOrderBy =
-              direction === "DESC" ? "distance_km DESC" : "distance_km ASC";
-          } else {
-            userOrderBy = "u.username ASC";
-          }
-          break;
-        case "name":
-        default:
-          userOrderBy =
-            direction === "DESC" ? "u.username DESC" : "u.username ASC";
-          break;
-      }
+      const userOrderBy = buildUserOrderBy(sort, direction, userLocation);
 
       userQuery += `
         GROUP BY
@@ -1905,56 +1898,12 @@ ${teamDistanceSelect}
       teamParams.push(...teamFilters.params);
       teamParamIndex = teamFilters.nextParamIndex;
 
-      let teamOrderBy;
-      switch (sort) {
-        case "recent":
-          teamOrderBy =
-            direction === "DESC"
-              ? "t.updated_at DESC NULLS LAST"
-              : "t.updated_at ASC NULLS LAST";
-          break;
-        case "newest":
-          teamOrderBy =
-            direction === "DESC" ? "t.created_at DESC" : "t.created_at ASC";
-          break;
-        case "capacity":
-          if (capacityMode === "roles") {
-            teamOrderBy =
-              direction === "ASC"
-                ? "open_role_count ASC, t.name ASC"
-                : "open_role_count DESC, t.name ASC";
-          } else {
-            teamOrderBy =
-              direction === "ASC"
-                ? "(CASE WHEN t.max_members IS NULL THEN 999999 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) ASC"
-                : "(CASE WHEN t.max_members IS NULL THEN -1 ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0) END) DESC";
-          }
-          break;
-        case "match":
-          teamOrderBy = "t.name ASC";
-          break;
-        case "proximity":
-          if (direction === "REMOTE" && userLocation) {
-            teamOrderBy =
-              "(CASE WHEN t.is_remote IS TRUE THEN 0 ELSE 1 END) ASC, distance_km DESC, t.name ASC";
-          } else if (direction === "REMOTE") {
-            teamOrderBy =
-              "(CASE WHEN t.is_remote IS TRUE THEN 0 ELSE 1 END) ASC, t.name ASC";
-          } else if (userLocation) {
-            teamOrderBy =
-              direction === "DESC"
-                ? "(CASE WHEN t.is_remote IS TRUE THEN 0 ELSE 1 END) ASC, distance_km DESC, t.name ASC"
-                : `${buildTeamNearestPrioritySQL(userLocation)} ASC, distance_km ASC, t.name ASC`;
-          } else {
-            teamOrderBy =
-              "(CASE WHEN t.is_remote IS TRUE THEN 1 ELSE 0 END) ASC, t.name ASC";
-          }
-          break;
-        case "name":
-        default:
-          teamOrderBy = direction === "DESC" ? "t.name DESC" : "t.name ASC";
-          break;
-      }
+      const teamOrderBy = buildTeamOrderBy(
+        sort,
+        direction,
+        capacityMode,
+        userLocation,
+      );
 
       const teamGroupByClause = `
         GROUP BY
@@ -2070,40 +2019,7 @@ ${teamDistanceSelect}
       userParams.push(...userFilters.params);
       userParamIndex = userFilters.nextParamIndex;
 
-      let userOrderBy;
-      switch (sort) {
-        case "recent":
-          userOrderBy =
-            direction === "DESC"
-              ? "u.updated_at DESC NULLS LAST"
-              : "u.updated_at ASC NULLS LAST";
-          break;
-        case "newest":
-          userOrderBy =
-            direction === "DESC" ? "u.created_at DESC" : "u.created_at ASC";
-          break;
-        case "capacity":
-          userOrderBy = "u.username ASC";
-          break;
-        case "match":
-          userOrderBy = "u.username ASC";
-          break;
-        case "proximity":
-          if (direction === "REMOTE") {
-            userOrderBy = "u.username ASC";
-          } else if (userLocation) {
-            userOrderBy =
-              direction === "DESC" ? "distance_km DESC" : "distance_km ASC";
-          } else {
-            userOrderBy = "u.username ASC";
-          }
-          break;
-        case "name":
-        default:
-          userOrderBy =
-            direction === "DESC" ? "u.username DESC" : "u.username ASC";
-          break;
-      }
+      const userOrderBy = buildUserOrderBy(sort, direction, userLocation);
 
       userQuery += `
         ORDER BY ${userOrderBy}
