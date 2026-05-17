@@ -844,6 +844,465 @@ async function fetchOpenRoleSearchResults({
   };
 }
 
+function appendTeamSearchClause({
+  teamQuery,
+  teamParams,
+  query,
+  searchTerm,
+  useBoolean,
+  startParamIndex,
+}) {
+  let nextParamIndex = startParamIndex;
+
+  if (useBoolean) {
+    const teamColumns = ["t.name", "t.description", "tag.name", "t.city"];
+    const teamTagConfig = {
+      tagColumn: "tag.name",
+      existsTemplate:
+        "EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND t2.name ILIKE $PARAM)",
+      notExistsTemplate:
+        "NOT EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND t2.name ILIKE $PARAM)",
+    };
+    const teamSearch = parseBooleanSearch(
+      query,
+      teamColumns,
+      nextParamIndex,
+      teamTagConfig,
+    );
+    teamQuery += ` AND ${teamSearch.whereClause}`;
+    teamParams.push(...teamSearch.params);
+    nextParamIndex = teamSearch.nextParamIndex;
+  } else {
+    teamQuery += `
+          AND (
+            t.name ILIKE $${nextParamIndex} OR
+            t.description ILIKE $${nextParamIndex} OR
+            t.city ILIKE $${nextParamIndex} OR
+            tag.name ILIKE $${nextParamIndex}
+          )
+        `;
+    teamParams.push(searchTerm);
+    nextParamIndex++;
+  }
+
+  return { nextParamIndex, query: teamQuery };
+}
+
+function appendUserSearchClause({
+  userQuery,
+  userParams,
+  query,
+  searchTerm,
+  useBoolean,
+  startParamIndex,
+}) {
+  let nextParamIndex = startParamIndex;
+
+  if (useBoolean) {
+    const userColumns = [
+      "u.username",
+      "u.first_name",
+      "u.last_name",
+      "u.bio",
+      "t.name",
+      "u.city",
+    ];
+    const userTagConfig = {
+      tagColumn: "t.name",
+      existsTemplate:
+        "EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
+      notExistsTemplate:
+        "NOT EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
+      extraExistsTemplates: [
+        "EXISTS (SELECT 1 FROM v_user_badges_with_totals ubt WHERE ubt.user_id = u.id AND ubt.badge_name ILIKE $PARAM)",
+      ],
+      extraNotExistsTemplates: [
+        "NOT EXISTS (SELECT 1 FROM v_user_badges_with_totals ubt WHERE ubt.user_id = u.id AND ubt.badge_name ILIKE $PARAM)",
+      ],
+    };
+    const userSearch = parseBooleanSearch(
+      query,
+      userColumns,
+      nextParamIndex,
+      userTagConfig,
+    );
+    userQuery += ` AND ${userSearch.whereClause}`;
+    userParams.push(...userSearch.params);
+    nextParamIndex = userSearch.nextParamIndex;
+  } else {
+    userQuery += `
+          AND (
+            u.username ILIKE $${nextParamIndex} OR
+            u.first_name ILIKE $${nextParamIndex} OR
+            u.last_name ILIKE $${nextParamIndex} OR
+            u.bio ILIKE $${nextParamIndex} OR
+            u.city ILIKE $${nextParamIndex} OR
+            t.name ILIKE $${nextParamIndex} OR
+            EXISTS (
+              SELECT 1
+              FROM v_user_badges_with_totals ubt
+              WHERE ubt.user_id = u.id
+                AND ubt.badge_name ILIKE $${nextParamIndex}
+            )
+          )
+        `;
+    userParams.push(searchTerm);
+    nextParamIndex++;
+  }
+
+  return { nextParamIndex, query: userQuery };
+}
+
+async function executeSearchQueries({
+  params,
+  query = null,
+  useBoolean = false,
+  userLocation = null,
+}) {
+  const {
+    badgeIds,
+    capacityMode,
+    direction,
+    excludeOwnTeams,
+    excludeTeamId,
+    hasValidExcludeTeamId,
+    hasValidMaxDistance,
+    includeDemoData,
+    includeTeams,
+    includeUsers,
+    isMatchSort,
+    limit,
+    matchRoleId,
+    maxDistance,
+    offset,
+    openRolesOnly,
+    sort,
+    tagIds,
+    userId,
+  } = params;
+  const hasSearchTerm = typeof query === "string";
+  const searchTerm = hasSearchTerm ? `%${query.trim()}%` : null;
+  const filterConfig = {
+    badgeIds,
+    combineTagBadgeWithOr: !hasSearchTerm,
+    direction,
+    excludeMatchingUser: !hasSearchTerm,
+    excludeOwnTeams,
+    excludeTeamId,
+    hasValidExcludeTeamId,
+    hasValidMaxDistance,
+    includeDemoData,
+    matchRoleId,
+    maxDistance,
+    openRolesOnly,
+    tagIds,
+    userId,
+    userLocation,
+  };
+
+  let teamCountQuery = hasSearchTerm
+    ? `
+        SELECT COUNT(DISTINCT t.id) as total
+        FROM teams t
+        LEFT JOIN team_tags tt ON t.id = tt.team_id
+        LEFT JOIN tags tag ON tt.tag_id = tag.id
+        WHERE t.archived_at IS NULL
+      `
+    : `
+        SELECT COUNT(*) as total
+        FROM teams t
+        WHERE t.archived_at IS NULL
+      `;
+  let teamCountParams = [];
+
+  if (hasSearchTerm) {
+    const teamSearch = appendTeamSearchClause({
+      teamQuery: teamCountQuery,
+      teamParams: teamCountParams,
+      query,
+      searchTerm,
+      useBoolean,
+      startParamIndex: 1,
+    });
+    teamCountQuery = teamSearch.query;
+  }
+
+  const teamCountFilters = buildTeamFilters(
+    filterConfig,
+    teamCountParams.length + 1,
+  );
+  teamCountQuery += teamCountFilters.whereFragments.join("");
+  teamCountParams.push(...teamCountFilters.params);
+
+  let teamDistanceSelect = "";
+  if (userLocation && (sort === "proximity" || hasValidMaxDistance)) {
+    teamDistanceSelect = buildDistanceSelectSQL(
+      "t",
+      userLocation,
+      hasSearchTerm ? {} : { cityFallback: "constant" },
+    );
+  }
+
+  let teamQuery = `
+        SELECT
+          t.id,
+          t.name,
+          t.description,
+          t.is_public,
+          t.is_synthetic,
+          t.max_members,
+          t.owner_id,
+          t.teamavatar_url as "teamavatarUrl",
+          t.created_at,
+          t.updated_at,
+          t.is_remote,
+          t.postal_code,
+          t.city,
+          t.state,
+          t.country,
+          t.latitude,
+          t.longitude,
+          COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
+          CASE
+            WHEN t.max_members IS NULL THEN NULL
+            ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0)
+          END as available_capacity,
+          (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count,
+          COALESCE(
+  json_agg(
+    DISTINCT jsonb_build_object(
+      'id', tag.id,
+      'name', tag.name,
+      'category', tag.category
+    )
+  ) FILTER (WHERE tag.id IS NOT NULL),
+  '[]'::json
+) as tags
+${teamDistanceSelect}
+        FROM teams t
+        LEFT JOIN team_members tm ON t.id = tm.team_id
+        LEFT JOIN team_tags tt ON t.id = tt.team_id
+        LEFT JOIN tags tag ON tt.tag_id = tag.id
+        WHERE t.archived_at IS NULL
+      `;
+  let teamParams = [];
+  let teamParamIndex = 1;
+
+  if (hasSearchTerm) {
+    const teamSearch = appendTeamSearchClause({
+      teamQuery,
+      teamParams,
+      query,
+      searchTerm,
+      useBoolean,
+      startParamIndex: teamParamIndex,
+    });
+    teamQuery = teamSearch.query;
+    teamParamIndex = teamSearch.nextParamIndex;
+  }
+
+  const teamFilters = buildTeamFilters(filterConfig, teamParamIndex);
+  teamQuery += teamFilters.whereFragments.join("");
+  teamParams.push(...teamFilters.params);
+  teamParamIndex = teamFilters.nextParamIndex;
+
+  const teamOrderBy = buildTeamOrderBy(
+    sort,
+    direction,
+    capacityMode,
+    userLocation,
+  );
+  const teamGroupByClause = `
+        GROUP BY
+          t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote, t.postal_code, t.city, t.state, t.country, t.latitude, t.longitude
+      `;
+
+  teamQuery += `
+        ${teamGroupByClause}
+        ORDER BY ${teamOrderBy}
+      `;
+
+  if (!isMatchSort) {
+    teamQuery += `
+          LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
+        `;
+    teamParams.push(limit, offset);
+  }
+
+  let userCountQuery = hasSearchTerm
+    ? `
+        SELECT COUNT(DISTINCT u.id) as total
+        FROM users u
+        LEFT JOIN user_tags ut ON u.id = ut.user_id
+        LEFT JOIN tags t ON ut.tag_id = t.id
+        WHERE 1=1
+      `
+    : `
+        SELECT COUNT(*) as total
+        FROM users u
+        WHERE 1=1
+      `;
+  let userCountParams = [];
+
+  if (hasSearchTerm) {
+    const userSearch = appendUserSearchClause({
+      userQuery: userCountQuery,
+      userParams: userCountParams,
+      query,
+      searchTerm,
+      useBoolean,
+      startParamIndex: 1,
+    });
+    userCountQuery = userSearch.query;
+  }
+
+  const userCountFilters = buildUserFilters(
+    filterConfig,
+    userCountParams.length + 1,
+  );
+  userCountQuery += userCountFilters.whereFragments.join("");
+  userCountParams.push(...userCountFilters.params);
+
+  let userDistanceSelect = "";
+  const userDistanceGroupBy = "";
+  if (
+    userLocation &&
+    ((sort === "proximity" && direction !== "REMOTE") || hasValidMaxDistance)
+  ) {
+    userDistanceSelect = buildDistanceSelectSQL("u", userLocation);
+  }
+
+  let userQuery = `
+        SELECT
+          u.id,
+          u.username,
+          u.first_name,
+          u.last_name,
+          u.bio,
+          u.postal_code,
+          u.city,
+          u.country,
+          u.state,
+          u.avatar_url,
+          u.is_public,
+          u.is_synthetic,
+          u.created_at,
+          u.updated_at,
+          u.latitude,
+          u.longitude,
+          (SELECT COALESCE(
+            json_agg(
+              json_build_object(
+                'id', t.id,
+                'name', t.name,
+                'supercategory', t.supercategory,
+                'badge_credits', COALESCE(ut.badge_credits, 0),
+                'dominant_badge_category', ut.dominant_badge_category
+              )
+              ORDER BY COALESCE(ut.badge_credits, 0) DESC, t.name ASC
+            ),
+            '[]'::json
+          )
+          FROM user_tags ut
+          JOIN tags t ON ut.tag_id = t.id
+          WHERE ut.user_id = u.id) as tags,
+          (SELECT COALESCE(
+            json_agg(
+              json_build_object(
+                'id', v.badge_id,
+                'name', v.badge_name,
+                'category', v.category,
+                'color', v.badge_color,
+                'cat_image_url', v.cat_image_url,
+                'total_credits', v.total_credits,
+                'award_count', v.award_count,
+                'awarder_count', v.awarder_count,
+                'category_total_credits', v.category_total_credits,
+                'category_award_count', v.category_award_count,
+                'category_awarder_count', v.category_awarder_count,
+                'last_awarded_at', v.last_awarded_at
+              )
+              ORDER BY
+                v.category_total_credits DESC,
+                v.category ASC,
+                v.total_credits DESC,
+                v.badge_name ASC
+            ),
+            '[]'::json
+          )
+          FROM v_user_badges_with_category_totals v
+          WHERE v.user_id = u.id) as badges
+          ${userDistanceSelect}
+        FROM users u
+        ${hasSearchTerm ? "LEFT JOIN user_tags ut ON u.id = ut.user_id\n        LEFT JOIN tags t ON ut.tag_id = t.id" : ""}
+        WHERE 1=1
+      `;
+  let userParams = [];
+  let userParamIndex = 1;
+
+  if (hasSearchTerm) {
+    const userSearch = appendUserSearchClause({
+      userQuery,
+      userParams,
+      query,
+      searchTerm,
+      useBoolean,
+      startParamIndex: userParamIndex,
+    });
+    userQuery = userSearch.query;
+    userParamIndex = userSearch.nextParamIndex;
+  }
+
+  const userFilters = buildUserFilters(filterConfig, userParamIndex);
+  userQuery += userFilters.whereFragments.join("");
+  userParams.push(...userFilters.params);
+  userParamIndex = userFilters.nextParamIndex;
+
+  const userOrderBy = buildUserOrderBy(sort, direction, userLocation);
+
+  if (hasSearchTerm) {
+    userQuery += `
+        GROUP BY
+          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.country, u.state, u.avatar_url, u.is_public, u.is_synthetic, u.created_at, u.updated_at, u.latitude, u.longitude${userDistanceGroupBy}
+        ORDER BY ${userOrderBy}
+      `;
+  } else {
+    userQuery += `
+        ORDER BY ${userOrderBy}
+      `;
+  }
+
+  if (!isMatchSort) {
+    userQuery += `
+          LIMIT $${userParamIndex} OFFSET $${userParamIndex + 1}
+        `;
+    userParams.push(limit, offset);
+  }
+
+  const [teamCountResult, teamResults, userCountResult, userResults] =
+    await Promise.all([
+      includeTeams
+        ? db.pool.query(teamCountQuery, teamCountParams)
+        : Promise.resolve({ rows: [{ total: "0" }] }),
+      includeTeams
+        ? db.pool.query(teamQuery, teamParams)
+        : Promise.resolve({ rows: [] }),
+      includeUsers
+        ? db.pool.query(userCountQuery, userCountParams)
+        : Promise.resolve({ rows: [{ total: "0" }] }),
+      includeUsers
+        ? db.pool.query(userQuery, userParams)
+        : Promise.resolve({ rows: [] }),
+    ]);
+
+  return {
+    teamCountResult,
+    teamResults,
+    userCountResult,
+    userResults,
+  };
+}
+
 const searchController = {
   /**
    * Helper function to get user's location data (coordinates, postal_code, city)
@@ -930,6 +1389,7 @@ const searchController = {
   async globalSearch(req, res) {
     try {
       const { query } = req.query;
+      const searchParams = parseSearchParams(req);
       const {
         badgeIds,
         capacityMode,
@@ -954,7 +1414,7 @@ const searchController = {
         sort,
         tagIds,
         userId,
-      } = parseSearchParams(req);
+      } = searchParams;
 
       if (process.env.NODE_ENV !== "production") {
         console.log(`Search query: "${query}"`);
@@ -1037,418 +1497,17 @@ const searchController = {
         }
       }
 
-      const teamColumns = ["t.name", "t.description", "tag.name", "t.city"];
-
-      const userColumns = [
-        "u.username",
-        "u.first_name",
-        "u.last_name",
-        "u.bio",
-        "t.name",
-        "u.city",
-      ];
-
-      const searchTerm = `%${query.trim()}%`;
-      const filterConfig = {
-        badgeIds,
-        direction,
-        excludeOwnTeams,
-        excludeTeamId,
-        hasValidExcludeTeamId,
-        hasValidMaxDistance,
-        includeDemoData,
-        matchRoleId,
-        maxDistance,
-        openRolesOnly,
-        tagIds,
-        userId,
+      const {
+        teamCountResult,
+        teamResults,
+        userCountResult,
+        userResults,
+      } = await executeSearchQueries({
+        params: searchParams,
+        query,
+        useBoolean,
         userLocation,
-      };
-
-      // ========== TEAM COUNT QUERY ==========
-      let teamCountQuery = `
-        SELECT COUNT(DISTINCT t.id) as total
-        FROM teams t
-        LEFT JOIN team_tags tt ON t.id = tt.team_id
-        LEFT JOIN tags tag ON tt.tag_id = tag.id
-        WHERE t.archived_at IS NULL
-      `;
-
-      let teamCountParams = [];
-
-      if (useBoolean) {
-        const teamTagConfig = {
-          tagColumn: "tag.name",
-          existsTemplate:
-            "EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND t2.name ILIKE $PARAM)",
-          notExistsTemplate:
-            "NOT EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND t2.name ILIKE $PARAM)",
-        };
-
-        const teamSearch = parseBooleanSearch(
-          query,
-          teamColumns,
-          1,
-          teamTagConfig,
-        );
-        teamCountQuery += ` AND ${teamSearch.whereClause}`;
-        teamCountParams.push(...teamSearch.params);
-      } else {
-        teamCountQuery += `
-          AND (
-            t.name ILIKE $1 OR
-            t.description ILIKE $1 OR
-            t.city ILIKE $1 OR
-            tag.name ILIKE $1
-          )
-        `;
-        teamCountParams.push(searchTerm);
-      }
-
-      const teamCountFilters = buildTeamFilters(
-        filterConfig,
-        teamCountParams.length + 1,
-      );
-      teamCountQuery += teamCountFilters.whereFragments.join("");
-      teamCountParams.push(...teamCountFilters.params);
-
-      // ========== TEAM DATA QUERY ==========
-      let teamDistanceSelect = "";
-      if (
-        userLocation &&
-        (sort === "proximity" || hasValidMaxDistance)
-      ) {
-        teamDistanceSelect = buildDistanceSelectSQL("t", userLocation);
-      }
-
-      let teamQuery = `
-        SELECT
-          t.id,
-          t.name,
-          t.description,
-          t.is_public,
-          t.is_synthetic,
-          t.max_members,
-          t.owner_id,
-          t.teamavatar_url as "teamavatarUrl",
-          t.created_at,
-          t.updated_at,
-          t.is_remote,
-          t.postal_code,
-          t.city,
-          t.state,
-          t.country,
-          t.latitude,
-          t.longitude,
-          COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
-          CASE
-            WHEN t.max_members IS NULL THEN NULL
-            ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0)
-          END as available_capacity,
-          (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count,
-          COALESCE(
-  json_agg(
-    DISTINCT jsonb_build_object(
-      'id', tag.id,
-      'name', tag.name,
-      'category', tag.category
-    )
-  ) FILTER (WHERE tag.id IS NOT NULL),
-  '[]'::json
-) as tags
-${teamDistanceSelect}
-        FROM teams t
-        LEFT JOIN team_members tm ON t.id = tm.team_id
-        LEFT JOIN team_tags tt ON t.id = tt.team_id
-        LEFT JOIN tags tag ON tt.tag_id = tag.id
-        WHERE t.archived_at IS NULL
-      `;
-
-      let teamParams = [];
-      let teamParamIndex = 1;
-
-      if (useBoolean) {
-        const teamTagConfig = {
-          tagColumn: "tag.name",
-          existsTemplate:
-            "EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND t2.name ILIKE $PARAM)",
-          notExistsTemplate:
-            "NOT EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND t2.name ILIKE $PARAM)",
-        };
-
-        const teamSearch = parseBooleanSearch(
-          query,
-          teamColumns,
-          teamParamIndex,
-          teamTagConfig,
-        );
-        teamQuery += ` AND ${teamSearch.whereClause}`;
-        teamParams.push(...teamSearch.params);
-        teamParamIndex = teamSearch.nextParamIndex;
-      } else {
-        teamQuery += `
-          AND (
-            t.name ILIKE $${teamParamIndex} OR
-            t.description ILIKE $${teamParamIndex} OR
-            t.city ILIKE $${teamParamIndex} OR
-            tag.name ILIKE $${teamParamIndex}
-          )
-        `;
-        teamParams.push(searchTerm);
-        teamParamIndex++;
-      }
-
-      const teamFilters = buildTeamFilters(filterConfig, teamParamIndex);
-      teamQuery += teamFilters.whereFragments.join("");
-      teamParams.push(...teamFilters.params);
-      teamParamIndex = teamFilters.nextParamIndex;
-
-      const teamOrderBy = buildTeamOrderBy(
-        sort,
-        direction,
-        capacityMode,
-        userLocation,
-      );
-
-      const teamGroupByClause = `
-        GROUP BY
-          t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote, t.postal_code, t.city, t.state, t.country, t.latitude, t.longitude
-      `;
-
-      teamQuery += `
-        ${teamGroupByClause}
-        ORDER BY ${teamOrderBy}
-      `;
-
-      if (!isMatchSort) {
-        teamQuery += `
-          LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
-        `;
-        teamParams.push(limit, offset);
-      }
-
-      // ========== USER COUNT QUERY ==========
-      let userCountQuery = `
-        SELECT COUNT(DISTINCT u.id) as total
-        FROM users u
-        LEFT JOIN user_tags ut ON u.id = ut.user_id
-        LEFT JOIN tags t ON ut.tag_id = t.id
-        WHERE 1=1
-      `;
-
-      let userCountParams = [];
-
-      if (useBoolean) {
-        const userTagConfig = {
-          tagColumn: "t.name",
-          existsTemplate:
-            "EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
-          notExistsTemplate:
-            "NOT EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
-          extraExistsTemplates: [
-            "EXISTS (SELECT 1 FROM v_user_badges_with_totals ubt WHERE ubt.user_id = u.id AND ubt.badge_name ILIKE $PARAM)",
-          ],
-          extraNotExistsTemplates: [
-            "NOT EXISTS (SELECT 1 FROM v_user_badges_with_totals ubt WHERE ubt.user_id = u.id AND ubt.badge_name ILIKE $PARAM)",
-          ],
-        };
-
-        const userSearch = parseBooleanSearch(
-          query,
-          userColumns,
-          1,
-          userTagConfig,
-        );
-        userCountQuery += ` AND ${userSearch.whereClause}`;
-        userCountParams.push(...userSearch.params);
-      } else {
-        userCountQuery += `
-          AND (
-            u.username ILIKE $1 OR
-            u.first_name ILIKE $1 OR
-            u.last_name ILIKE $1 OR
-            u.bio ILIKE $1 OR
-            u.city ILIKE $1 OR
-            t.name ILIKE $1 OR
-            EXISTS (
-              SELECT 1
-              FROM v_user_badges_with_totals ubt
-              WHERE ubt.user_id = u.id
-                AND ubt.badge_name ILIKE $1
-            )
-          )
-        `;
-        userCountParams.push(searchTerm);
-      }
-
-      const userCountFilters = buildUserFilters(
-        filterConfig,
-        userCountParams.length + 1,
-      );
-      userCountQuery += userCountFilters.whereFragments.join("");
-      userCountParams.push(...userCountFilters.params);
-
-      // ========== USER DATA QUERY ==========
-      let userDistanceSelect = "";
-      let userDistanceGroupBy = "";
-      if (
-        userLocation &&
-        ((sort === "proximity" && direction !== "REMOTE") ||
-          hasValidMaxDistance)
-      ) {
-        userDistanceSelect = buildDistanceSelectSQL("u", userLocation);
-      }
-
-      let userQuery = `
-        SELECT
-          u.id,
-          u.username,
-          u.first_name,
-          u.last_name,
-          u.bio,
-          u.postal_code,
-          u.city,
-          u.country,
-          u.state,
-          u.avatar_url,
-          u.is_public,
-          u.is_synthetic,
-          u.created_at,
-          u.updated_at,
-          u.latitude,
-          u.longitude,
-          (SELECT COALESCE(
-            json_agg(
-              json_build_object(
-                'id', t.id,
-                'name', t.name,
-                'supercategory', t.supercategory,
-                'badge_credits', COALESCE(ut.badge_credits, 0),
-                'dominant_badge_category', ut.dominant_badge_category
-              )
-              ORDER BY COALESCE(ut.badge_credits, 0) DESC, t.name ASC
-            ),
-            '[]'::json
-          )
-          FROM user_tags ut
-          JOIN tags t ON ut.tag_id = t.id
-          WHERE ut.user_id = u.id) as tags,
-          (SELECT COALESCE(
-            json_agg(
-              json_build_object(
-                'id', v.badge_id,
-                'name', v.badge_name,
-                'category', v.category,
-                'color', v.badge_color,
-                'cat_image_url', v.cat_image_url,
-                'total_credits', v.total_credits,
-                'award_count', v.award_count,
-                'awarder_count', v.awarder_count,
-                'category_total_credits', v.category_total_credits,
-                'category_award_count', v.category_award_count,
-                'category_awarder_count', v.category_awarder_count,
-                'last_awarded_at', v.last_awarded_at
-              )
-              ORDER BY
-                v.category_total_credits DESC,
-                v.category ASC,
-                v.total_credits DESC,
-                v.badge_name ASC
-            ),
-            '[]'::json
-          )
-          FROM v_user_badges_with_category_totals v
-          WHERE v.user_id = u.id) as badges
-          ${userDistanceSelect}
-        FROM users u
-        LEFT JOIN user_tags ut ON u.id = ut.user_id
-        LEFT JOIN tags t ON ut.tag_id = t.id
-        WHERE 1=1
-      `;
-
-      let userParams = [];
-      let userParamIndex = 1;
-
-      if (useBoolean) {
-        const userTagConfig = {
-          tagColumn: "t.name",
-          existsTemplate:
-            "EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
-          notExistsTemplate:
-            "NOT EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
-          extraExistsTemplates: [
-            "EXISTS (SELECT 1 FROM v_user_badges_with_totals ubt WHERE ubt.user_id = u.id AND ubt.badge_name ILIKE $PARAM)",
-          ],
-          extraNotExistsTemplates: [
-            "NOT EXISTS (SELECT 1 FROM v_user_badges_with_totals ubt WHERE ubt.user_id = u.id AND ubt.badge_name ILIKE $PARAM)",
-          ],
-        };
-
-        const userSearch = parseBooleanSearch(
-          query,
-          userColumns,
-          userParamIndex,
-          userTagConfig,
-        );
-        userQuery += ` AND ${userSearch.whereClause}`;
-        userParams.push(...userSearch.params);
-        userParamIndex = userSearch.nextParamIndex;
-      } else {
-        userQuery += `
-          AND (
-            u.username ILIKE $${userParamIndex} OR
-            u.first_name ILIKE $${userParamIndex} OR
-            u.last_name ILIKE $${userParamIndex} OR
-            u.bio ILIKE $${userParamIndex} OR
-            u.city ILIKE $${userParamIndex} OR
-            t.name ILIKE $${userParamIndex} OR
-            EXISTS (
-              SELECT 1
-              FROM v_user_badges_with_totals ubt
-              WHERE ubt.user_id = u.id
-                AND ubt.badge_name ILIKE $${userParamIndex}
-            )
-          )
-        `;
-        userParams.push(searchTerm);
-        userParamIndex++;
-      }
-
-      const userFilters = buildUserFilters(filterConfig, userParamIndex);
-      userQuery += userFilters.whereFragments.join("");
-      userParams.push(...userFilters.params);
-      userParamIndex = userFilters.nextParamIndex;
-
-      const userOrderBy = buildUserOrderBy(sort, direction, userLocation);
-
-      userQuery += `
-        GROUP BY
-          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.country, u.state, u.avatar_url, u.is_public, u.is_synthetic, u.created_at, u.updated_at, u.latitude, u.longitude${userDistanceGroupBy}
-        ORDER BY ${userOrderBy}
-      `;
-
-      if (!isMatchSort) {
-        userQuery += `
-          LIMIT $${userParamIndex} OFFSET $${userParamIndex + 1}
-        `;
-        userParams.push(limit, offset);
-      }
-
-      const [teamCountResult, teamResults, userCountResult, userResults] =
-        await Promise.all([
-          includeTeams
-            ? db.pool.query(teamCountQuery, teamCountParams)
-            : Promise.resolve({ rows: [{ total: "0" }] }),
-          includeTeams
-            ? db.pool.query(teamQuery, teamParams)
-            : Promise.resolve({ rows: [] }),
-          includeUsers
-            ? db.pool.query(userCountQuery, userCountParams)
-            : Promise.resolve({ rows: [{ total: "0" }] }),
-          includeUsers
-            ? db.pool.query(userQuery, userParams)
-            : Promise.resolve({ rows: [] }),
-        ]);
+      });
 
       const totalTeams = parseInt(teamCountResult.rows[0].total, 10);
       const totalUsers = parseInt(userCountResult.rows[0].total, 10);
@@ -1724,6 +1783,7 @@ ${teamDistanceSelect}
    */
   async getAllUsersAndTeams(req, res) {
     try {
+      const searchParams = parseSearchParams(req);
       const {
         badgeIds,
         capacityMode,
@@ -1748,7 +1808,7 @@ ${teamDistanceSelect}
         sort,
         tagIds,
         userId,
-      } = parseSearchParams(req);
+      } = searchParams;
 
       if (process.env.NODE_ENV !== "production") {
         console.log(
@@ -1805,248 +1865,15 @@ ${teamDistanceSelect}
         });
       }
 
-      const filterConfig = {
-        badgeIds,
-        combineTagBadgeWithOr: true,
-        direction,
-        excludeMatchingUser: true,
-        excludeOwnTeams,
-        excludeTeamId,
-        hasValidExcludeTeamId,
-        hasValidMaxDistance,
-        includeDemoData,
-        matchRoleId,
-        maxDistance,
-        openRolesOnly,
-        tagIds,
-        userId,
+      const {
+        teamCountResult,
+        teamResults,
+        userCountResult,
+        userResults,
+      } = await executeSearchQueries({
+        params: searchParams,
         userLocation,
-      };
-
-      // ========== TEAM COUNT QUERY ==========
-      let teamCountQuery = `
-        SELECT COUNT(*) as total
-        FROM teams t
-        WHERE t.archived_at IS NULL
-      `;
-
-      let teamCountParams = [];
-
-      const teamCountFilters = buildTeamFilters(filterConfig);
-      teamCountQuery += teamCountFilters.whereFragments.join("");
-      teamCountParams.push(...teamCountFilters.params);
-
-      // ========== TEAM DATA QUERY ==========
-      let teamDistanceSelect = "";
-      if (
-        userLocation &&
-        (sort === "proximity" || hasValidMaxDistance)
-      ) {
-        teamDistanceSelect = buildDistanceSelectSQL("t", userLocation, {
-          cityFallback: "constant",
-        });
-      }
-
-      let teamQuery = `
-        SELECT
-          t.id,
-          t.name,
-          t.description,
-          t.is_public,
-          t.is_synthetic,
-          t.max_members,
-          t.owner_id,
-          t.teamavatar_url as "teamavatarUrl",
-          t.created_at,
-          t.updated_at,
-          t.is_remote,
-          t.postal_code,
-          t.city,
-          t.state,
-          t.country,
-          t.latitude,
-          t.longitude,
-          COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
-          CASE
-            WHEN t.max_members IS NULL THEN NULL
-            ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0)
-          END as available_capacity,
-          (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count,
-          COALESCE(
-  json_agg(
-    DISTINCT jsonb_build_object(
-      'id', tag.id,
-      'name', tag.name,
-      'category', tag.category
-    )
-  ) FILTER (WHERE tag.id IS NOT NULL),
-  '[]'::json
-) as tags
-${teamDistanceSelect}
-        FROM teams t
-        LEFT JOIN team_members tm ON t.id = tm.team_id
-        LEFT JOIN team_tags tt ON t.id = tt.team_id
-        LEFT JOIN tags tag ON tt.tag_id = tag.id
-        WHERE t.archived_at IS NULL
-      `;
-
-      let teamParams = [];
-      let teamParamIndex = 1;
-
-      const teamFilters = buildTeamFilters(filterConfig, teamParamIndex);
-      teamQuery += teamFilters.whereFragments.join("");
-      teamParams.push(...teamFilters.params);
-      teamParamIndex = teamFilters.nextParamIndex;
-
-      const teamOrderBy = buildTeamOrderBy(
-        sort,
-        direction,
-        capacityMode,
-        userLocation,
-      );
-
-      const teamGroupByClause = `
-        GROUP BY
-          t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote, t.postal_code, t.city, t.state, t.country, t.latitude, t.longitude
-      `;
-
-      teamQuery += `
-        ${teamGroupByClause}
-        ORDER BY ${teamOrderBy}
-      `;
-
-      if (!isMatchSort) {
-        teamQuery += `
-          LIMIT $${teamParamIndex} OFFSET $${teamParamIndex + 1}
-        `;
-        teamParams.push(limit, offset);
-      }
-
-      // ========== USER COUNT QUERY ==========
-      let userCountQuery = `
-        SELECT COUNT(*) as total
-        FROM users u
-        WHERE 1=1
-      `;
-
-      let userCountParams = [];
-
-      const userCountFilters = buildUserFilters(filterConfig);
-      userCountQuery += userCountFilters.whereFragments.join("");
-      userCountParams.push(...userCountFilters.params);
-
-      // ========== USER DATA QUERY ==========
-      let userDistanceSelect = "";
-      let userDistanceGroupBy = "";
-      if (
-        userLocation &&
-        ((sort === "proximity" && direction !== "REMOTE") ||
-          hasValidMaxDistance)
-      ) {
-        userDistanceSelect = buildDistanceSelectSQL("u", userLocation);
-      }
-
-      let userQuery = `
-        SELECT
-          u.id,
-          u.username,
-          u.first_name,
-          u.last_name,
-          u.bio,
-          u.postal_code,
-          u.city,
-          u.country,
-          u.state,
-          u.avatar_url,
-          u.is_public,
-          u.is_synthetic,
-          u.created_at,
-          u.updated_at,
-          u.latitude,
-          u.longitude,
-          (SELECT COALESCE(
-            json_agg(
-              json_build_object(
-                'id', t.id,
-                'name', t.name,
-                'supercategory', t.supercategory,
-                'badge_credits', COALESCE(ut.badge_credits, 0),
-                'dominant_badge_category', ut.dominant_badge_category
-              )
-              ORDER BY COALESCE(ut.badge_credits, 0) DESC, t.name ASC
-            ),
-            '[]'::json
-          )
-          FROM user_tags ut
-          JOIN tags t ON ut.tag_id = t.id
-          WHERE ut.user_id = u.id) as tags,
-          (SELECT COALESCE(
-            json_agg(
-              json_build_object(
-                'id', v.badge_id,
-                'name', v.badge_name,
-                'category', v.category,
-                'color', v.badge_color,
-                'cat_image_url', v.cat_image_url,
-                'total_credits', v.total_credits,
-                'award_count', v.award_count,
-                'awarder_count', v.awarder_count,
-                'category_total_credits', v.category_total_credits,
-                'category_award_count', v.category_award_count,
-                'category_awarder_count', v.category_awarder_count,
-                'last_awarded_at', v.last_awarded_at
-              )
-              ORDER BY
-                v.category_total_credits DESC,
-                v.category ASC,
-                v.total_credits DESC,
-                v.badge_name ASC
-            ),
-            '[]'::json
-          )
-          FROM v_user_badges_with_category_totals v
-          WHERE v.user_id = u.id) as badges
-          ${userDistanceSelect}
-        FROM users u
-        WHERE 1=1
-      `;
-
-      let userParams = [];
-      let userParamIndex = 1;
-
-      const userFilters = buildUserFilters(filterConfig, userParamIndex);
-      userQuery += userFilters.whereFragments.join("");
-      userParams.push(...userFilters.params);
-      userParamIndex = userFilters.nextParamIndex;
-
-      const userOrderBy = buildUserOrderBy(sort, direction, userLocation);
-
-      userQuery += `
-        ORDER BY ${userOrderBy}
-      `;
-
-      if (!isMatchSort) {
-        userQuery += `
-          LIMIT $${userParamIndex} OFFSET $${userParamIndex + 1}
-        `;
-        userParams.push(limit, offset);
-      }
-
-      const [teamCountResult, teamResults, userCountResult, userResults] =
-        await Promise.all([
-          includeTeams
-            ? db.pool.query(teamCountQuery, teamCountParams)
-            : Promise.resolve({ rows: [{ total: "0" }] }),
-          includeTeams
-            ? db.pool.query(teamQuery, teamParams)
-            : Promise.resolve({ rows: [] }),
-          includeUsers
-            ? db.pool.query(userCountQuery, userCountParams)
-            : Promise.resolve({ rows: [{ total: "0" }] }),
-          includeUsers
-            ? db.pool.query(userQuery, userParams)
-            : Promise.resolve({ rows: [] }),
-        ]);
+      });
 
       const totalTeams = parseInt(teamCountResult.rows[0].total, 10);
       const totalUsers = parseInt(userCountResult.rows[0].total, 10);
