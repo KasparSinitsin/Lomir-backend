@@ -216,6 +216,253 @@ function buildTeamNearestPrioritySQL(userLocation) {
   return buildNearestPrioritySQL("t", userLocation);
 }
 
+function buildTeamFilters(config, startParamIndex = 1) {
+  const {
+    badgeIds,
+    combineTagBadgeWithOr = false,
+    direction,
+    excludeOwnTeams,
+    hasValidMaxDistance,
+    includeDemoData,
+    matchRoleId,
+    maxDistance,
+    openRolesOnly,
+    tagIds,
+    userId,
+    userLocation,
+  } = config;
+  const whereFragments = [];
+  const params = [];
+  let nextParamIndex = startParamIndex;
+
+  if (userId) {
+    whereFragments.push(`
+          AND (
+            t.is_public = TRUE
+            OR t.owner_id = $${nextParamIndex}
+            OR EXISTS (
+              SELECT 1 FROM team_members
+              WHERE team_id = t.id AND user_id = $${nextParamIndex}
+            )
+          )
+        `);
+    params.push(userId);
+    nextParamIndex++;
+  } else {
+    whereFragments.push(` AND t.is_public = TRUE`);
+  }
+
+  if (!includeDemoData) {
+    whereFragments.push(` AND t.is_synthetic IS NOT TRUE`);
+  }
+
+  if (openRolesOnly) {
+    whereFragments.push(`
+          AND EXISTS (
+            SELECT 1
+            FROM team_vacant_roles vr_filter
+            WHERE vr_filter.team_id = t.id
+              AND vr_filter.status = 'open'
+          )
+        `);
+  }
+
+  if (excludeOwnTeams) {
+    whereFragments.push(`
+          AND NOT EXISTS (
+            SELECT 1
+            FROM team_members tm_excluded
+            WHERE tm_excluded.team_id = t.id
+              AND tm_excluded.user_id = $${nextParamIndex}
+          )
+        `);
+    params.push(userId);
+    nextParamIndex++;
+  }
+
+  if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
+    const distFilter = buildDistanceFilterSQL(
+      userLocation,
+      "t",
+      `$${nextParamIndex}`,
+    );
+    if (distFilter) {
+      whereFragments.push(distFilter);
+      params.push(maxDistance);
+      nextParamIndex++;
+    }
+  }
+
+  if (
+    combineTagBadgeWithOr &&
+    tagIds.length > 0 &&
+    badgeIds.length > 0 &&
+    matchRoleId
+  ) {
+    const tagParam = `$${nextParamIndex}`;
+    const badgeParam = `$${nextParamIndex + 1}`;
+    whereFragments.push(`
+          AND (
+            t.id IN (
+              SELECT tt_filter.team_id FROM team_tags tt_filter
+              WHERE tt_filter.tag_id = ANY(${tagParam}::int[])
+            )
+            OR t.id IN (
+              SELECT DISTINCT tm_badge.team_id FROM team_members tm_badge
+              JOIN badge_awards ba_badge ON tm_badge.user_id = ba_badge.awarded_to_user_id
+              WHERE ba_badge.badge_id = ANY(${badgeParam}::int[])
+            )
+          )
+        `);
+    params.push(tagIds, badgeIds);
+    nextParamIndex += 2;
+  } else {
+    if (tagIds.length > 0) {
+      whereFragments.push(`
+          AND t.id IN (
+            SELECT tt_filter.team_id FROM team_tags tt_filter
+            WHERE tt_filter.tag_id = ANY($${nextParamIndex}::int[])
+          )
+        `);
+      params.push(tagIds);
+      nextParamIndex++;
+    }
+
+    if (badgeIds.length > 0) {
+      whereFragments.push(`
+          AND t.id IN (
+            SELECT DISTINCT tm_badge.team_id FROM team_members tm_badge
+            JOIN badge_awards ba_badge ON tm_badge.user_id = ba_badge.awarded_to_user_id
+            WHERE ba_badge.badge_id = ANY($${nextParamIndex}::int[])
+          )
+        `);
+      params.push(badgeIds);
+      nextParamIndex++;
+    }
+  }
+
+  return { nextParamIndex, params, whereFragments };
+}
+
+function buildUserFilters(config, startParamIndex = 1) {
+  const {
+    badgeIds,
+    combineTagBadgeWithOr = false,
+    direction,
+    excludeMatchingUser = false,
+    excludeTeamId,
+    hasValidExcludeTeamId,
+    hasValidMaxDistance,
+    includeDemoData,
+    matchRoleId,
+    maxDistance,
+    tagIds,
+    userId,
+    userLocation,
+  } = config;
+  const whereFragments = [];
+  const params = [];
+  let nextParamIndex = startParamIndex;
+
+  if (userId) {
+    whereFragments.push(`
+          AND (
+            u.is_public = TRUE
+            OR u.id = $${nextParamIndex}
+          )
+        `);
+    params.push(userId);
+    nextParamIndex++;
+  } else {
+    whereFragments.push(` AND u.is_public = TRUE`);
+  }
+
+  if (!includeDemoData) {
+    whereFragments.push(` AND u.is_synthetic IS NOT TRUE`);
+  }
+
+  if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
+    const distFilter = buildDistanceFilterSQL(
+      userLocation,
+      "u",
+      `$${nextParamIndex}`,
+    );
+    if (distFilter) {
+      whereFragments.push(distFilter);
+      params.push(maxDistance);
+      nextParamIndex++;
+    }
+  }
+
+  if (excludeMatchingUser && matchRoleId && userId) {
+    whereFragments.push(` AND u.id != $${nextParamIndex}`);
+    params.push(userId);
+    nextParamIndex++;
+  }
+
+  if (
+    combineTagBadgeWithOr &&
+    tagIds.length > 0 &&
+    badgeIds.length > 0 &&
+    matchRoleId
+  ) {
+    const tagParam = `$${nextParamIndex}`;
+    const badgeParam = `$${nextParamIndex + 1}`;
+    whereFragments.push(`
+          AND (
+            u.id IN (
+              SELECT ut_filter.user_id FROM user_tags ut_filter
+              WHERE ut_filter.tag_id = ANY(${tagParam}::int[])
+            )
+            OR u.id IN (
+              SELECT DISTINCT ba_filter.awarded_to_user_id
+              FROM badge_awards ba_filter
+              WHERE ba_filter.badge_id = ANY(${badgeParam}::int[])
+            )
+          )
+        `);
+    params.push(tagIds, badgeIds);
+    nextParamIndex += 2;
+  } else {
+    if (tagIds.length > 0) {
+      whereFragments.push(`
+          AND u.id IN (
+            SELECT ut_filter.user_id FROM user_tags ut_filter
+            WHERE ut_filter.tag_id = ANY($${nextParamIndex}::int[])
+          )
+        `);
+      params.push(tagIds);
+      nextParamIndex++;
+    }
+
+    if (badgeIds.length > 0) {
+      whereFragments.push(`
+          AND u.id IN (
+            SELECT DISTINCT ba_filter.awarded_to_user_id
+            FROM badge_awards ba_filter
+            WHERE ba_filter.badge_id = ANY($${nextParamIndex}::int[])
+          )
+        `);
+      params.push(badgeIds);
+      nextParamIndex++;
+    }
+  }
+
+  if (hasValidExcludeTeamId) {
+    whereFragments.push(`
+          AND NOT EXISTS (
+            SELECT 1 FROM team_members tm_excl
+            WHERE tm_excl.team_id = $${nextParamIndex}
+              AND tm_excl.user_id = u.id
+          )
+        `);
+    params.push(excludeTeamId);
+    nextParamIndex++;
+  }
+
+  return { nextParamIndex, params, whereFragments };
+}
+
 function computeJaccardOverlap(baseSet, candidateIds) {
   const candidateSet = new Set(
     candidateIds.map((id) => Number(id)).filter(Number.isFinite),
@@ -732,6 +979,21 @@ const searchController = {
       ];
 
       const searchTerm = `%${query.trim()}%`;
+      const filterConfig = {
+        badgeIds,
+        direction,
+        excludeOwnTeams,
+        excludeTeamId,
+        hasValidExcludeTeamId,
+        hasValidMaxDistance,
+        includeDemoData,
+        matchRoleId,
+        maxDistance,
+        openRolesOnly,
+        tagIds,
+        userId,
+        userLocation,
+      };
 
       // ========== TEAM COUNT QUERY ==========
       let teamCountQuery = `
@@ -773,83 +1035,12 @@ const searchController = {
         teamCountParams.push(searchTerm);
       }
 
-      if (userId) {
-        const userParamIdx = teamCountParams.length + 1;
-        teamCountQuery += `
-          AND (
-            t.is_public = TRUE
-            OR t.owner_id = $${userParamIdx}
-            OR EXISTS (
-              SELECT 1 FROM team_members
-              WHERE team_id = t.id AND user_id = $${userParamIdx}
-            )
-          )
-        `;
-        teamCountParams.push(userId);
-      } else {
-        teamCountQuery += ` AND t.is_public = TRUE`;
-      }
-
-      if (!includeDemoData) {
-        teamCountQuery += ` AND t.is_synthetic IS NOT TRUE`;
-      }
-
-      if (openRolesOnly) {
-        teamCountQuery += `
-          AND EXISTS (
-            SELECT 1
-            FROM team_vacant_roles vr_filter
-            WHERE vr_filter.team_id = t.id
-              AND vr_filter.status = 'open'
-          )
-        `;
-      }
-
-      if (excludeOwnTeams) {
-        const memberParamIdx = teamCountParams.length + 1;
-        teamCountQuery += `
-          AND NOT EXISTS (
-            SELECT 1
-            FROM team_members tm_excluded
-            WHERE tm_excluded.team_id = t.id
-              AND tm_excluded.user_id = $${memberParamIdx}
-          )
-        `;
-        teamCountParams.push(userId);
-      }
-
-      if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
-        const distFilter = searchController.buildDistanceFilterSQL(
-          userLocation,
-          "t",
-          `$${teamCountParams.length + 1}`,
-        );
-        if (distFilter) {
-          teamCountQuery += distFilter;
-          teamCountParams.push(maxDistance);
-        }
-      }
-
-      if (tagIds.length > 0) {
-        teamCountQuery += `
-          AND t.id IN (
-            SELECT tt_filter.team_id FROM team_tags tt_filter
-            WHERE tt_filter.tag_id = ANY($${teamCountParams.length + 1}::int[])
-          )
-        `;
-        teamCountParams.push(tagIds);
-      }
-
-      if (badgeIds.length > 0) {
-        teamCountQuery += `
-          AND t.id IN (
-            SELECT DISTINCT tm_badge.team_id FROM team_members tm_badge
-            JOIN badge_awards ba_badge ON tm_badge.user_id = ba_badge.awarded_to_user_id
-            WHERE ba_badge.badge_id = ANY($${teamCountParams.length + 1}::int[])
-          )
-        `;
-        teamCountParams.push(badgeIds);
-      }
+      const teamCountFilters = buildTeamFilters(
+        filterConfig,
+        teamCountParams.length + 1,
+      );
+      teamCountQuery += teamCountFilters.whereFragments.join("");
+      teamCountParams.push(...teamCountFilters.params);
 
       // ========== TEAM DATA QUERY ==========
       let teamDistanceSelect = "";
@@ -937,86 +1128,10 @@ ${teamDistanceSelect}
         teamParamIndex++;
       }
 
-      if (userId) {
-        teamQuery += `
-          AND (
-            t.is_public = TRUE
-            OR t.owner_id = $${teamParamIndex}
-            OR EXISTS (
-              SELECT 1 FROM team_members
-              WHERE team_id = t.id AND user_id = $${teamParamIndex}
-            )
-          )
-        `;
-        teamParams.push(userId);
-        teamParamIndex++;
-      } else {
-        teamQuery += ` AND t.is_public = TRUE`;
-      }
-
-      if (!includeDemoData) {
-        teamQuery += ` AND t.is_synthetic IS NOT TRUE`;
-      }
-
-      if (openRolesOnly) {
-        teamQuery += `
-          AND EXISTS (
-            SELECT 1
-            FROM team_vacant_roles vr_filter
-            WHERE vr_filter.team_id = t.id
-              AND vr_filter.status = 'open'
-          )
-        `;
-      }
-
-      if (excludeOwnTeams) {
-        teamQuery += `
-          AND NOT EXISTS (
-            SELECT 1
-            FROM team_members tm_excluded
-            WHERE tm_excluded.team_id = t.id
-              AND tm_excluded.user_id = $${teamParamIndex}
-          )
-        `;
-        teamParams.push(userId);
-        teamParamIndex++;
-      }
-
-      if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
-        const distFilter = searchController.buildDistanceFilterSQL(
-          userLocation,
-          "t",
-          `$${teamParamIndex}`,
-        );
-        if (distFilter) {
-          teamQuery += distFilter;
-          teamParams.push(maxDistance);
-          teamParamIndex++;
-        }
-      }
-
-      if (tagIds.length > 0) {
-        teamQuery += `
-          AND t.id IN (
-            SELECT tt_filter.team_id FROM team_tags tt_filter
-            WHERE tt_filter.tag_id = ANY($${teamParamIndex}::int[])
-          )
-        `;
-        teamParams.push(tagIds);
-        teamParamIndex++;
-      }
-
-      if (badgeIds.length > 0) {
-        teamQuery += `
-          AND t.id IN (
-            SELECT DISTINCT tm_badge.team_id FROM team_members tm_badge
-            JOIN badge_awards ba_badge ON tm_badge.user_id = ba_badge.awarded_to_user_id
-            WHERE ba_badge.badge_id = ANY($${teamParamIndex}::int[])
-          )
-        `;
-        teamParams.push(badgeIds);
-        teamParamIndex++;
-      }
+      const teamFilters = buildTeamFilters(filterConfig, teamParamIndex);
+      teamQuery += teamFilters.whereFragments.join("");
+      teamParams.push(...teamFilters.params);
+      teamParamIndex = teamFilters.nextParamIndex;
 
       let teamOrderBy;
       switch (sort) {
@@ -1140,67 +1255,12 @@ ${teamDistanceSelect}
         userCountParams.push(searchTerm);
       }
 
-      if (userId) {
-        const userParamIdx = userCountParams.length + 1;
-        userCountQuery += `
-          AND (
-            u.is_public = TRUE
-            OR u.id = $${userParamIdx}
-          )
-        `;
-        userCountParams.push(userId);
-      } else {
-        userCountQuery += ` AND u.is_public = TRUE`;
-      }
-
-      if (!includeDemoData) {
-        userCountQuery += ` AND u.is_synthetic IS NOT TRUE`;
-      }
-
-      if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
-        const distFilter = searchController.buildDistanceFilterSQL(
-          userLocation,
-          "u",
-          `$${userCountParams.length + 1}`,
-        );
-        if (distFilter) {
-          userCountQuery += distFilter;
-          userCountParams.push(maxDistance);
-        }
-      }
-
-      if (tagIds.length > 0) {
-        userCountQuery += `
-          AND u.id IN (
-            SELECT ut_filter.user_id FROM user_tags ut_filter
-            WHERE ut_filter.tag_id = ANY($${userCountParams.length + 1}::int[])
-          )
-        `;
-        userCountParams.push(tagIds);
-      }
-
-      if (badgeIds.length > 0) {
-        userCountQuery += `
-          AND u.id IN (
-            SELECT DISTINCT ba_filter.awarded_to_user_id
-            FROM badge_awards ba_filter
-            WHERE ba_filter.badge_id = ANY($${userCountParams.length + 1}::int[])
-          )
-        `;
-        userCountParams.push(badgeIds);
-      }
-
-      if (hasValidExcludeTeamId) {
-        const etIdx = userCountParams.length + 1;
-        userCountQuery += `
-          AND NOT EXISTS (
-            SELECT 1 FROM team_members tm_excl
-            WHERE tm_excl.team_id = $${etIdx}
-              AND tm_excl.user_id = u.id
-          )
-        `;
-        userCountParams.push(excludeTeamId);
-      }
+      const userCountFilters = buildUserFilters(
+        filterConfig,
+        userCountParams.length + 1,
+      );
+      userCountQuery += userCountFilters.whereFragments.join("");
+      userCountParams.push(...userCountFilters.params);
 
       // ========== USER DATA QUERY ==========
       let userDistanceSelect = "";
@@ -1328,70 +1388,10 @@ ${teamDistanceSelect}
         userParamIndex++;
       }
 
-      if (userId) {
-        userQuery += `
-          AND (
-            u.is_public = TRUE
-            OR u.id = $${userParamIndex}
-          )
-        `;
-        userParams.push(userId);
-        userParamIndex++;
-      } else {
-        userQuery += ` AND u.is_public = TRUE`;
-      }
-
-      if (!includeDemoData) {
-        userQuery += ` AND u.is_synthetic IS NOT TRUE`;
-      }
-
-      if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
-        const distFilter = searchController.buildDistanceFilterSQL(
-          userLocation,
-          "u",
-          `$${userParamIndex}`,
-        );
-        if (distFilter) {
-          userQuery += distFilter;
-          userParams.push(maxDistance);
-          userParamIndex++;
-        }
-      }
-
-      if (tagIds.length > 0) {
-        userQuery += `
-          AND u.id IN (
-            SELECT ut_filter.user_id FROM user_tags ut_filter
-            WHERE ut_filter.tag_id = ANY($${userParamIndex}::int[])
-          )
-        `;
-        userParams.push(tagIds);
-        userParamIndex++;
-      }
-
-      if (badgeIds.length > 0) {
-        userQuery += `
-          AND u.id IN (
-            SELECT DISTINCT ba_filter.awarded_to_user_id
-            FROM badge_awards ba_filter
-            WHERE ba_filter.badge_id = ANY($${userParamIndex}::int[])
-          )
-        `;
-        userParams.push(badgeIds);
-        userParamIndex++;
-      }
-
-      if (hasValidExcludeTeamId) {
-        userQuery += `
-          AND NOT EXISTS (
-            SELECT 1 FROM team_members tm_excl
-            WHERE tm_excl.team_id = $${userParamIndex}
-              AND tm_excl.user_id = u.id
-          )
-        `;
-        userParams.push(excludeTeamId);
-        userParamIndex++;
-      }
+      const userFilters = buildUserFilters(filterConfig, userParamIndex);
+      userQuery += userFilters.whereFragments.join("");
+      userParams.push(...userFilters.params);
+      userParamIndex = userFilters.nextParamIndex;
 
       let userOrderBy;
       switch (sort) {
@@ -1812,6 +1812,24 @@ ${teamDistanceSelect}
         });
       }
 
+      const filterConfig = {
+        badgeIds,
+        combineTagBadgeWithOr: true,
+        direction,
+        excludeMatchingUser: true,
+        excludeOwnTeams,
+        excludeTeamId,
+        hasValidExcludeTeamId,
+        hasValidMaxDistance,
+        includeDemoData,
+        matchRoleId,
+        maxDistance,
+        openRolesOnly,
+        tagIds,
+        userId,
+        userLocation,
+      };
+
       // ========== TEAM COUNT QUERY ==========
       let teamCountQuery = `
         SELECT COUNT(*) as total
@@ -1821,101 +1839,9 @@ ${teamDistanceSelect}
 
       let teamCountParams = [];
 
-      if (userId) {
-        teamCountQuery += `
-          AND (
-            t.is_public = TRUE
-            OR t.owner_id = $1
-            OR EXISTS (
-              SELECT 1 FROM team_members
-              WHERE team_id = t.id AND user_id = $1
-            )
-          )
-        `;
-        teamCountParams.push(userId);
-      } else {
-        teamCountQuery += ` AND t.is_public = TRUE`;
-      }
-
-      if (!includeDemoData) {
-        teamCountQuery += ` AND t.is_synthetic IS NOT TRUE`;
-      }
-
-      if (openRolesOnly) {
-        teamCountQuery += `
-          AND EXISTS (
-            SELECT 1
-            FROM team_vacant_roles vr_filter
-            WHERE vr_filter.team_id = t.id
-              AND vr_filter.status = 'open'
-          )
-        `;
-      }
-
-      if (excludeOwnTeams) {
-        const memberParamIdx = teamCountParams.length + 1;
-        teamCountQuery += `
-          AND NOT EXISTS (
-            SELECT 1
-            FROM team_members tm_excluded
-            WHERE tm_excluded.team_id = t.id
-              AND tm_excluded.user_id = $${memberParamIdx}
-          )
-        `;
-        teamCountParams.push(userId);
-      }
-
-      if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
-        const distFilter = searchController.buildDistanceFilterSQL(
-          userLocation,
-          "t",
-          `$${teamCountParams.length + 1}`,
-        );
-        if (distFilter) {
-          teamCountQuery += distFilter;
-          teamCountParams.push(maxDistance);
-        }
-      }
-
-      if (tagIds.length > 0 && badgeIds.length > 0 && matchRoleId) {
-        const tagParam = `$${teamCountParams.length + 1}`;
-        const badgeParam = `$${teamCountParams.length + 2}`;
-        teamCountQuery += `
-          AND (
-            t.id IN (
-              SELECT tt_filter.team_id FROM team_tags tt_filter
-              WHERE tt_filter.tag_id = ANY(${tagParam}::int[])
-            )
-            OR t.id IN (
-              SELECT DISTINCT tm_badge.team_id FROM team_members tm_badge
-              JOIN badge_awards ba_badge ON tm_badge.user_id = ba_badge.awarded_to_user_id
-              WHERE ba_badge.badge_id = ANY(${badgeParam}::int[])
-            )
-          )
-        `;
-        teamCountParams.push(tagIds, badgeIds);
-      } else {
-        if (tagIds.length > 0) {
-          teamCountQuery += `
-            AND t.id IN (
-              SELECT tt_filter.team_id FROM team_tags tt_filter
-              WHERE tt_filter.tag_id = ANY($${teamCountParams.length + 1}::int[])
-            )
-          `;
-          teamCountParams.push(tagIds);
-        }
-
-        if (badgeIds.length > 0) {
-          teamCountQuery += `
-            AND t.id IN (
-              SELECT DISTINCT tm_badge.team_id FROM team_members tm_badge
-              JOIN badge_awards ba_badge ON tm_badge.user_id = ba_badge.awarded_to_user_id
-              WHERE ba_badge.badge_id = ANY($${teamCountParams.length + 1}::int[])
-            )
-          `;
-          teamCountParams.push(badgeIds);
-        }
-      }
+      const teamCountFilters = buildTeamFilters(filterConfig);
+      teamCountQuery += teamCountFilters.whereFragments.join("");
+      teamCountParams.push(...teamCountFilters.params);
 
       // ========== TEAM DATA QUERY ==========
       let teamDistanceSelect = "";
@@ -1974,106 +1900,10 @@ ${teamDistanceSelect}
       let teamParams = [];
       let teamParamIndex = 1;
 
-      if (userId) {
-        teamQuery += `
-          AND (
-            t.is_public = TRUE
-            OR t.owner_id = $${teamParamIndex}
-            OR EXISTS (
-              SELECT 1 FROM team_members
-              WHERE team_id = t.id AND user_id = $${teamParamIndex}
-            )
-          )
-        `;
-        teamParams.push(userId);
-        teamParamIndex++;
-      } else {
-        teamQuery += ` AND t.is_public = TRUE`;
-      }
-
-      if (!includeDemoData) {
-        teamQuery += ` AND t.is_synthetic IS NOT TRUE`;
-      }
-
-      if (openRolesOnly) {
-        teamQuery += `
-          AND EXISTS (
-            SELECT 1
-            FROM team_vacant_roles vr_filter
-            WHERE vr_filter.team_id = t.id
-              AND vr_filter.status = 'open'
-          )
-        `;
-      }
-
-      if (excludeOwnTeams) {
-        teamQuery += `
-          AND NOT EXISTS (
-            SELECT 1
-            FROM team_members tm_excluded
-            WHERE tm_excluded.team_id = t.id
-              AND tm_excluded.user_id = $${teamParamIndex}
-          )
-        `;
-        teamParams.push(userId);
-        teamParamIndex++;
-      }
-
-      if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
-        const distFilter = searchController.buildDistanceFilterSQL(
-          userLocation,
-          "t",
-          `$${teamParamIndex}`,
-        );
-        if (distFilter) {
-          teamQuery += distFilter;
-          teamParams.push(maxDistance);
-          teamParamIndex++;
-        }
-      }
-
-      if (tagIds.length > 0 && badgeIds.length > 0 && matchRoleId) {
-        const tagParam2 = `$${teamParamIndex}`;
-        const badgeParam2 = `$${teamParamIndex + 1}`;
-        teamQuery += `
-          AND (
-            t.id IN (
-              SELECT tt_filter.team_id FROM team_tags tt_filter
-              WHERE tt_filter.tag_id = ANY(${tagParam2}::int[])
-            )
-            OR t.id IN (
-              SELECT DISTINCT tm_badge.team_id FROM team_members tm_badge
-              JOIN badge_awards ba_badge ON tm_badge.user_id = ba_badge.awarded_to_user_id
-              WHERE ba_badge.badge_id = ANY(${badgeParam2}::int[])
-            )
-          )
-        `;
-        teamParams.push(tagIds, badgeIds);
-        teamParamIndex += 2;
-      } else {
-        if (tagIds.length > 0) {
-          teamQuery += `
-            AND t.id IN (
-              SELECT tt_filter.team_id FROM team_tags tt_filter
-              WHERE tt_filter.tag_id = ANY($${teamParamIndex}::int[])
-            )
-          `;
-          teamParams.push(tagIds);
-          teamParamIndex++;
-        }
-
-        if (badgeIds.length > 0) {
-          teamQuery += `
-            AND t.id IN (
-              SELECT DISTINCT tm_badge.team_id FROM team_members tm_badge
-              JOIN badge_awards ba_badge ON tm_badge.user_id = ba_badge.awarded_to_user_id
-              WHERE ba_badge.badge_id = ANY($${teamParamIndex}::int[])
-            )
-          `;
-          teamParams.push(badgeIds);
-          teamParamIndex++;
-        }
-      }
+      const teamFilters = buildTeamFilters(filterConfig, teamParamIndex);
+      teamQuery += teamFilters.whereFragments.join("");
+      teamParams.push(...teamFilters.params);
+      teamParamIndex = teamFilters.nextParamIndex;
 
       let teamOrderBy;
       switch (sort) {
@@ -2152,90 +1982,9 @@ ${teamDistanceSelect}
 
       let userCountParams = [];
 
-      if (userId) {
-        userCountQuery += `
-          AND (
-            u.is_public = TRUE
-            OR u.id = $1
-          )
-        `;
-        userCountParams.push(userId);
-      } else {
-        userCountQuery += ` AND u.is_public = TRUE`;
-      }
-
-      if (!includeDemoData) {
-        userCountQuery += ` AND u.is_synthetic IS NOT TRUE`;
-      }
-
-      if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
-        const distFilter = searchController.buildDistanceFilterSQL(
-          userLocation,
-          "u",
-          `$${userCountParams.length + 1}`,
-        );
-        if (distFilter) {
-          userCountQuery += distFilter;
-          userCountParams.push(maxDistance);
-        }
-      }
-
-      if (matchRoleId && userId) {
-        userCountQuery += ` AND u.id != $${userCountParams.length + 1}`;
-        userCountParams.push(userId);
-      }
-
-      if (tagIds.length > 0 && badgeIds.length > 0 && matchRoleId) {
-        const tagParam = `$${userCountParams.length + 1}`;
-        const badgeParam = `$${userCountParams.length + 2}`;
-        userCountQuery += `
-          AND (
-            u.id IN (
-              SELECT ut_filter.user_id FROM user_tags ut_filter
-              WHERE ut_filter.tag_id = ANY(${tagParam}::int[])
-            )
-            OR u.id IN (
-              SELECT DISTINCT ba_filter.awarded_to_user_id
-              FROM badge_awards ba_filter
-              WHERE ba_filter.badge_id = ANY(${badgeParam}::int[])
-            )
-          )
-        `;
-        userCountParams.push(tagIds, badgeIds);
-      } else {
-        if (tagIds.length > 0) {
-          userCountQuery += `
-            AND u.id IN (
-              SELECT ut_filter.user_id FROM user_tags ut_filter
-              WHERE ut_filter.tag_id = ANY($${userCountParams.length + 1}::int[])
-            )
-          `;
-          userCountParams.push(tagIds);
-        }
-
-        if (badgeIds.length > 0) {
-          userCountQuery += `
-            AND u.id IN (
-              SELECT DISTINCT ba_filter.awarded_to_user_id
-              FROM badge_awards ba_filter
-              WHERE ba_filter.badge_id = ANY($${userCountParams.length + 1}::int[])
-            )
-          `;
-          userCountParams.push(badgeIds);
-        }
-      }
-
-      if (hasValidExcludeTeamId) {
-        const etIdx = userCountParams.length + 1;
-        userCountQuery += `
-          AND NOT EXISTS (
-            SELECT 1 FROM team_members tm_excl
-            WHERE tm_excl.team_id = $${etIdx}
-              AND tm_excl.user_id = u.id
-          )
-        `;
-        userCountParams.push(excludeTeamId);
-      }
+      const userCountFilters = buildUserFilters(filterConfig);
+      userCountQuery += userCountFilters.whereFragments.join("");
+      userCountParams.push(...userCountFilters.params);
 
       // ========== USER DATA QUERY ==========
       let userDistanceSelect = "";
@@ -2316,96 +2065,10 @@ ${teamDistanceSelect}
       let userParams = [];
       let userParamIndex = 1;
 
-      if (userId) {
-        userQuery += `
-          AND (
-            u.is_public = TRUE
-            OR u.id = $${userParamIndex}
-          )
-        `;
-        userParams.push(userId);
-        userParamIndex++;
-      } else {
-        userQuery += ` AND u.is_public = TRUE`;
-      }
-
-      if (!includeDemoData) {
-        userQuery += ` AND u.is_synthetic IS NOT TRUE`;
-      }
-
-      if (hasValidMaxDistance && userLocation && direction !== "REMOTE") {
-        const distFilter = searchController.buildDistanceFilterSQL(
-          userLocation,
-          "u",
-          `$${userParamIndex}`,
-        );
-        if (distFilter) {
-          userQuery += distFilter;
-          userParams.push(maxDistance);
-          userParamIndex++;
-        }
-      }
-
-      if (matchRoleId && userId) {
-        userQuery += ` AND u.id != $${userParamIndex}`;
-        userParams.push(userId);
-        userParamIndex++;
-      }
-
-      if (tagIds.length > 0 && badgeIds.length > 0 && matchRoleId) {
-        const tagParam2 = `$${userParamIndex}`;
-        const badgeParam2 = `$${userParamIndex + 1}`;
-        userQuery += `
-          AND (
-            u.id IN (
-              SELECT ut_filter.user_id FROM user_tags ut_filter
-              WHERE ut_filter.tag_id = ANY(${tagParam2}::int[])
-            )
-            OR u.id IN (
-              SELECT DISTINCT ba_filter.awarded_to_user_id
-              FROM badge_awards ba_filter
-              WHERE ba_filter.badge_id = ANY(${badgeParam2}::int[])
-            )
-          )
-        `;
-        userParams.push(tagIds, badgeIds);
-        userParamIndex += 2;
-      } else {
-        if (tagIds.length > 0) {
-          userQuery += `
-            AND u.id IN (
-              SELECT ut_filter.user_id FROM user_tags ut_filter
-              WHERE ut_filter.tag_id = ANY($${userParamIndex}::int[])
-            )
-          `;
-          userParams.push(tagIds);
-          userParamIndex++;
-        }
-
-        if (badgeIds.length > 0) {
-          userQuery += `
-            AND u.id IN (
-              SELECT DISTINCT ba_filter.awarded_to_user_id
-              FROM badge_awards ba_filter
-              WHERE ba_filter.badge_id = ANY($${userParamIndex}::int[])
-            )
-          `;
-          userParams.push(badgeIds);
-          userParamIndex++;
-        }
-      }
-
-      if (hasValidExcludeTeamId) {
-        userQuery += `
-          AND NOT EXISTS (
-            SELECT 1 FROM team_members tm_excl
-            WHERE tm_excl.team_id = $${userParamIndex}
-              AND tm_excl.user_id = u.id
-          )
-        `;
-        userParams.push(excludeTeamId);
-        userParamIndex++;
-      }
+      const userFilters = buildUserFilters(filterConfig, userParamIndex);
+      userQuery += userFilters.whereFragments.join("");
+      userParams.push(...userFilters.params);
+      userParamIndex = userFilters.nextParamIndex;
 
       let userOrderBy;
       switch (sort) {
