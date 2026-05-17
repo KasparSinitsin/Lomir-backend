@@ -110,6 +110,14 @@ const getNavigationUrl = (notification) => {
         ? `/chat/${team_id}?type=team${messageHighlight}`
         : `/chat/${team_id}?type=team&highlightUser=${actor_id}`;
 
+    case "role_status_changed_applicant":
+      // Applicant sees their application modal with role highlighted
+      return `/teams/my-teams?openApplication=${reference_id}`;
+
+    case "role_status_changed_invitee":
+      // Invitee sees their invitation modal with role highlighted
+      return `/teams/my-teams?openInvitation=${reference_id}`;
+
     case "badge_awarded": {
       // Navigate to own profile, scroll to badges, highlight the awarded badge
       // title format: "New Badge: Quick Learner"

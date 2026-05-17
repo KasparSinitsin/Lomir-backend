@@ -191,6 +191,145 @@ const notifyTeamMembersOfRoleEvent = async ({
 };
 
 // ============================================================
+// Helper: Notify role applicants and invitees of a role status change
+// ============================================================
+const ACTION_LABELS = {
+  role_updated: "updated",
+  role_deleted: "deleted",
+  role_closed: "closed",
+  role_filled: "filled",
+  role_reopened: "reopened",
+  role_reopened_admin: "reopened",
+};
+
+const notifyRoleApplicantsAndInvitees = async ({
+  req,
+  roleId,
+  type,
+  roleName,
+  teamId,
+  teamName,
+  actorId,
+  actorName,
+}) => {
+  if (typeof req?.app?.get !== "function") return;
+  const io = req.app.get("io");
+  if (!io) return;
+
+  const action = ACTION_LABELS[type] || "changed";
+  const applicantTitle = `The role "${roleName}" you applied for has been ${action}`;
+  const inviteeTitle = `The role "${roleName}" you were invited to has been ${action}`;
+
+  try {
+    // Pending role applications for this role
+    const applicationsResult = await db.pool.query(
+      `SELECT id, applicant_id FROM team_applications
+       WHERE role_id = $1 AND status = 'pending'`,
+      [roleId],
+    );
+
+    for (const row of applicationsResult.rows) {
+      // Remove any existing role-status notification for this application so
+      // repeated role changes don't stack up in the bell, then insert fresh.
+      let notification = null;
+      try {
+        await db.pool.query(
+          `DELETE FROM notifications
+           WHERE user_id = $1 AND type = 'role_status_changed_applicant' AND reference_id = $2`,
+          [row.applicant_id, row.id],
+        );
+        notification = await createNotification({
+          userId: row.applicant_id,
+          type: "role_status_changed_applicant",
+          title: applicantTitle,
+          message: applicantTitle,
+          referenceType: "application",
+          referenceId: row.id,
+          teamId,
+          actorId,
+        });
+      } catch (dbErr) {
+        console.error("Error replacing applicant role-status notification:", dbErr);
+      }
+
+      io.to(`user:${row.applicant_id}`).emit("notification:new", {
+        type: "role_status_changed_applicant",
+        teamId: Number(teamId),
+        referenceId: Number(row.id),
+        actorId: actorId != null ? Number(actorId) : null,
+      });
+
+      io.to(`user:${row.applicant_id}`).emit("role:statusChanged", {
+        userType: "applicant",
+        roleChangeType: type,
+        roleName,
+        teamName,
+        teamId: Number(teamId),
+        roleId: Number(roleId),
+        applicationId: Number(row.id),
+        invitationId: null,
+        actorName,
+        notificationId: notification?.id ?? null,
+      });
+    }
+
+    // Pending role invitations for this role
+    const invitationsResult = await db.pool.query(
+      `SELECT id, invitee_id FROM team_invitations
+       WHERE role_id = $1 AND status = 'pending'`,
+      [roleId],
+    );
+
+    for (const row of invitationsResult.rows) {
+      // Remove any existing role-status notification for this invitation so
+      // repeated role changes don't stack up in the bell, then insert fresh.
+      let notification = null;
+      try {
+        await db.pool.query(
+          `DELETE FROM notifications
+           WHERE user_id = $1 AND type = 'role_status_changed_invitee' AND reference_id = $2`,
+          [row.invitee_id, row.id],
+        );
+        notification = await createNotification({
+          userId: row.invitee_id,
+          type: "role_status_changed_invitee",
+          title: inviteeTitle,
+          message: inviteeTitle,
+          referenceType: "invitation",
+          referenceId: row.id,
+          teamId,
+          actorId,
+        });
+      } catch (dbErr) {
+        console.error("Error replacing invitee role-status notification:", dbErr);
+      }
+
+      io.to(`user:${row.invitee_id}`).emit("notification:new", {
+        type: "role_status_changed_invitee",
+        teamId: Number(teamId),
+        referenceId: Number(row.id),
+        actorId: actorId != null ? Number(actorId) : null,
+      });
+
+      io.to(`user:${row.invitee_id}`).emit("role:statusChanged", {
+        userType: "invitee",
+        roleChangeType: type,
+        roleName,
+        teamName,
+        teamId: Number(teamId),
+        roleId: Number(roleId),
+        applicationId: null,
+        invitationId: Number(row.id),
+        actorName,
+        notificationId: notification?.id ?? null,
+      });
+    }
+  } catch (error) {
+    console.error(`Error notifying applicants/invitees for role ${type}:`, error);
+  }
+};
+
+// ============================================================
 // Helper: Check if user is owner or admin of a team
 // ============================================================
 const checkTeamAuth = async (teamId, userId) => {
@@ -863,6 +1002,16 @@ const updateVacantRole = async (req, res) => {
           roleName,
           actorName,
         });
+        await notifyRoleApplicantsAndInvitees({
+          req,
+          roleId: updatedRole.id,
+          type: "role_updated",
+          roleName,
+          teamId,
+          teamName,
+          actorId: userId,
+          actorName,
+        });
       } catch (notificationError) {
         console.error("Error creating role_updated notification:", notificationError);
       }
@@ -955,6 +1104,16 @@ const deleteVacantRole = async (req, res) => {
       const io = req.app.get("io");
       io?.to(`team:${teamId}`).emit("notification:updated");
 
+      await notifyRoleApplicantsAndInvitees({
+        req,
+        roleId: result.rows[0].id,
+        type: "role_deleted",
+        roleName,
+        teamId,
+        teamName,
+        actorId: userId,
+        actorName,
+      });
       await notifyTeamMembersOfRoleEvent({
         req,
         teamId,
@@ -1078,6 +1237,16 @@ const updateVacantRoleStatus = async (req, res) => {
       const notificationConfig = notificationByStatus[status];
 
       if (notificationConfig) {
+        await notifyRoleApplicantsAndInvitees({
+          req,
+          roleId: updatedRole.id,
+          type: notificationConfig.type,
+          roleName,
+          teamId,
+          teamName,
+          actorId: userId,
+          actorName,
+        });
         await notifyTeamMembersOfRoleEvent({
           req,
           teamId,
