@@ -1370,7 +1370,8 @@ const getTeamsWhereUserCanInvite = async (req, res) => {
     const { inviteeId } = req.query;
 
     let query = `
-      SELECT t.id, t.name, t.teamavatar_url, t.max_members,
+      SELECT t.id, t.name, t.teamavatar_url, t.max_members, t.city, t.country, t.is_remote,
+             tm.role as user_role,
              (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count
     `;
 
@@ -1420,6 +1421,10 @@ const getTeamsWhereUserCanInvite = async (req, res) => {
             team.max_members === null
               ? null
               : team.max_members - parseInt(team.current_members_count),
+          city: team.city ?? null,
+          country: team.country ?? null,
+          is_remote: team.is_remote ?? false,
+          user_role: team.user_role,
         };
 
         if (inviteeId) {
