@@ -1991,6 +1991,7 @@ const handleTeamApplication = async (req, res) => {
                 type: "application_approved",
                 teamId: application.team_id,
                 title: `Your application to ${application.team_name} was approved!`,
+                actorName: approverName,
               });
               io.to(`team:${application.team_id}`).emit("notification:new", {
                 type: "member_joined",
