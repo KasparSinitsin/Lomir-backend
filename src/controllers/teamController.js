@@ -2106,6 +2106,7 @@ const handleTeamApplication = async (req, res) => {
               type: "application_rejected",
               teamId: application.team_id,
               title: `Your application to ${application.team_name} was declined`,
+              actorName: approverName,
             });
             for (const adminId of affectedAdminIds) {
               io.to(`user:${adminId}`).emit("notification:updated");
@@ -2468,8 +2469,9 @@ const applyToJoinTeam = async (req, res) => {
               type: "application_received",
               teamId: parseInt(teamId),
               title: isAlreadyMember
-                ? `${applicantName} applied for a role in ${team.name}`
-                : `${applicantName} applied to join ${team.name}`,
+                ? `New role application for ${team.name}`
+                : `New application to join ${team.name}`,
+              actorName: applicantName,
             });
           }
         } catch (notificationError) {
