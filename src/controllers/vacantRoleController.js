@@ -124,6 +124,7 @@ const notifyTeamMembersOfRoleEvent = async ({
   actorName = null,
   filledUserId = null,
   filledUserName = null,
+  skipChatMessage = false,
 }) => {
   if (typeof req?.app?.get !== "function") return;
 
@@ -141,7 +142,7 @@ const notifyTeamMembersOfRoleEvent = async ({
     });
     let messageRow = null;
 
-    if (eventContent) {
+    if (eventContent && !skipChatMessage) {
       const messageResult = await db.pool.query(
         `INSERT INTO messages (sender_id, team_id, content, sent_at)
          VALUES ($1, $2, $3, NOW())
@@ -1152,7 +1153,7 @@ const updateVacantRoleStatus = async (req, res) => {
   try {
     const { teamId, roleId } = req.params;
     const userId = req.user.id;
-    const { status, filled_by } = req.body;
+    const { status, filled_by, skip_chat_message: skipChatMessage } = req.body;
 
     // Authorization check
     const userRole = await checkTeamAuth(teamId, userId);
@@ -1260,6 +1261,7 @@ const updateVacantRoleStatus = async (req, res) => {
           actorName,
           filledUserId: status === "filled" ? filledUser?.id ?? null : null,
           filledUserName: status === "filled" ? filledUserName : null,
+          skipChatMessage: !!skipChatMessage,
         });
       }
     } catch (notificationError) {
