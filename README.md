@@ -31,7 +31,7 @@ Contact the project owner for a demo login, or register a new account with a val
 - **Teams** — Create, join, manage members, assign roles, and archive teams
 - **Vacant Roles** — Post open positions on teams with desired tags, badges, and location preferences
 - **Matching Engine** — Score users against roles (and vice versa) using weighted tag/badge/distance criteria
-- **Search** — Full-text search across teams, users, and roles with tag/badge/location filtering and "Best Match" sorting
+- **Search** — Global search across teams, users, and roles with boolean queries, tag/badge/location filtering, proximity sorting, and "Best Match" scoring
 - **Chat** — Real-time direct and team group messaging via Socket.IO, including typing indicators, read receipts, message replies (reply-to with sender preview), @mention notifications, and structured system messages for team events (member join/leave/removal, role changes, invitation responses, application decisions, role lifecycle, team deletion)
 - **Badge System** — 30 badges across 5 categories; award badges to teammates with reasons and context
 - **Notifications** — In-app notifications for invitations, applications, badge awards, messages, @mentions, and role lifecycle events; each notification deep-links to the exact message that triggered it; stale notifications are cleaned up automatically on member removal, role deletion, and team deletion
@@ -141,6 +141,16 @@ Verify it's running by visiting `http://localhost:5001` — you should see **"Lo
 | `npm run seed` | Seed the database with initial data |
 | `npm test` | Run tests (`node --test`) |
 
+### Test Notes
+
+For search work, run the focused search suite:
+
+```bash
+node --test test/searchController.test.js
+```
+
+That suite covers pagination, sorting, proximity handling, synthetic/demo-data filtering, match-score enrichment, and team/member exclusion behavior for the active search endpoints.
+
 ---
 
 ## Project Structure
@@ -184,11 +194,15 @@ Lomir-backend/
 │   ├── services/
 │   │   └── emailService.js     # Resend transactional email
 │   ├── utils/
+│   │   ├── booleanSearchParser.js
 │   │   ├── imagekitUtils.js
 │   │   ├── fileValidation.js
 │   │   ├── jwtUtils.js
 │   │   ├── matchingScorer.js   # Shared scoring utilities
+│   │   ├── searchQueryBuilder.js # Shared search distance/filter/sort SQL builders
+│   │   ├── socketMessageEmitter.js
 │   │   ├── turnstileVerify.js  # Cloudflare Turnstile CAPTCHA verification
+│   │   ├── vacantRoleSerializer.js
 │   │   └── geocodingUtil.js
 │   ├── jobs/
 │   │   └── fileCleanupScheduler.js
@@ -197,11 +211,16 @@ Lomir-backend/
 ├── scripts/                    # SQL seed, migration, and utility scripts
 │   └── migrate-cloudinary-to-imagekit.js
 ├── test/                       # Controller unit tests
+│   ├── invitationController.test.js
+│   ├── searchController.test.js
+│   ├── teamController.applyToJoinTeam.test.js
 │   ├── userController.deleteUser.test.js
 │   ├── userController.deletionPreview.test.js
-│   └── teamController.applications.test.js
+│   ├── teamController.applications.test.js
+│   └── vacantRoleController.test.js
 ├── docs/
-│   └── USER_DELETION_SPEC.md   # Full account deletion specification
+│   ├── USER_DELETION_SPEC.md   # Full account deletion specification
+│   └── team-service-boundaries.md # Proposed service extraction boundaries
 ├── .env                        # Environment variables (not committed)
 ├── package.json
 └── README.md
@@ -219,7 +238,8 @@ All routes are prefixed with `/api`.
 | `/api/users` | User CRUD, tags, badges, avatar, account deletion with preview |
 | `/api/teams` | Team CRUD, members, applications, invitations, badge awards; `DELETE /invitations/:id/role` cancels only the role portion of a pending invitation |
 | `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management |
-| `/api/search` | Global search with tag/badge/location/role filtering |
+| `/api/search/global` | Keyword/boolean search across teams, users, and roles with tag/badge/location/role filtering |
+| `/api/search/all` | Initial search-page data without a required keyword, using the same filtering/sorting core |
 | `/api/matching` | Role ↔ user matching scores and candidate lists |
 | `/api/badges` | Badge catalog and awarding |
 | `/api/messages` | Direct and team message history |
@@ -227,6 +247,26 @@ All routes are prefixed with `/api`.
 | `/api/imagekit` | Auth params for client-side ImageKit uploads |
 | `/api/tags` | Tag catalog (structured by category) |
 | `/api/geocoding` | Postal code → city/country/coordinates lookup |
+
+---
+
+## Search
+
+The search API exposes two active routes:
+
+- `GET /api/search/global` — keyword or boolean search. Requires `query` with at least 2 characters.
+- `GET /api/search/all` — initial search-page load. Uses the same filters and sort options, but does not require a keyword.
+
+Both routes share the same internal query-building core in `src/controllers/searchController.js`. Common distance and proximity SQL helpers live in `src/utils/searchQueryBuilder.js`; boolean query parsing lives in `src/utils/booleanSearchParser.js`.
+
+Supported search controls include:
+
+- `searchType`: `all`, `teams`, `users`, or `roles`
+- `sortBy`: `name`, `recent`, `newest`, `capacity`, `proximity`, or `match`
+- `sortDir`: `asc`, `desc`, or `remote`
+- `tagIds`, `badgeIds`, `maxDistance`, `openRolesOnly`, `excludeOwnTeams`, `excludeTeamId`, `includeDemoData`
+
+The team search response intentionally returns `teamavatarUrl` from the SQL alias `teamavatar_url as "teamavatarUrl"` for API compatibility with the frontend.
 
 ---
 

@@ -7,7 +7,7 @@ const router = express.Router();
 
 // === Core User Routes ===
 
-// GET /api/users - Get all users (Placeholder in controller)
+// GET /api/users - Get all users
 // Access: Public (or add auth.authenticateToken if needed)
 router.get("/", userController.getUsers);
 
@@ -27,7 +27,7 @@ router.post(
   userController.deletionPreview,
 );
 
-// DELETE /api/users/:id - Delete a specific user by their ID (Placeholder in controller)
+// DELETE /api/users/:id - Delete a specific user by their ID
 // Access: Private (Requires valid token)
 router.delete("/:id", auth.authenticateToken, userController.deleteUser);
 
@@ -40,7 +40,7 @@ router.delete(
 
 // === User-Specific Sub-Resources ===
 
-// GET /api/users/:id/teams - Get teams associated with a specific user (Placeholder in controller)
+// GET /api/users/:id/teams - Get teams associated with a specific user
 // Access: Private (Requires valid token - added assumption, adjust if needed)
 // router.get("/:id/teams", auth.authenticateToken, userController.getUserTeams);
 

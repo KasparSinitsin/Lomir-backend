@@ -229,6 +229,8 @@ const sendTeamInvitation = async (req, res) => {
             type: "role_invitation",
             teamId: parseInt(teamId),
             roleId: finalRoleId,
+            title: `You've been invited to fill the role '${roleName}' in ${team.name}`,
+            actorName: inviterName,
           });
         }
       } else {
@@ -247,6 +249,11 @@ const sendTeamInvitation = async (req, res) => {
           io.to(`user:${finalInviteeId}`).emit("notification:new", {
             type: "invitation_received",
             teamId: parseInt(teamId),
+            title: finalRoleId && roleName
+              ? `You've been invited to join ${team.name} as ${roleName}!`
+              : `You've been invited to join ${team.name}!`,
+            actorName: inviterName,
+            ...(finalRoleId && roleName ? { roleName } : {}),
           });
         }
       }
@@ -254,6 +261,7 @@ const sendTeamInvitation = async (req, res) => {
       if (io) {
         io.to(`team:${teamId}`).emit("notification:updated", {
           type: isInternalInvite ? "role_invitation_sent" : "invitation_sent",
+          notificationType: isInternalInvite ? "role_invitation" : "invitation_received",
           teamId: parseInt(teamId),
           invitationId: invitationResult.rows[0].id,
           roleId: finalRoleId,
@@ -791,10 +799,12 @@ const respondToInvitation = async (req, res) => {
     // Get invitation details including inviter info
     const invitationResult = await db.pool.query(
       `SELECT ti.*, t.max_members, t.name as team_name,
-          u.first_name as invitee_first_name, u.last_name as invitee_last_name, u.username as invitee_username
+          u.first_name as invitee_first_name, u.last_name as invitee_last_name, u.username as invitee_username,
+          tvr.role_name
    FROM team_invitations ti
    JOIN teams t ON ti.team_id = t.id
    JOIN users u ON ti.invitee_id = u.id
+   LEFT JOIN team_vacant_roles tvr ON ti.role_id = tvr.id
    WHERE ti.id = $1 AND ti.invitee_id = $2 AND ti.status = 'pending'
    AND t.archived_at IS NULL`,
       [invitationId, userId],
@@ -945,6 +955,10 @@ const respondToInvitation = async (req, res) => {
                 teamId: invitation.team_id,
                 roleFilled,
                 filledRoleName,
+                title: filledRoleName
+                  ? `Your invitation to join ${invitation.team_name} as ${filledRoleName} was accepted!`
+                  : `Your invitation to ${invitation.team_name} was accepted!`,
+                actorName: inviteeName,
               });
             }
           }
@@ -1027,6 +1041,11 @@ const respondToInvitation = async (req, res) => {
             io.to(`user:${invitation.inviter_id}`).emit("notification:new", {
               type: "invitation_declined",
               teamId: invitation.team_id,
+              title: invitation.role_id && invitation.role_name
+                ? `Your invitation to join ${invitation.team_name} as ${invitation.role_name} was declined`
+                : `Your invitation to ${invitation.team_name} was declined`,
+              actorName: inviteeName,
+              ...(invitation.role_id && invitation.role_name ? { roleName: invitation.role_name } : {}),
             });
           }
         } catch (notificationError) {
@@ -1080,10 +1099,12 @@ const cancelInvitation = async (req, res) => {
       `SELECT ti.*, t.name as team_name,
               u.first_name as invitee_first_name, 
               u.last_name as invitee_last_name, 
-              u.username as invitee_username
+              u.username as invitee_username,
+              tvr.role_name
        FROM team_invitations ti
        JOIN teams t ON ti.team_id = t.id
        JOIN users u ON ti.invitee_id = u.id
+       LEFT JOIN team_vacant_roles tvr ON ti.role_id = tvr.id
        WHERE ti.id = $1 AND ti.status = 'pending'`,
       [invitationId],
     );
@@ -1182,6 +1203,11 @@ const cancelInvitation = async (req, res) => {
         io.to(`user:${invitation.invitee_id}`).emit("notification:new", {
           type: "invitation_cancelled",
           teamId: teamId,
+          title: invitation.role_id && invitation.role_name
+            ? `Your invitation to join ${invitation.team_name} as ${invitation.role_name} was cancelled`
+            : `Your invitation to ${invitation.team_name} was cancelled`,
+          actorName: cancellerName,
+          ...(invitation.role_id && invitation.role_name ? { roleName: invitation.role_name } : {}),
         });
         io.to(`team:${teamId}`).emit("notification:updated", {
           type: "invitation_cancelled",

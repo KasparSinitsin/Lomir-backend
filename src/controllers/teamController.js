@@ -1990,6 +1990,8 @@ const handleTeamApplication = async (req, res) => {
               io.to(`user:${application.applicant_id}`).emit("notification:new", {
                 type: "application_approved",
                 teamId: application.team_id,
+                title: `Your application to ${application.team_name} was approved!`,
+                actorName: approverName,
               });
               io.to(`team:${application.team_id}`).emit("notification:new", {
                 type: "member_joined",
@@ -2103,6 +2105,8 @@ const handleTeamApplication = async (req, res) => {
             io.to(`user:${application.applicant_id}`).emit("notification:new", {
               type: "application_rejected",
               teamId: application.team_id,
+              title: `Your application to ${application.team_name} was declined`,
+              actorName: approverName,
             });
             for (const adminId of affectedAdminIds) {
               io.to(`user:${adminId}`).emit("notification:updated");
@@ -2464,6 +2468,10 @@ const applyToJoinTeam = async (req, res) => {
             io.to(`team:${teamId}`).emit("notification:new", {
               type: "application_received",
               teamId: parseInt(teamId),
+              title: isAlreadyMember
+                ? `New role application for ${team.name}`
+                : `New application to join ${team.name}`,
+              actorName: applicantName,
             });
           }
         } catch (notificationError) {
@@ -3078,6 +3086,8 @@ const removeTeamMember = async (req, res) => {
         io?.to(`user:${memberId}`).emit("notification:new", {
           type: "member_removed",
           teamId: parseInt(teamId),
+          title: `You were removed from ${teamName}`,
+          actorName: removerName,
         });
 
         // notify remaining members
