@@ -82,6 +82,96 @@ const checkAndCleanupArchivedTeam = async (teamId) => {
   return false;
 };
 
+const reopenRolesFilledByMember = async (queryRunner, teamId, memberId) => {
+  const result = await queryRunner.query(
+    `UPDATE team_vacant_roles
+     SET status = 'open',
+         filled_by = NULL,
+         updated_at = NOW()
+     WHERE team_id = $1
+       AND filled_by = $2
+       AND status = 'filled'
+     RETURNING id, role_name`,
+    [teamId, memberId],
+  );
+
+  return result.rows;
+};
+
+const buildRoleReopenedLeaveMessage = ({
+  teamId,
+  teamName,
+  roleId,
+  roleName,
+  memberId,
+  memberName,
+}) =>
+  `🔓 ROLE_REOPENED: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || "Vacant Role"} | ${memberId}:${memberName || "Someone"}`;
+
+const buildRoleApplicationDeferredInviteMessage = ({
+  teamId,
+  teamName,
+  roleId,
+  roleName,
+  applicantId,
+  applicantName,
+  approverId,
+  approverName,
+  currentRoleId,
+  currentRoleName,
+}) =>
+  `📬 ROLE_APPLICATION_DEFERRED_INVITE: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || "Vacant Role"} | ${applicantId}:${applicantName || "Someone"} | ${approverId}:${approverName || "Someone"} | ${currentRoleId}:${currentRoleName || "their current role"}`;
+
+const notifyRemainingMembersOfReopenedRoles = async ({
+  req,
+  teamId,
+  teamName,
+  memberId,
+  memberName,
+  roleEvents,
+}) => {
+  if (!Array.isArray(roleEvents) || roleEvents.length === 0) return;
+
+  const io = req.app?.get?.("io");
+
+  for (const event of roleEvents) {
+    if (event.messageRow) {
+      await emitInsertedMessage(req, event.messageRow);
+    }
+
+    const membersResult = await db.pool.query(
+      `SELECT user_id
+       FROM team_members
+       WHERE team_id = $1
+         AND user_id != $2`,
+      [teamId, memberId],
+    );
+
+    for (const member of membersResult.rows) {
+      await createNotification({
+        userId: member.user_id,
+        type: "role_reopened",
+        title: `${memberName} left the role ${event.roleName || "Vacant Role"} in ${teamName}`,
+        message: `${event.roleName || "Vacant Role"} is open again to be filled.`,
+        referenceType: "message",
+        referenceId: event.messageRow?.id || event.roleId,
+        teamId: parseInt(teamId, 10),
+        actorId: parseInt(memberId, 10),
+      });
+    }
+
+    io?.to(`team:${teamId}`).emit("notification:new", {
+      type: "role_reopened",
+      teamId: parseInt(teamId, 10),
+      referenceId: event.messageRow?.id
+        ? Number(event.messageRow.id)
+        : Number(event.roleId),
+      messageId: event.messageRow?.id ? Number(event.messageRow.id) : null,
+      actorId: parseInt(memberId, 10),
+    });
+  }
+};
+
 /**
  * @description Delete team's avatar image
  * @route DELETE /api/teams/:id/avatar
@@ -1789,11 +1879,14 @@ const handleTeamApplication = async (req, res) => {
     // Get application details
     const applicationResult = await db.pool.query(
       `SELECT ta.*, t.owner_id, t.max_members, t.name as team_name, tm.role,
+          vr.role_name,
+          vr.status AS role_status,
           applicant.first_name as applicant_first_name, 
           applicant.last_name as applicant_last_name,
           applicant.username as applicant_username
    FROM team_applications ta
    JOIN teams t ON ta.team_id = t.id
+   LEFT JOIN team_vacant_roles vr ON ta.role_id = vr.id
    JOIN users applicant ON ta.applicant_id = applicant.id
    LEFT JOIN team_members tm ON t.id = tm.team_id AND tm.user_id = $1
    WHERE ta.id = $2`,
@@ -1934,6 +2027,10 @@ const handleTeamApplication = async (req, res) => {
         const applicantToken = `${application.applicant_id}:${applicantName}`;
 
         const approvalSystemMessage = `✅ APPLICATION_APPROVED: ${teamToken} | ${approverToken} | ${applicantToken} | ${hasPersonalMessage}`;
+        const approvalTitle =
+          application.role_id && application.role_name
+            ? `Your application to ${application.team_name} for ${application.role_name} was approved!`
+            : `Your application to ${application.team_name} was approved!`;
 
         let approvalMessageResult = null;
         if (!isInternalRoleApp) {
@@ -1962,7 +2059,7 @@ const handleTeamApplication = async (req, res) => {
             await createNotification({
               userId: application.applicant_id,
               type: "application_approved",
-              title: `Your application to ${application.team_name} was approved!`,
+              title: approvalTitle,
               message: response || "Welcome to the team!",
               referenceType: "message",
               referenceId: approvalMessageResult?.rows[0]?.id || parseInt(applicationId),
@@ -1990,8 +2087,11 @@ const handleTeamApplication = async (req, res) => {
               io.to(`user:${application.applicant_id}`).emit("notification:new", {
                 type: "application_approved",
                 teamId: application.team_id,
-                title: `Your application to ${application.team_name} was approved!`,
+                title: approvalTitle,
                 actorName: approverName,
+                ...(application.role_id && application.role_name
+                  ? { roleId: application.role_id, roleName: application.role_name }
+                  : {}),
               });
               io.to(`team:${application.team_id}`).emit("notification:new", {
                 type: "member_joined",
@@ -2010,23 +2110,166 @@ const handleTeamApplication = async (req, res) => {
         }
         // === END NOTIFICATION ===
 
-        // Auto-fill the associated vacant role if the application targets one
+        // Auto-fill the associated vacant role if the application targets one.
+        // If the applicant already fills another role in this team, keep the
+        // target role open and convert the approval into a role invitation.
         let roleFilled = false;
         let filledRoleName = null;
+        let roleInvitationCreated = false;
+        let roleInvitationId = null;
+        let deferredByCurrentRoleName = null;
+        let deferredInviteSocketData = null;
 
         if (application.role_id && fillRole) {
-          const roleUpdateResult = await client.query(
-            `UPDATE team_vacant_roles
-             SET status = 'filled', filled_by = $1, updated_at = NOW()
-             WHERE id = $2 AND team_id = $3 AND status = 'open'
-             RETURNING id, role_name`,
-            [application.applicant_id, application.role_id, application.team_id],
+          const existingFilledRoleResult = await client.query(
+            `SELECT id, role_name
+             FROM team_vacant_roles
+             WHERE team_id = $1
+               AND filled_by = $2
+               AND status = 'filled'
+               AND id <> $3
+             ORDER BY updated_at DESC
+             LIMIT 1`,
+            [application.team_id, application.applicant_id, application.role_id],
           );
-          roleFilled = roleUpdateResult.rows.length > 0;
-          filledRoleName = roleFilled ? roleUpdateResult.rows[0].role_name : null;
+
+          const existingFilledRole = existingFilledRoleResult.rows[0] || null;
+
+          if (existingFilledRole) {
+            deferredByCurrentRoleName = existingFilledRole.role_name;
+
+            const existingInviteResult = await client.query(
+              `SELECT id
+               FROM team_invitations
+               WHERE team_id = $1
+                 AND invitee_id = $2
+                 AND role_id = $3
+                 AND status = 'pending'
+               LIMIT 1`,
+              [application.team_id, application.applicant_id, application.role_id],
+            );
+
+            if (existingInviteResult.rows.length > 0) {
+              roleInvitationId = existingInviteResult.rows[0].id;
+            } else if (application.role_status === "open") {
+              const invitationResult = await client.query(
+                `INSERT INTO team_invitations (team_id, inviter_id, invitee_id, message, status, role_id, created_at)
+                 VALUES ($1, $2, $3, $4, 'pending', $5, NOW())
+                 RETURNING id`,
+                [
+                  application.team_id,
+                  userId,
+                  application.applicant_id,
+                  `Your application for this role has been approved while you were already filling another role. You can accept this role offer once you leave your current role:`,
+                  application.role_id,
+                ],
+              );
+              roleInvitationId = invitationResult.rows[0].id;
+            }
+
+            roleInvitationCreated = roleInvitationId != null;
+
+            if (roleInvitationCreated) {
+              const deferredMessage = buildRoleApplicationDeferredInviteMessage({
+                teamId: application.team_id,
+                teamName: application.team_name,
+                roleId: application.role_id,
+                roleName: application.role_name,
+                applicantId: application.applicant_id,
+                applicantName,
+                approverId: userId,
+                approverName,
+                currentRoleId: existingFilledRole.id,
+                currentRoleName: existingFilledRole.role_name,
+              });
+
+              const deferredMessageResult = await client.query(
+                `INSERT INTO messages (sender_id, team_id, content, sent_at)
+                 VALUES ($1, $2, $3, NOW())
+                 RETURNING id, sender_id, team_id, content, sent_at`,
+                [userId, application.team_id, deferredMessage],
+              );
+              await emitInsertedMessage(req, deferredMessageResult.rows[0]);
+
+              // Collect recipient list before notifications (still in transaction).
+              // Must be outside the try/catch so socket emit is guaranteed even
+              // if createNotification or notifyTeamMembers fails.
+              const remainingMembersResult = await client.query(
+                `SELECT user_id
+                 FROM team_members
+                 WHERE team_id = $1
+                   AND user_id != $2`,
+                [application.team_id, application.applicant_id],
+              );
+              deferredInviteSocketData = {
+                applicantId: application.applicant_id,
+                teamId: application.team_id,
+                roleId: application.role_id,
+                roleName: application.role_name,
+                teamName: application.team_name,
+                approverName,
+                memberIds: remainingMembersResult.rows.map((r) => r.user_id),
+              };
+
+              try {
+                await createNotification({
+                  userId: application.applicant_id,
+                  type: "role_application_deferred_invite",
+                  title: `Your application for ${application.role_name} in ${application.team_name} is now a role offer`,
+                  message: `You can accept this offer once you leave ${existingFilledRole.role_name}.`,
+                  referenceType: "team_invitation",
+                  referenceId: roleInvitationId,
+                  teamId: application.team_id,
+                  actorId: userId,
+                });
+
+                await notifyTeamMembers({
+                  teamId: application.team_id,
+                  excludeUserId: application.applicant_id,
+                  type: "role_application_deferred_invite",
+                  title: `${applicantName}'s application for ${application.role_name} was approved as a role offer`,
+                  message: `${applicantName} already fills ${existingFilledRole.role_name}, so the new role remains available until they accept the offer.`,
+                  referenceType: "message",
+                  referenceId: deferredMessageResult.rows[0]?.id || roleInvitationId,
+                  actorId: userId,
+                });
+              } catch (notificationError) {
+                console.error("Error creating deferred role offer notification:", notificationError);
+              }
+            }
+          } else {
+            const roleUpdateResult = await client.query(
+              `UPDATE team_vacant_roles
+               SET status = 'filled', filled_by = $1, updated_at = NOW()
+               WHERE id = $2 AND team_id = $3 AND status = 'open'
+               RETURNING id, role_name`,
+              [application.applicant_id, application.role_id, application.team_id],
+            );
+            roleFilled = roleUpdateResult.rows.length > 0;
+            filledRoleName = roleFilled ? roleUpdateResult.rows[0].role_name : null;
+          }
         }
 
         await client.query("COMMIT");
+
+        // Emit deferred invite socket events after commit to avoid race condition
+        // where the frontend fetches invitations before the DB row is visible
+        if (deferredInviteSocketData) {
+          const io = req.app.get("io");
+          if (io) {
+            io.to(`user:${deferredInviteSocketData.applicantId}`).emit("notification:new", {
+              type: "role_application_deferred_invite",
+              teamId: deferredInviteSocketData.teamId,
+              roleId: deferredInviteSocketData.roleId,
+              roleName: deferredInviteSocketData.roleName,
+              title: `Your application for ${deferredInviteSocketData.roleName} in ${deferredInviteSocketData.teamName} is now a role offer`,
+              actorName: deferredInviteSocketData.approverName,
+            });
+            for (const memberId of deferredInviteSocketData.memberIds) {
+              io.to(`user:${memberId}`).emit("notification:updated");
+            }
+          }
+        }
 
         return res.status(200).json({
           success: true,
@@ -2036,6 +2279,9 @@ const handleTeamApplication = async (req, res) => {
             status: "approved",
             roleFilled,
             filledRoleName,
+            roleInvitationCreated,
+            roleInvitationId,
+            deferredByCurrentRoleName,
           },
         });
       } else if (action === "decline") {
@@ -2790,11 +3036,20 @@ const removeTeamMember = async (req, res) => {
           ? `${m.first_name} ${m.last_name}`
           : m?.username || "A member";
 
+      const teamResult = await db.pool.query(
+        `SELECT name FROM teams WHERE id = $1`,
+        [teamId],
+      );
+      const teamName = teamResult.rows[0]?.name || "the team";
+
       // Remove membership
       await db.pool.query(
         `DELETE FROM team_members WHERE team_id = $1 AND user_id = $2`,
         [teamId, memberId],
       );
+
+      const reopenedRoles = await reopenRolesFilledByMember(db.pool, teamId, memberId);
+      const roleEvents = [];
 
       // Insert appropriate messages
       if (isSelfRemoval) {
@@ -2808,12 +3063,6 @@ const removeTeamMember = async (req, res) => {
         await emitInsertedMessage(req, leaveMessageResult.rows[0]);
       } else {
         // Get team name and remover name for proper message formatting
-        const teamResult = await db.pool.query(
-          `SELECT name FROM teams WHERE id = $1`,
-          [teamId],
-        );
-        const teamName = teamResult.rows[0]?.name || "the team";
-
         const removerInfo = await db.pool.query(
           `SELECT first_name, last_name, username FROM users WHERE id = $1`,
           [userId],
@@ -2847,6 +3096,31 @@ const removeTeamMember = async (req, res) => {
         await emitInsertedMessage(req, teamChatMessageResult.rows[0]);
       }
 
+      for (const role of reopenedRoles) {
+        const roleMessageResult = await db.pool.query(
+          `INSERT INTO messages (sender_id, team_id, content, sent_at)
+           VALUES ($1, $2, $3, NOW())
+           RETURNING id, sender_id, team_id, content, sent_at`,
+          [
+            memberId,
+            teamId,
+            buildRoleReopenedLeaveMessage({
+              teamId,
+              teamName: teamName ?? "the team",
+              roleId: role.id,
+              roleName: role.role_name,
+              memberId,
+              memberName,
+            }),
+          ],
+        );
+        roleEvents.push({
+          roleId: role.id,
+          roleName: role.role_name,
+          messageRow: roleMessageResult.rows[0],
+        });
+      }
+
       // Cleanup archived team if empty
       try {
         await checkAndCleanupArchivedTeam(parseInt(teamId));
@@ -2877,11 +3151,30 @@ const removeTeamMember = async (req, res) => {
         io.to(`user:${memberId}`).emit("notification:updated");
       }
 
+      try {
+        await notifyRemainingMembersOfReopenedRoles({
+          req,
+          teamId,
+          teamName,
+          memberId,
+          memberName,
+          roleEvents,
+        });
+      } catch (roleNotificationError) {
+        console.error("Error creating role reopened notifications:", roleNotificationError);
+      }
+
       return res.status(200).json({
         success: true,
         message: isSelfRemoval
           ? "Successfully left the archived team"
           : "Member removed successfully",
+        data: {
+          reopenedRoles: roleEvents.map((event) => ({
+            id: event.roleId,
+            role_name: event.roleName,
+          })),
+        },
       });
     }
 
@@ -2960,6 +3253,7 @@ const removeTeamMember = async (req, res) => {
     let memberName = "A member";
     let removerName = "Someone";
     let teamChatMessageRow = null;
+    let roleEvents = [];
 
     try {
       await client.query("BEGIN");
@@ -2997,6 +3291,8 @@ const removeTeamMember = async (req, res) => {
         [teamId, memberId],
       );
 
+      const reopenedRoles = await reopenRolesFilledByMember(client, teamId, memberId);
+
       // Insert ONE team-chat system message
       let teamChatMessage;
       let senderForTeamChat;
@@ -3019,6 +3315,32 @@ const removeTeamMember = async (req, res) => {
       );
       teamChatMessageRow = teamChatMessageResult.rows[0];
 
+      for (const role of reopenedRoles) {
+        const roleMessageResult = await client.query(
+          `INSERT INTO messages (sender_id, team_id, content, sent_at)
+           VALUES ($1, $2, $3, NOW())
+           RETURNING id, sender_id, team_id, content, sent_at`,
+          [
+            memberId,
+            teamId,
+            buildRoleReopenedLeaveMessage({
+              teamId,
+              teamName,
+              roleId: role.id,
+              roleName: role.role_name,
+              memberId,
+              memberName,
+            }),
+          ],
+        );
+
+        roleEvents.push({
+          roleId: role.id,
+          roleName: role.role_name,
+          messageRow: roleMessageResult.rows[0],
+        });
+      }
+
       await client.query("COMMIT");
     } catch (dbError) {
       await client.query("ROLLBACK");
@@ -3030,6 +3352,19 @@ const removeTeamMember = async (req, res) => {
     // === After commit: notifications + DM ===
     const io = req.app.get("io");
     await emitInsertedMessage(req, teamChatMessageRow);
+
+    try {
+      await notifyRemainingMembersOfReopenedRoles({
+        req,
+        teamId,
+        teamName,
+        memberId,
+        memberName,
+        roleEvents,
+      });
+    } catch (roleNotificationError) {
+      console.error("Error creating role reopened notifications:", roleNotificationError);
+    }
 
     if (isSelfRemoval) {
       try {
@@ -3113,6 +3448,12 @@ const removeTeamMember = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Member removed successfully",
+      data: {
+        reopenedRoles: roleEvents.map((event) => ({
+          id: event.roleId,
+          role_name: event.roleName,
+        })),
+      },
     });
   } catch (error) {
     console.error("Remove team member error:", error);

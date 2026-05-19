@@ -22,6 +22,9 @@ const getNavigationUrl = (notification) => {
       // Invitee sees their invitation card highlighted
       return `/teams/my-teams?tab=invitations&highlight=${reference_id}`;
 
+    case "role_application_deferred_invite":
+      return `/teams/my-teams?openInvitation=${reference_id}`;
+
     case "application_received":
       // Team admin sees applications modal with applicant highlighted
       return `/teams/my-teams?team=${team_id}&openApplications=true&highlight=${actor_id}&highlightApplication=${reference_id}`;
