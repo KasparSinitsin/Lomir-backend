@@ -1181,6 +1181,31 @@ const updateVacantRoleStatus = async (req, res) => {
         ? filled_by
         : null;
 
+    if (status === "filled" && normalizedFilledBy) {
+      const existingFilledRole = await db.pool.query(
+        `SELECT id, role_name
+         FROM team_vacant_roles
+         WHERE team_id = $1
+           AND filled_by = $2
+           AND status = 'filled'
+           AND id <> $3
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+        [teamId, normalizedFilledBy, roleId],
+      );
+
+      if (existingFilledRole.rows.length > 0) {
+        return res.status(409).json({
+          success: false,
+          message: `This member is already filling ${existingFilledRole.rows[0].role_name} in this team. A member can only fill one role at a time.`,
+          data: {
+            currentRoleId: existingFilledRole.rows[0].id,
+            currentRoleName: existingFilledRole.rows[0].role_name,
+          },
+        });
+      }
+    }
+
     const result = await db.pool.query(
       `UPDATE team_vacant_roles
        SET status = $1,
