@@ -1851,6 +1851,9 @@ const getTeamApplications = async (req, res) => {
         bio: row.bio,
         avatar_url: row.avatar_url,
         postal_code: row.postal_code,
+        city: row.city ?? null,
+        country: row.country ?? null,
+        state: row.state ?? null,
         is_synthetic: row.applicant_is_synthetic === true,
       },
     }));
