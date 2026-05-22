@@ -6,6 +6,7 @@ const {
   hasLocationChanged,
 } = require("../utils/geocodingUtil");
 const { deleteImageKitFile } = require("../utils/imagekitUtils");
+const { ensureBadgeVisibilityColumns } = require("../utils/badgeVisibilityUtils");
 
 const buildUserDisplayName = (user) => {
   const fullName = [user.first_name, user.last_name].filter(Boolean).join(" ");
@@ -59,15 +60,6 @@ const insertNotificationRecord = async (
       teamId,
       actorId,
     ],
-  );
-};
-
-const ensureBadgeVisibilityColumns = async () => {
-  await pool.query(
-    `ALTER TABLE users
-     ADD COLUMN IF NOT EXISTS hide_badges BOOLEAN DEFAULT FALSE,
-     ADD COLUMN IF NOT EXISTS hidden_badge_ids INTEGER[] DEFAULT '{}'::INTEGER[],
-     ADD COLUMN IF NOT EXISTS hidden_award_ids INTEGER[] DEFAULT '{}'::INTEGER[]`,
   );
 };
 
