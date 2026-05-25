@@ -645,8 +645,12 @@ const getUserTeams = async (req, res) => {
              t.is_remote,
              COALESCE(COUNT(DISTINCT tm.user_id), 0) AS current_members_count,
              (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count,
-             (SELECT COUNT(*) FROM team_applications ta WHERE ta.team_id = t.id AND ta.status = 'pending') AS pending_applications_count,
-             (SELECT COUNT(*) FROM team_invitations ti WHERE ti.team_id = t.id AND ti.status = 'pending') AS pending_sent_invitations_count,
+             (SELECT COUNT(*)::int FROM team_applications ta WHERE ta.team_id = t.id AND ta.status = 'pending') AS pending_applications_count,
+             (SELECT COUNT(*)::int FROM team_invitations ti WHERE ti.team_id = t.id AND ti.status = 'pending') AS pending_sent_invitations_count,
+             GREATEST(
+               (SELECT MAX(ta.created_at) FROM team_applications ta WHERE ta.team_id = t.id AND ta.status = 'pending'),
+               (SELECT MAX(ti.created_at) FROM team_invitations ti WHERE ti.team_id = t.id AND ti.status = 'pending')
+             ) AS latest_request_timestamp,
              tmr.role as user_role,
              COALESCE(
                json_agg(
@@ -3980,6 +3984,105 @@ const getTeamMemberBadges = async (req, res) => {
 };
 
 /**
+ * @description Bulk version of getTeamMemberBadges for multiple teams in one
+ *   query. Returns the same per-team aggregated rows, grouped by team_id.
+ * @route GET /api/teams/member-badges?teamIds=1,2,3
+ * @access Public
+ *
+ * Used by MyTeams to avoid the N+1 of calling /api/teams/:id/member-badges
+ * once per card.
+ */
+const getMemberBadgesForTeams = async (req, res) => {
+  try {
+    const rawIds = String(req.query.teamIds || "").split(",");
+    const teamIds = rawIds
+      .map((id) => parseInt(id, 10))
+      .filter((id) => Number.isFinite(id) && id > 0);
+
+    if (teamIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: {},
+        meta: { totalCreditsByTeam: {} },
+      });
+    }
+
+    const result = await db.pool.query(
+      `
+      WITH badge_totals AS (
+        SELECT
+          tm.team_id,
+          b.id                          AS badge_id,
+          b.name,
+          b.description,
+          b.category,
+          b.color,
+          b.image_url,
+          b.cat_image_url,
+          SUM(ba.credits)::int                       AS total_credits,
+          COUNT(ba.id)::int                          AS award_count,
+          COUNT(DISTINCT ba.awarded_by_user_id)::int AS awarder_count,
+          COUNT(DISTINCT ba.awarded_to_user_id)::int AS awardee_count
+        FROM badge_awards ba
+        JOIN badges b         ON ba.badge_id = b.id
+        JOIN team_members tm  ON ba.awarded_to_user_id = tm.user_id
+                             AND tm.team_id = ANY($1)
+        GROUP BY tm.team_id, b.id, b.name, b.description, b.category, b.color,
+                 b.image_url, b.cat_image_url
+      ),
+      category_totals AS (
+        SELECT
+          team_id,
+          category,
+          SUM(total_credits)::int  AS category_total_credits,
+          SUM(award_count)::int    AS category_award_count,
+          SUM(awarder_count)::int  AS category_awarder_count
+        FROM badge_totals
+        GROUP BY team_id, category
+      )
+      SELECT
+        bt.*,
+        ct.category_total_credits,
+        ct.category_award_count,
+        ct.category_awarder_count
+      FROM badge_totals bt
+      JOIN category_totals ct
+        ON bt.category = ct.category AND bt.team_id = ct.team_id
+      ORDER BY bt.team_id, bt.category, bt.total_credits DESC, bt.name
+      `,
+      [teamIds],
+    );
+
+    const dataByTeam = {};
+    const totalCreditsByTeam = {};
+    for (const teamId of teamIds) {
+      dataByTeam[teamId] = [];
+      totalCreditsByTeam[teamId] = 0;
+    }
+    for (const row of result.rows) {
+      const teamId = row.team_id;
+      if (!dataByTeam[teamId]) dataByTeam[teamId] = [];
+      dataByTeam[teamId].push(row);
+      totalCreditsByTeam[teamId] =
+        (totalCreditsByTeam[teamId] || 0) + Number(row.total_credits || 0);
+    }
+
+    res.status(200).json({
+      success: true,
+      data: dataByTeam,
+      meta: { totalCreditsByTeam },
+    });
+  } catch (error) {
+    console.error("Error fetching bulk team member badges:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching bulk team member badges",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
+/**
  * @description Get ALL badge awards for team members (not filtered by focus areas)
  * @route GET /api/teams/:id/member-badge-awards
  * @access Public
@@ -4057,6 +4160,7 @@ module.exports = {
   getTeamById,
   getTeamBadgeAwards,
   getTeamMemberBadges,
+  getMemberBadgesForTeams,
   getTeamMemberBadgeAwards,
   getUserTeams,
   getUserRoleInTeam,

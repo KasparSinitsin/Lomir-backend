@@ -10,6 +10,10 @@ router.post("/", auth.authenticateToken, teamController.createTeam);
 router.get("/", teamController.getAllTeams);
 router.get("/my-teams", auth.authenticateToken, teamController.getUserTeams);
 
+// Bulk variant of /:id/member-badges. Must be declared before any /:id route
+// so Express doesn't treat "member-badges" as a team id.
+router.get("/member-badges", teamController.getMemberBadgesForTeams);
+
 // DELETE /api/teams/:id/avatar - Delete team's avatar image
 router.delete(
   "/:id/avatar",
