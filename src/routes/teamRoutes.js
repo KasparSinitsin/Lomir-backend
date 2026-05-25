@@ -6,6 +6,7 @@ const invitationController = require("../controllers/invitationController");
 const vacantRoleController = require("../controllers/vacantRoleController");
 const teamBadgeController = require("../controllers/teamBadgeController");
 const teamReadController = require("../controllers/teamReadController");
+const teamApplicationsController = require("../controllers/teamApplicationsController");
 
 // Team routes
 router.post("/", auth.authenticateToken, teamController.createTeam);
@@ -114,19 +115,19 @@ router.post(
 router.get(
   "/applications/user",
   auth.authenticateToken,
-  teamController.getUserPendingApplications,
+  teamApplicationsController.getUserPendingApplications,
 );
 
 router.put(
   "/applications/:applicationId",
   auth.authenticateToken,
-  teamController.handleTeamApplication,
+  teamApplicationsController.handleTeamApplication,
 );
 
 router.delete(
   "/applications/:applicationId",
   auth.authenticateToken,
-  teamController.cancelApplication,
+  teamApplicationsController.cancelApplication,
 );
 
 router.put(
@@ -156,13 +157,13 @@ router.get(
 router.get(
   "/:id/applications",
   auth.authenticateToken,
-  teamController.getTeamApplications,
+  teamApplicationsController.getTeamApplications,
 );
 
 router.post(
   "/:id/apply",
   auth.authenticateToken,
-  teamController.applyToJoinTeam,
+  teamApplicationsController.applyToJoinTeam,
 );
 
 router.get("/:id/badge-awards", teamBadgeController.getTeamBadgeAwards);
