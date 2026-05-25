@@ -622,25 +622,45 @@ const getUserTeams = async (req, res) => {
     const totalTeams = parseInt(countResult.rows[0].total);
 
     // === DATA QUERY - Get paginated teams ===
+    // Includes tags + location columns so TeamCard can render in list/card
+    // views without re-fetching the team detail per card.
     const teamsResult = await db.pool.query(
       `
-      SELECT t.id, 
-             t.name, 
-             t.description, 
-             t.teamavatar_url, 
-             t.max_members, 
-             t.is_public, 
+      SELECT t.id,
+             t.name,
+             t.description,
+             t.teamavatar_url,
+             t.max_members,
+             t.is_public,
              t.is_synthetic,
-             t.owner_id, 
-             t.created_at, 
-             t.updated_at, 
+             t.owner_id,
+             t.created_at,
+             t.updated_at,
              t.postal_code,
+             t.city,
+             t.state,
+             t.country,
+             t.latitude,
+             t.longitude,
+             t.is_remote,
              COALESCE(COUNT(DISTINCT tm.user_id), 0) AS current_members_count,
              (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count,
-             tmr.role as user_role
+             tmr.role as user_role,
+             COALESCE(
+               json_agg(
+                 DISTINCT jsonb_build_object(
+                   'id', tag.id,
+                   'name', tag.name,
+                   'category', tag.category
+                 )
+               ) FILTER (WHERE tag.id IS NOT NULL),
+               '[]'::json
+             ) AS tags
       FROM teams t
       JOIN team_members tmr ON t.id = tmr.team_id AND tmr.user_id = $1
       LEFT JOIN team_members tm ON t.id = tm.team_id
+      LEFT JOIN team_tags tt ON t.id = tt.team_id
+      LEFT JOIN tags tag ON tt.tag_id = tag.id
       WHERE t.archived_at IS NULL
       GROUP BY t.id, tmr.role
       ORDER BY t.created_at DESC
