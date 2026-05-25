@@ -7,6 +7,7 @@ const vacantRoleController = require("../controllers/vacantRoleController");
 const teamBadgeController = require("../controllers/teamBadgeController");
 const teamReadController = require("../controllers/teamReadController");
 const teamApplicationsController = require("../controllers/teamApplicationsController");
+const teamMembersController = require("../controllers/teamMembersController");
 
 // Team routes
 router.post("/", auth.authenticateToken, teamController.createTeam);
@@ -133,19 +134,19 @@ router.delete(
 router.put(
   "/:teamId/members/:memberId/role",
   auth.authenticateToken,
-  teamController.updateMemberRole,
+  teamMembersController.updateMemberRole,
 );
 
 router.post(
   "/:id/members",
   auth.authenticateToken,
-  teamController.addTeamMember,
+  teamMembersController.addTeamMember,
 );
 
 router.delete(
   "/:id/members/:userId",
   auth.authenticateToken,
-  teamController.removeTeamMember,
+  teamMembersController.removeTeamMember,
 );
 
 router.get(
