@@ -4,15 +4,17 @@ const teamController = require("../controllers/teamController");
 const auth = require("../middlewares/auth");
 const invitationController = require("../controllers/invitationController");
 const vacantRoleController = require("../controllers/vacantRoleController");
+const teamBadgeController = require("../controllers/teamBadgeController");
+const teamReadController = require("../controllers/teamReadController");
 
 // Team routes
 router.post("/", auth.authenticateToken, teamController.createTeam);
-router.get("/", teamController.getAllTeams);
-router.get("/my-teams", auth.authenticateToken, teamController.getUserTeams);
+router.get("/", teamReadController.getAllTeams);
+router.get("/my-teams", auth.authenticateToken, teamReadController.getUserTeams);
 
 // Bulk variant of /:id/member-badges. Must be declared before any /:id route
 // so Express doesn't treat "member-badges" as a team id.
-router.get("/member-badges", teamController.getMemberBadgesForTeams);
+router.get("/member-badges", teamBadgeController.getMemberBadgesForTeams);
 
 // DELETE /api/teams/:id/avatar - Delete team's avatar image
 router.delete(
@@ -148,7 +150,7 @@ router.delete(
 router.get(
   "/:id/members/:userId/role",
   auth.authenticateToken,
-  teamController.getUserRoleInTeam,
+  teamReadController.getUserRoleInTeam,
 );
 
 router.get(
@@ -163,10 +165,13 @@ router.post(
   teamController.applyToJoinTeam,
 );
 
-router.get("/:id/badge-awards", teamController.getTeamBadgeAwards);
-router.get("/:id/member-badges", teamController.getTeamMemberBadges);
-router.get("/:id/member-badge-awards", teamController.getTeamMemberBadgeAwards);
-router.get("/:id", teamController.getTeamById);
+router.get("/:id/badge-awards", teamBadgeController.getTeamBadgeAwards);
+router.get("/:id/member-badges", teamBadgeController.getTeamMemberBadges);
+router.get(
+  "/:id/member-badge-awards",
+  teamBadgeController.getTeamMemberBadgeAwards,
+);
+router.get("/:id", teamReadController.getTeamById);
 router.put("/:id", auth.authenticateToken, teamController.updateTeam);
 router.delete("/:id", auth.authenticateToken, teamController.deleteTeam);
 
