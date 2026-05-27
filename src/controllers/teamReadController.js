@@ -80,9 +80,9 @@ const getTeamById = async (req, res) => {
     // Get team members with their details
     const membersResult = await db.pool.query(
       `
-  SELECT tm.user_id, tm.role, tm.joined_at, 
-         u.username, u.email, u.avatar_url, 
-         u.first_name, u.last_name, u.is_public,
+  SELECT tm.user_id, tm.role, tm.joined_at,
+         u.username, u.email, u.avatar_url,
+         u.first_name, u.last_name, u.is_public, u.is_synthetic,
          u.postal_code, u.city, u.country, u.state
   FROM team_members tm
   JOIN users u ON tm.user_id = u.id
