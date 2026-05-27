@@ -49,6 +49,7 @@ const getUserPendingApplications = async (req, res) => {
     owner.first_name as owner_first_name,
     owner.last_name as owner_last_name,
     owner.avatar_url as owner_avatar_url,
+    owner.is_synthetic as owner_is_synthetic,
     u.latitude AS applicant_latitude, u.longitude AS applicant_longitude,
     EXISTS (
       SELECT 1 FROM team_members
@@ -259,6 +260,7 @@ const getUserPendingApplications = async (req, res) => {
         first_name: row.owner_first_name,
         last_name: row.owner_last_name,
         avatar_url: row.owner_avatar_url,
+        is_synthetic: row.owner_is_synthetic === true,
       },
     }));
 
