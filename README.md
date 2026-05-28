@@ -166,13 +166,17 @@ Lomir-backend/
 │   ├── controllers/
 │   │   ├── authController.js
 │   │   ├── userController.js
-│   │   ├── teamController.js
+│   │   ├── teamController.js          # Team create/update/delete + ownership transfer
+│   │   ├── teamReadController.js      # Team reads (getTeamById, getMyTeams, lite list)
+│   │   ├── teamMembersController.js   # Team member add/remove/role-change
+│   │   ├── teamApplicationsController.js # Team join applications + decisions
+│   │   ├── teamBadgeController.js     # Team badge awards (member badges, team badge awards)
+│   │   ├── invitationController.js
+│   │   ├── vacantRoleController.js
 │   │   ├── searchController.js
 │   │   ├── badgeController.js
 │   │   ├── messageController.js
-│   │   ├── invitationController.js
 │   │   ├── notificationController.js
-│   │   ├── vacantRoleController.js
 │   │   └── matchingController.js
 │   ├── routes/
 │   │   ├── index.js            # Central route registry
@@ -237,7 +241,7 @@ All routes are prefixed with `/api`.
 | `/api/auth` | Register, login, email verification, password reset |
 | `/api/users` | User CRUD, tags, badges, avatar, account deletion with preview |
 | `/api/teams` | Team CRUD, members, applications, invitations, badge awards; `DELETE /invitations/:id/role` cancels only the role portion of a pending invitation |
-| `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management |
+| `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management. Supports `?ids=1,2,3` for bulk filtering (bypasses the default status filter so polling can detect roles that transitioned to filled/closed) |
 | `/api/search/global` | Keyword/boolean search across teams, users, and roles with tag/badge/location/role filtering |
 | `/api/search/all` | Initial search-page data without a required keyword, using the same filtering/sorting core |
 | `/api/matching` | Role ↔ user matching scores and candidate lists |
