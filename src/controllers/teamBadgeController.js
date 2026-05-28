@@ -32,12 +32,14 @@ const getTeamBadgeAwards = async (req, res) => {
         awarder.first_name AS awarded_by_first_name,
         awarder.last_name AS awarded_by_last_name,
         awarder.avatar_url AS awarded_by_avatar_url,
+        awarder.is_synthetic AS awarded_by_is_synthetic,
         -- Extra: who RECEIVED the badge (needed for team context)
         ba.awarded_to_user_id,
         recipient.username AS awarded_to_username,
         recipient.first_name AS awarded_to_first_name,
         recipient.last_name AS awarded_to_last_name,
-        recipient.avatar_url AS awarded_to_avatar_url
+        recipient.avatar_url AS awarded_to_avatar_url,
+        recipient.is_synthetic AS awarded_to_is_synthetic
       FROM badge_awards ba
       JOIN badges b ON ba.badge_id = b.id
       JOIN team_members tm ON ba.awarded_to_user_id = tm.user_id AND tm.team_id = $1
@@ -255,11 +257,13 @@ const getTeamMemberBadgeAwards = async (req, res) => {
         awarder.first_name AS awarded_by_first_name,
         awarder.last_name AS awarded_by_last_name,
         awarder.avatar_url AS awarded_by_avatar_url,
+        awarder.is_synthetic AS awarded_by_is_synthetic,
         ba.awarded_to_user_id,
         recipient.username AS awarded_to_username,
         recipient.first_name AS awarded_to_first_name,
         recipient.last_name AS awarded_to_last_name,
-        recipient.avatar_url AS awarded_to_avatar_url
+        recipient.avatar_url AS awarded_to_avatar_url,
+        recipient.is_synthetic AS awarded_to_is_synthetic
       FROM badge_awards ba
       JOIN badges b ON ba.badge_id = b.id
       JOIN team_members tm ON ba.awarded_to_user_id = tm.user_id AND tm.team_id = $1
