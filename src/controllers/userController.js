@@ -1789,7 +1789,8 @@ const getUserBadges = async (req, res) => {
         awarder.username AS awarded_by_username,
         awarder.first_name AS awarded_by_first_name,
         awarder.last_name AS awarded_by_last_name,
-        awarder.avatar_url AS awarded_by_avatar_url
+        awarder.avatar_url AS awarded_by_avatar_url,
+        awarder.is_synthetic AS awarded_by_is_synthetic
 
       FROM badge_awards ba
       JOIN badges b ON ba.badge_id = b.id
