@@ -350,20 +350,44 @@ const checkTeamAuth = async (teamId, userId) => {
 // ============================================================
 // GET /api/teams/:teamId/vacant-roles
 // List all vacant roles for a team (public)
+// Supports ?status=open|filled|closed|all (default "open")
+// and ?ids=1,2,3 to bulk-fetch specific roles regardless of status
+// (used by the request-modal poll to refresh role state in one call).
 // ============================================================
 const getVacantRoles = async (req, res) => {
   try {
     const { teamId } = req.params;
     const statusFilter = req.query.status || "open"; // default: only open roles
+    const idsParam = req.query.ids;
 
-    // Fetch roles
-    const rolesResult = await db.pool.query(
-      `${VACANT_ROLE_SELECT}
-       WHERE vr.team_id = $1
-         AND ($2 = 'all' OR vr.status = $2)
-       ORDER BY vr.created_at DESC`,
-      [teamId, statusFilter],
-    );
+    const filterIds = idsParam
+      ? String(idsParam)
+          .split(",")
+          .map((s) => Number(s.trim()))
+          .filter(Number.isFinite)
+      : null;
+
+    if (filterIds && filterIds.length === 0) {
+      return res.status(200).json({ success: true, data: [] });
+    }
+
+    // Fetch roles — when ids is provided, filter by them and ignore status
+    // so polling can detect roles that have transitioned to filled/closed
+    const rolesResult = filterIds
+      ? await db.pool.query(
+          `${VACANT_ROLE_SELECT}
+           WHERE vr.team_id = $1
+             AND vr.id = ANY($2::int[])
+           ORDER BY vr.created_at DESC`,
+          [teamId, filterIds],
+        )
+      : await db.pool.query(
+          `${VACANT_ROLE_SELECT}
+           WHERE vr.team_id = $1
+             AND ($2 = 'all' OR vr.status = $2)
+           ORDER BY vr.created_at DESC`,
+          [teamId, statusFilter],
+        );
 
     const roles = rolesResult.rows;
 
