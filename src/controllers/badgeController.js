@@ -1,4 +1,5 @@
 const { pool } = require("../config/database");
+const { ensureBadgeVisibilityColumns } = require("../utils/badgeVisibilityUtils");
 
 /**
  * @description Get all badges grouped by category
@@ -56,15 +57,6 @@ const refreshBadgeViews = async (clientOrPool) => {
       }
     }
   }
-};
-
-const ensureBadgeVisibilityColumns = async (clientOrPool = pool) => {
-  await clientOrPool.query(
-    `ALTER TABLE users
-     ADD COLUMN IF NOT EXISTS hide_badges BOOLEAN DEFAULT FALSE,
-     ADD COLUMN IF NOT EXISTS hidden_badge_ids INTEGER[] DEFAULT '{}'::INTEGER[],
-     ADD COLUMN IF NOT EXISTS hidden_award_ids INTEGER[] DEFAULT '{}'::INTEGER[]`,
-  );
 };
 
 // ============================================================================
@@ -411,11 +403,16 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
     }
 
     // ── Non-critical: Create notification (SAVEPOINT) ──
+    const badgeName = badgeCheck.rows[0].name;
+    const awarderRow = (await client.query(
+      "SELECT first_name, last_name, username FROM users WHERE id = $1",
+      [req.user.id],
+    )).rows[0];
+    const awarderName = [awarderRow?.first_name, awarderRow?.last_name].filter(Boolean).join(" ") || awarderRow?.username || "Someone";
+
+    let notificationCreated = false;
     try {
       await client.query("SAVEPOINT notification_sp");
-
-      const badgeName = badgeCheck.rows[0].name;
-      const awarderName = req.user.first_name || req.user.username || "Someone";
 
       await client.query(
         `INSERT INTO notifications (user_id, type, title, message, reference_type, reference_id, team_id, actor_id)
@@ -430,6 +427,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
         ],
       );
       await client.query("RELEASE SAVEPOINT notification_sp");
+      notificationCreated = true;
       if (process.env.NODE_ENV !== "production") {
         console.log("🏅 Notification created");
       }
@@ -454,6 +452,26 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
     refreshBadgeViews(pool).catch((err) =>
       console.warn("⚠️ View refresh failed:", err.message),
     );
+
+    // Notify recipient instantly via socket
+    try {
+      const io = req.app.get("io");
+      if (io) {
+        if (notificationCreated) {
+          io.to(`user:${awarded_to_user_id}`).emit("notification:new", {
+            type: "badge_awarded",
+          });
+        }
+        io.to(`user:${awarded_to_user_id}`).emit("badge:awarded", {
+          badgeName,
+          badgeCategory: badgeCheck.rows[0].category || null,
+          awarderName,
+          badgeId: badge_id,
+        });
+      }
+    } catch (socketError) {
+      console.warn("⚠️ Socket emit failed (non-critical):", socketError.message);
+    }
 
     if (process.env.NODE_ENV !== "production") {
       console.log("🏅 ====== AWARD BADGE COMPLETE ======");
@@ -643,7 +661,8 @@ const getUserBadges = async (req, res) => {
         awarder.username AS awarded_by_username,
         awarder.first_name AS awarded_by_first_name,
         awarder.last_name AS awarded_by_last_name,
-        awarder.avatar_url AS awarded_by_avatar_url
+        awarder.avatar_url AS awarded_by_avatar_url,
+        awarder.is_synthetic AS awarded_by_is_synthetic
       FROM badge_awards ba
       JOIN badges b ON ba.badge_id = b.id
       LEFT JOIN users awarder ON ba.awarded_by_user_id = awarder.id

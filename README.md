@@ -31,10 +31,10 @@ Contact the project owner for a demo login, or register a new account with a val
 - **Teams** — Create, join, manage members, assign roles, and archive teams
 - **Vacant Roles** — Post open positions on teams with desired tags, badges, and location preferences
 - **Matching Engine** — Score users against roles (and vice versa) using weighted tag/badge/distance criteria
-- **Search** — Full-text search across teams, users, and roles with tag/badge/location filtering and "Best Match" sorting
-- **Chat** — Real-time direct and team group messaging via Socket.IO, including typing indicators, read receipts, message replies (reply-to with sender preview), and @mention notifications
+- **Search** — Global search across teams, users, and roles with boolean queries, tag/badge/location filtering, proximity sorting, and "Best Match" scoring
+- **Chat** — Real-time direct and team group messaging via Socket.IO, including typing indicators, read receipts, message replies (reply-to with sender preview), @mention notifications, and structured system messages for team events (member join/leave/removal, role changes, invitation responses, application decisions, role lifecycle, team deletion)
 - **Badge System** — 30 badges across 5 categories; award badges to teammates with reasons and context
-- **Notifications** — In-app notifications for invitations, applications, badge awards, messages, and @mentions; each type navigates to the relevant context
+- **Notifications** — In-app notifications for invitations, applications, badge awards, messages, @mentions, and role lifecycle events; each notification deep-links to the exact message that triggered it; stale notifications are cleaned up automatically on member removal, role deletion, and team deletion
 - **Account Deletion** — Full transactional account deletion with impact preview, automatic team ownership transfer, role reopening, and "Former Lomir User" handling for preserved references
 - **Geocoding** — Postal code lookup via Nominatim with built-in fallback mapping
 - **Security** — Rate limiting on auth endpoints, CORS allowlist, password policy enforcement, production log scrubbing
@@ -141,6 +141,16 @@ Verify it's running by visiting `http://localhost:5001` — you should see **"Lo
 | `npm run seed` | Seed the database with initial data |
 | `npm test` | Run tests (`node --test`) |
 
+### Test Notes
+
+For search work, run the focused search suite:
+
+```bash
+node --test test/searchController.test.js
+```
+
+That suite covers pagination, sorting, proximity handling, synthetic/demo-data filtering, match-score enrichment, and team/member exclusion behavior for the active search endpoints.
+
 ---
 
 ## Project Structure
@@ -156,13 +166,17 @@ Lomir-backend/
 │   ├── controllers/
 │   │   ├── authController.js
 │   │   ├── userController.js
-│   │   ├── teamController.js
+│   │   ├── teamController.js          # Team create/update/delete + ownership transfer
+│   │   ├── teamReadController.js      # Team reads (getTeamById, getMyTeams, lite list)
+│   │   ├── teamMembersController.js   # Team member add/remove/role-change
+│   │   ├── teamApplicationsController.js # Team join applications + decisions
+│   │   ├── teamBadgeController.js     # Team badge awards (member badges, team badge awards)
+│   │   ├── invitationController.js
+│   │   ├── vacantRoleController.js
 │   │   ├── searchController.js
 │   │   ├── badgeController.js
 │   │   ├── messageController.js
-│   │   ├── invitationController.js
 │   │   ├── notificationController.js
-│   │   ├── vacantRoleController.js
 │   │   └── matchingController.js
 │   ├── routes/
 │   │   ├── index.js            # Central route registry
@@ -184,11 +198,15 @@ Lomir-backend/
 │   ├── services/
 │   │   └── emailService.js     # Resend transactional email
 │   ├── utils/
+│   │   ├── booleanSearchParser.js
 │   │   ├── imagekitUtils.js
 │   │   ├── fileValidation.js
 │   │   ├── jwtUtils.js
 │   │   ├── matchingScorer.js   # Shared scoring utilities
+│   │   ├── searchQueryBuilder.js # Shared search distance/filter/sort SQL builders
+│   │   ├── socketMessageEmitter.js
 │   │   ├── turnstileVerify.js  # Cloudflare Turnstile CAPTCHA verification
+│   │   ├── vacantRoleSerializer.js
 │   │   └── geocodingUtil.js
 │   ├── jobs/
 │   │   └── fileCleanupScheduler.js
@@ -197,11 +215,16 @@ Lomir-backend/
 ├── scripts/                    # SQL seed, migration, and utility scripts
 │   └── migrate-cloudinary-to-imagekit.js
 ├── test/                       # Controller unit tests
+│   ├── invitationController.test.js
+│   ├── searchController.test.js
+│   ├── teamController.applyToJoinTeam.test.js
 │   ├── userController.deleteUser.test.js
 │   ├── userController.deletionPreview.test.js
-│   └── teamController.applications.test.js
+│   ├── teamController.applications.test.js
+│   └── vacantRoleController.test.js
 ├── docs/
-│   └── USER_DELETION_SPEC.md   # Full account deletion specification
+│   ├── USER_DELETION_SPEC.md   # Full account deletion specification
+│   └── team-service-boundaries.md # Proposed service extraction boundaries
 ├── .env                        # Environment variables (not committed)
 ├── package.json
 └── README.md
@@ -217,16 +240,37 @@ All routes are prefixed with `/api`.
 |---|---|
 | `/api/auth` | Register, login, email verification, password reset |
 | `/api/users` | User CRUD, tags, badges, avatar, account deletion with preview |
-| `/api/teams` | Team CRUD, members, applications, invitations, badge awards |
-| `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management |
-| `/api/search` | Global search with tag/badge/location/role filtering |
+| `/api/teams` | Team CRUD, members, applications, invitations, badge awards; `DELETE /invitations/:id/role` cancels only the role portion of a pending invitation |
+| `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management. Supports `?ids=1,2,3` for bulk filtering (bypasses the default status filter so polling can detect roles that transitioned to filled/closed) |
+| `/api/search/global` | Keyword/boolean search across teams, users, and roles with tag/badge/location/role filtering |
+| `/api/search/all` | Initial search-page data without a required keyword, using the same filtering/sorting core |
 | `/api/matching` | Role ↔ user matching scores and candidate lists |
 | `/api/badges` | Badge catalog and awarding |
 | `/api/messages` | Direct and team message history |
-| `/api/notifications` | User notifications |
+| `/api/notifications` | User notifications (includes `referenceType`, `typeTeamCounts` in unread count response) |
 | `/api/imagekit` | Auth params for client-side ImageKit uploads |
 | `/api/tags` | Tag catalog (structured by category) |
 | `/api/geocoding` | Postal code → city/country/coordinates lookup |
+
+---
+
+## Search
+
+The search API exposes two active routes:
+
+- `GET /api/search/global` — keyword or boolean search. Requires `query` with at least 2 characters.
+- `GET /api/search/all` — initial search-page load. Uses the same filters and sort options, but does not require a keyword.
+
+Both routes share the same internal query-building core in `src/controllers/searchController.js`. Common distance and proximity SQL helpers live in `src/utils/searchQueryBuilder.js`; boolean query parsing lives in `src/utils/booleanSearchParser.js`.
+
+Supported search controls include:
+
+- `searchType`: `all`, `teams`, `users`, or `roles`
+- `sortBy`: `name`, `recent`, `newest`, `capacity`, `proximity`, or `match`
+- `sortDir`: `asc`, `desc`, or `remote`
+- `tagIds`, `badgeIds`, `maxDistance`, `openRolesOnly`, `excludeOwnTeams`, `excludeTeamId`, `includeDemoData`
+
+The team search response intentionally returns `teamavatarUrl` from the SQL alias `teamavatar_url as "teamavatarUrl"` for API compatibility with the frontend.
 
 ---
 
@@ -239,14 +283,16 @@ The server uses Socket.IO for real-time features. Clients authenticate via JWT t
 | Event | Direction | Description |
 |---|---|---|
 | `message:new` | Client → Server | Send a direct or team message; accepts `replyToId` for threaded replies |
-| `message:received` | Server → Client | New message broadcast; includes `replyTo` object (id, content preview, sender) when replying |
+| `message:received` | Server → Client | New message broadcast; includes `replyTo` object (id, content preview, sender) when replying; also emitted for server-inserted system messages (role events, member changes, etc.) |
 | `message:read` | Client → Server | Mark messages as read |
 | `message:status` | Server → Client | Read receipt notification |
 | `typing:start` / `typing:stop` | Bidirectional | Typing indicators |
 | `users:online` | Server → Client | Updated list of online user IDs |
 | `team:member_left` | Server → Client | Member removal (e.g. account deletion) |
+| `team:member_kicked` | Server → Client | Emitted to the removed member to kick them from the team chat |
 | `conversation:deleted` | Server → Client | DM conversation removed |
-| `notification:new` | Server → Client | Ownership transfers, role reopenings, team dissolutions, and `message_mention` events for @mentions |
+| `notification:new` | Server → Client | New notification for the user — covers invitations, applications, member changes, role lifecycle events (`role_created`, `role_updated`, `role_deleted`, `role_closed`, `role_filled`, `role_reopened`), badge awards, `message_mention`, team deletion, and ownership transfers |
+| `notification:updated` | Server → Client | Tells the client to re-fetch notifications — emitted on invitation cancellation, role invitation cancellation, stale notification cleanup (e.g. after member removal or role deletion), and admin action acknowledgements |
 
 ---
 

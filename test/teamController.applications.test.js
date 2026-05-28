@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const db = require("../src/config/database");
-const teamController = require("../src/controllers/teamController");
+const teamController = require("../src/controllers/teamApplicationsController");
 
 const originalQuery = db.pool.query;
 

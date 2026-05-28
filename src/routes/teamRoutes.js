@@ -4,11 +4,19 @@ const teamController = require("../controllers/teamController");
 const auth = require("../middlewares/auth");
 const invitationController = require("../controllers/invitationController");
 const vacantRoleController = require("../controllers/vacantRoleController");
+const teamBadgeController = require("../controllers/teamBadgeController");
+const teamReadController = require("../controllers/teamReadController");
+const teamApplicationsController = require("../controllers/teamApplicationsController");
+const teamMembersController = require("../controllers/teamMembersController");
 
 // Team routes
 router.post("/", auth.authenticateToken, teamController.createTeam);
-router.get("/", teamController.getAllTeams);
-router.get("/my-teams", auth.authenticateToken, teamController.getUserTeams);
+router.get("/", teamReadController.getAllTeams);
+router.get("/my-teams", auth.authenticateToken, teamReadController.getUserTeams);
+
+// Bulk variant of /:id/member-badges. Must be declared before any /:id route
+// so Express doesn't treat "member-badges" as a team id.
+router.get("/member-badges", teamBadgeController.getMemberBadgesForTeams);
 
 // DELETE /api/teams/:id/avatar - Delete team's avatar image
 router.delete(
@@ -80,6 +88,12 @@ router.put(
 
 // Cancel an invitation (by team owner/admin)
 router.delete(
+  "/invitations/:invitationId/role",
+  auth.authenticateToken,
+  invitationController.cancelRoleInvitation,
+);
+
+router.delete(
   "/invitations/:invitationId",
   auth.authenticateToken,
   invitationController.cancelInvitation,
@@ -102,61 +116,64 @@ router.post(
 router.get(
   "/applications/user",
   auth.authenticateToken,
-  teamController.getUserPendingApplications,
+  teamApplicationsController.getUserPendingApplications,
 );
 
 router.put(
   "/applications/:applicationId",
   auth.authenticateToken,
-  teamController.handleTeamApplication,
+  teamApplicationsController.handleTeamApplication,
 );
 
 router.delete(
   "/applications/:applicationId",
   auth.authenticateToken,
-  teamController.cancelApplication,
+  teamApplicationsController.cancelApplication,
 );
 
 router.put(
   "/:teamId/members/:memberId/role",
   auth.authenticateToken,
-  teamController.updateMemberRole,
+  teamMembersController.updateMemberRole,
 );
 
 router.post(
   "/:id/members",
   auth.authenticateToken,
-  teamController.addTeamMember,
+  teamMembersController.addTeamMember,
 );
 
 router.delete(
   "/:id/members/:userId",
   auth.authenticateToken,
-  teamController.removeTeamMember,
+  teamMembersController.removeTeamMember,
 );
 
 router.get(
   "/:id/members/:userId/role",
   auth.authenticateToken,
-  teamController.getUserRoleInTeam,
+  teamReadController.getUserRoleInTeam,
 );
 
 router.get(
   "/:id/applications",
   auth.authenticateToken,
-  teamController.getTeamApplications,
+  teamApplicationsController.getTeamApplications,
 );
 
 router.post(
   "/:id/apply",
   auth.authenticateToken,
-  teamController.applyToJoinTeam,
+  teamApplicationsController.applyToJoinTeam,
 );
 
-router.get("/:id/badge-awards", teamController.getTeamBadgeAwards);
-router.get("/:id/member-badges", teamController.getTeamMemberBadges);
-router.get("/:id/member-badge-awards", teamController.getTeamMemberBadgeAwards);
-router.get("/:id", teamController.getTeamById);
+router.get("/:id/badge-awards", teamBadgeController.getTeamBadgeAwards);
+router.get("/:id/member-badges", teamBadgeController.getTeamMemberBadges);
+router.get(
+  "/:id/member-badge-awards",
+  teamBadgeController.getTeamMemberBadgeAwards,
+);
+router.get("/:id", teamReadController.getTeamById);
 router.put("/:id", auth.authenticateToken, teamController.updateTeam);
 router.delete("/:id", auth.authenticateToken, teamController.deleteTeam);
 

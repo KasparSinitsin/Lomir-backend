@@ -4,7 +4,17 @@ const db = require("../config/database");
 // HELPER: Generate navigation URL based on notification type
 // ============================================================================
 const getNavigationUrl = (notification) => {
-  const { type, team_id, reference_id, actor_id, title } = notification;
+  const { type, team_id, reference_type, reference_id, actor_id, title } = notification;
+  const messageHighlight =
+    reference_type === "message" && reference_id != null
+      ? `&highlightMessage=${reference_id}`
+      : "";
+  const eventHighlight =
+    type && team_id
+      ? `&highlightEvent=${encodeURIComponent(type)}${
+          reference_id != null ? `&highlightRef=${reference_id}` : ""
+        }${actor_id != null ? `&highlightActor=${actor_id}` : ""}`
+      : "";
 
   switch (type) {
     // === NAVIGATES TO MY TEAMS PAGE ===
@@ -12,55 +22,104 @@ const getNavigationUrl = (notification) => {
       // Invitee sees their invitation card highlighted
       return `/teams/my-teams?tab=invitations&highlight=${reference_id}`;
 
+    case "role_application_deferred_invite":
+      return `/teams/my-teams?openInvitation=${reference_id}`;
+
     case "application_received":
       // Team admin sees applications modal with applicant highlighted
-      return `/teams/my-teams?team=${team_id}&openApplications=true&highlight=${actor_id}`;
+      return `/teams/my-teams?team=${team_id}&openApplications=true&highlight=${actor_id}&highlightApplication=${reference_id}`;
 
     // === NAVIGATES TO DM CHAT ===
     case "application_approved":
       // Applicant sees DM with approver + green approval message
-      return `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
+      return messageHighlight
+        ? `/chat/${actor_id}?type=direct${messageHighlight}`
+        : `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
 
     case "application_rejected":
       // Applicant sees DM with rejector + violet rejection message
-      return `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
+      return messageHighlight
+        ? `/chat/${actor_id}?type=direct${messageHighlight}`
+        : `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
 
     case "invitation_declined":
       // Inviter sees DM with decliner + violet decline message
-      return `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
+      return messageHighlight
+        ? `/chat/${actor_id}?type=direct${messageHighlight}`
+        : `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
 
     case "invitation_cancelled":
       // Navigate to DM with the person who cancelled
-      return `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
+      return messageHighlight
+        ? `/chat/${actor_id}?type=direct${messageHighlight}`
+        : `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
 
     // === NAVIGATES TO TEAM CHAT ===
+    case "invitation_accepted":
+      return messageHighlight && team_id
+        ? `/chat/${team_id}?type=team${messageHighlight}`
+        : `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
+
     case "member_joined":
       // Team members see team chat with join message highlighted
-      return `/chat/${team_id}?type=team&highlightUser=${actor_id}`;
+      return messageHighlight
+        ? `/chat/${team_id}?type=team${messageHighlight}`
+        : `/chat/${team_id}?type=team&highlightUser=${actor_id}`;
 
     case "member_left":
       // Team members see team chat with leave message highlighted
-      return `/chat/${team_id}?type=team&highlightUser=${actor_id}`;
+      return messageHighlight
+        ? `/chat/${team_id}?type=team${messageHighlight}`
+        : `/chat/${team_id}?type=team&highlightUser=${actor_id}`;
+
+    case "role_created":
+    case "role_updated":
+    case "role_deleted":
+    case "role_closed":
+    case "role_filled":
+    case "role_reopened":
+    case "role_reopened_admin":
+    case "role_assigned":
+      return `/chat/${team_id}?type=team${messageHighlight || eventHighlight}`;
 
     case "application_cancelled":
+    case "role_application_cancelled":
       // Navigate to DM with the applicant who cancelled
-      return `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
+      return messageHighlight
+        ? `/chat/${actor_id}?type=direct${messageHighlight}`
+        : `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
 
     case "member_removed":
       // Navigate to DM with the admin who removed you
-      return `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
+      return messageHighlight
+        ? `/chat/${actor_id}?type=direct${messageHighlight}`
+        : `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
 
     case "role_changed":
       // Navigate to DM with the admin who changed the role
-      return `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
+      return messageHighlight
+        ? `/chat/${actor_id}?type=direct${messageHighlight}`
+        : `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
 
     case "ownership_transferred":
       // Navigate to DM with the previous owner who transferred
-      return `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
+      return messageHighlight
+        ? `/chat/${actor_id}?type=direct${messageHighlight}`
+        : `/chat/${actor_id}?type=direct&highlightUser=${actor_id}`;
 
     case "team_deleted":
       // Navigate to the archived team chat
-      return `/chat/${team_id}?type=team&highlightUser=${actor_id}`;
+      return messageHighlight
+        ? `/chat/${team_id}?type=team${messageHighlight}`
+        : `/chat/${team_id}?type=team&highlightUser=${actor_id}`;
+
+    case "role_status_changed_applicant":
+      // Applicant sees their application modal with role highlighted
+      return `/teams/my-teams?openApplication=${reference_id}`;
+
+    case "role_status_changed_invitee":
+      // Invitee sees their invitation modal with role highlighted
+      return `/teams/my-teams?openInvitation=${reference_id}`;
 
     case "badge_awarded": {
       // Navigate to own profile, scroll to badges, highlight the awarded badge
@@ -212,11 +271,12 @@ const getUnreadCount = async (req, res) => {
          (
            SELECT json_build_object(
              'id', n2.id,
-             'type', n2.type,
-             'team_id', n2.team_id,
-             'reference_id', n2.reference_id,
-             'actor_id', n2.actor_id,
-             'title', n2.title
+            'type', n2.type,
+            'team_id', n2.team_id,
+            'reference_type', n2.reference_type,
+            'reference_id', n2.reference_id,
+            'actor_id', n2.actor_id,
+            'title', n2.title
            )
            FROM notifications n2
            WHERE n2.user_id = $1 AND n2.read_at IS NULL
@@ -242,6 +302,7 @@ const getUnreadCount = async (req, res) => {
         id: notification.id,
         type: notification.type,
         teamId: notification.team_id,
+        referenceType: notification.reference_type,
         referenceId: notification.reference_id,
         actorId: notification.actor_id,
         navigateTo: getNavigationUrl(notification),
@@ -249,7 +310,7 @@ const getUnreadCount = async (req, res) => {
     }
 
     const typeCountResult = await db.query(
-      `SELECT type, COUNT(*)::int AS count
+      `SELECT type, COUNT(*)::int AS count, COUNT(DISTINCT team_id)::int AS team_count
        FROM notifications
        WHERE user_id = $1 AND read_at IS NULL
        GROUP BY type`,
@@ -257,8 +318,10 @@ const getUnreadCount = async (req, res) => {
     );
 
     const typeCounts = {};
+    const typeTeamCounts = {};
     for (const row of typeCountResult.rows) {
       typeCounts[row.type] = row.count;
+      typeTeamCounts[row.type] = row.team_count;
     }
 
     res.status(200).json({
@@ -267,6 +330,7 @@ const getUnreadCount = async (req, res) => {
         count: unreadCount,
         firstUnread,
         typeCounts,
+        typeTeamCounts,
       },
     });
   } catch (error) {
@@ -327,6 +391,7 @@ const getNotifications = async (req, res) => {
       navigateTo: getNavigationUrl({
         type: notification.type,
         team_id: notification.teamId,
+        reference_type: notification.referenceType,
         reference_id: notification.referenceId,
         actor_id: notification.actorId,
         title: notification.title,

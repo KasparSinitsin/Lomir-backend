@@ -15,13 +15,23 @@ const server = http.createServer(app);
 // Set up Socket.IO with CORS
 const io = socketIo(server, {
   cors: {
-    origin: [
-      "http://localhost:5173",
-      "https://lomir-frontend.vercel.app",
-      process.env.CLIENT_URL,
-      process.env.FRONTEND_URL,
-      process.env.FRONTEND_ORIGIN,
-    ].filter(Boolean),
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      try {
+        const url = new URL(origin);
+        if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+          return callback(null, true);
+        }
+      } catch (_) {}
+      const allowed = [
+        "https://lomir-frontend.vercel.app",
+        process.env.CLIENT_URL,
+        process.env.FRONTEND_URL,
+        process.env.FRONTEND_ORIGIN,
+      ].filter(Boolean);
+      if (allowed.includes(origin)) return callback(null, true);
+      callback(new Error("Not allowed by CORS"));
+    },
     methods: ["GET", "POST"],
     credentials: true,
   },
