@@ -457,7 +457,7 @@ const authController = {
       if (!user) {
         return res.status(401).json({
           success: false,
-          message: "Invalid email or password",
+          message: "Invalid email",
         });
       }
 
@@ -484,7 +484,7 @@ const authController = {
       if (!isValidPassword) {
         return res.status(401).json({
           success: false,
-          message: "Invalid email or password",
+          message: "Invalid password",
         });
       }
 
