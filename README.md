@@ -194,22 +194,25 @@ Lomir-backend/
 │   │       └── tags.js
 │   ├── middlewares/
 │   │   ├── auth.js             # JWT authentication middleware
-│   │   └── rateLimiter.js      # Rate limiting for auth endpoints
+│   │   ├── rateLimiter.js      # Rate limiting for auth endpoints
+│   │   └── uploadMiddleware.js # Multer wrapper for file/image uploads
 │   ├── services/
 │   │   └── emailService.js     # Resend transactional email
 │   ├── utils/
 │   │   ├── booleanSearchParser.js
 │   │   ├── imagekitUtils.js
 │   │   ├── fileValidation.js
+│   │   ├── fileCleanup.js      # File expiry check + ImageKit deletion helpers (used by scheduler)
 │   │   ├── jwtUtils.js
 │   │   ├── matchingScorer.js   # Shared scoring utilities
 │   │   ├── searchQueryBuilder.js # Shared search distance/filter/sort SQL builders
 │   │   ├── socketMessageEmitter.js
 │   │   ├── turnstileVerify.js  # Cloudflare Turnstile CAPTCHA verification
 │   │   ├── vacantRoleSerializer.js
+│   │   ├── badgeVisibilityUtils.js # Helpers for badge award visibility (hidden/shown state)
 │   │   └── geocodingUtil.js
 │   ├── jobs/
-│   │   └── fileCleanupScheduler.js
+│   │   └── fileCleanupScheduler.js # node-cron job that calls fileCleanup utilities on a schedule
 │   └── database/
 │       └── migrations/
 ├── scripts/                    # SQL seed, migration, and utility scripts
@@ -223,8 +226,10 @@ Lomir-backend/
 │   ├── teamController.applications.test.js
 │   └── vacantRoleController.test.js
 ├── docs/
-│   ├── USER_DELETION_SPEC.md   # Full account deletion specification
-│   └── team-service-boundaries.md # Proposed service extraction boundaries
+│   ├── USER_DELETION_SPEC.md              # Full account deletion specification
+│   ├── RESTORE_EMAIL_VERIFICATION_GUIDE.md # Steps to re-enable email verification
+│   ├── team-service-boundaries.md         # Proposed service extraction boundaries
+│   └── postman/                           # Postman collection exports for API testing
 ├── .env                        # Environment variables (not committed)
 ├── package.json
 └── README.md
