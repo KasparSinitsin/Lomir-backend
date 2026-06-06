@@ -178,7 +178,7 @@ const emailService = {
   /**
    * Send contact form submission to Lomir inbox
    */
-  async sendContactFormEmail(name, email, topic, message) {
+  async sendContactFormEmail(name, email, topic, message, attachments) {
     const safeName = escapeHtml(name);
     const safeEmail = escapeHtml(email);
     const safeTopic = escapeHtml(topic || "General inquiry");
@@ -190,7 +190,7 @@ const emailService = {
         throw new Error("SMTP transport is not configured");
       }
 
-      const info = await smtpTransporter.sendMail({
+      const mailOptions = {
         from: SMTP_FROM,
         to: process.env.SMTP_USER,
         replyTo: {
@@ -232,7 +232,17 @@ const emailService = {
             </p>
           </div>
         `,
-      });
+      };
+
+      if (attachments?.length) {
+        mailOptions.attachments = attachments.map((file) => ({
+          filename: file.originalname,
+          content: file.buffer,
+          contentType: file.mimetype,
+        }));
+      }
+
+      const info = await smtpTransporter.sendMail(mailOptions);
 
       if (process.env.NODE_ENV !== "production") {
         console.log("Contact form email sent:", info?.messageId);

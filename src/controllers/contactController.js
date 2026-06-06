@@ -62,6 +62,7 @@ const contactController = {
           email,
           topic,
           message,
+          req.files,
         );
 
         if (!emailResult.success) {
