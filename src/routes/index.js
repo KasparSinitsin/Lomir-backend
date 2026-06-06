@@ -8,6 +8,7 @@ const messageRoutes = require('./messageRoutes');
 const notificationRoutes = require('./notificationRoutes');
 const matchingRoutes = require('./matchingRoutes'); 
 const imagekitRoutes = require("./imagekitRoutes");
+const contactRoutes = require("./contactRoutes");
 
 const tagRoutes = require("./api/tags");
 const geocodingRoutes = require("./geocodingRoutes");
@@ -23,6 +24,7 @@ router.use('/messages', messageRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/matching', matchingRoutes); 
 router.use("/imagekit", imagekitRoutes);
+router.use("/contact", contactRoutes);
 router.use('/tags', tagRoutes);
 router.use('/geocoding', geocodingRoutes);
 

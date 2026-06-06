@@ -232,7 +232,7 @@ const authController = {
       );
 
       if (!emailResult.success) {
-        console.error("Failed to send verification email:", emailResult.error);
+        console.error("Failed to send verification email");
         // Still return success - user was created, they can request a new email
       }
 
@@ -412,10 +412,7 @@ const authController = {
       );
 
       if (!emailResult.success) {
-        console.error(
-          "Failed to resend verification email:",
-          emailResult.error,
-        );
+        console.error("Failed to resend verification email");
         return res.status(500).json({
           success: false,
           message: "Failed to send verification email. Please try again later.",
@@ -616,10 +613,7 @@ const authController = {
       );
 
       if (!emailResult.success) {
-        console.error(
-          "Failed to send password reset email:",
-          emailResult.error,
-        );
+        console.error("Failed to send password reset email");
       }
 
       res.status(200).json({
