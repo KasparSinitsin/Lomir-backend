@@ -179,38 +179,39 @@ const authController = {
         );
       }
 
-      // ── INTERIM: skip email verification when flag is set ──
-      if (process.env.SKIP_EMAIL_VERIFICATION === "true") {
-        await db.query(`UPDATE users SET email_verified = TRUE WHERE id = $1`, [
-          user.id,
-        ]);
-
-        const token = generateToken(user);
-
-        return res.status(201).json({
-          success: true,
-          message: "Registration successful!",
-          data: {
-            token,
-            user: {
-              id: user.id,
-              username: user.username,
-              email: user.email,
-              first_name: user.first_name,
-              last_name: user.last_name,
-              bio: user.bio,
-              postal_code: user.postal_code,
-              city: user.city,
-              country: user.country,
-              avatar_url: user.avatar_url,
-              is_public: user.is_public,
-              is_synthetic: user.is_synthetic,
-              created_at: user.created_at,
-            },
-          },
-        });
-      }
-      // ── END INTERIM ──
+      // ── INTERIM BYPASS (disabled — email verification now active via Nodemailer/Gmail SMTP) ──
+      // Restore this block if email delivery becomes unavailable and registration needs to work without verification.
+      // if (process.env.SKIP_EMAIL_VERIFICATION === "true") {
+      //   await db.query(`UPDATE users SET email_verified = TRUE WHERE id = $1`, [
+      //     user.id,
+      //   ]);
+      //
+      //   const token = generateToken(user);
+      //
+      //   return res.status(201).json({
+      //     success: true,
+      //     message: "Registration successful!",
+      //     data: {
+      //       token,
+      //       user: {
+      //         id: user.id,
+      //         username: user.username,
+      //         email: user.email,
+      //         first_name: user.first_name,
+      //         last_name: user.last_name,
+      //         bio: user.bio,
+      //         postal_code: user.postal_code,
+      //         city: user.city,
+      //         country: user.country,
+      //         avatar_url: user.avatar_url,
+      //         is_public: user.is_public,
+      //         is_synthetic: user.is_synthetic,
+      //         created_at: user.created_at,
+      //       },
+      //     },
+      //   });
+      // }
+      // ── END INTERIM BYPASS ──
 
       // Generate verification token
       const verificationToken = crypto.randomBytes(32).toString("hex");
@@ -458,14 +459,9 @@ const authController = {
         });
       }
 
-      // // Check if email is verified
-      // if (!user.email_verified) {
-
-      // Check if email is verified (skip when verification is disabled)
-      if (
-        !user.email_verified &&
-        process.env.SKIP_EMAIL_VERIFICATION !== "true"
-      ) {
+      // Original — enforce email verification for all users
+      if (!user.email_verified) {
+        // ── INTERIM (disabled): if (!user.email_verified && process.env.SKIP_EMAIL_VERIFICATION !== "true") {
         return res.status(403).json({
           success: false,
           message: "Please verify your email before logging in",
