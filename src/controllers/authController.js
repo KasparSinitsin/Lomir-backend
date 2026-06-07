@@ -288,6 +288,72 @@ const authController = {
     }
   },
 
+  async checkEmail(req, res) {
+    try {
+      const { email } = req.body;
+
+      if (!email) {
+        return res.status(400).json({
+          success: false,
+          message: "Email is required",
+        });
+      }
+
+      const result = await db.query(
+        `SELECT id FROM users WHERE LOWER(email) = LOWER($1)`,
+        [email],
+      );
+
+      const available = result.rows.length === 0;
+
+      res.status(200).json({
+        success: true,
+        available,
+        ...(available
+          ? {}
+          : { message: "This email address is already registered." }),
+      });
+    } catch (error) {
+      console.error("Check email error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error checking email availability",
+      });
+    }
+  },
+
+  async checkUsername(req, res) {
+    try {
+      const { username } = req.body;
+
+      if (!username) {
+        return res.status(400).json({
+          success: false,
+          message: "Username is required",
+        });
+      }
+
+      const result = await db.query(
+        `SELECT id FROM users WHERE LOWER(username) = LOWER($1)`,
+        [username],
+      );
+
+      const available = result.rows.length === 0;
+
+      res.status(200).json({
+        success: true,
+        available,
+        ...(available ? {} : { message: "This username is already taken." }),
+      });
+    } catch (error) {
+      console.error("Check username error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error checking username availability",
+      });
+    }
+  },
+
   /**
    * Verify user's email address
    */

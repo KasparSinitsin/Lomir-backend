@@ -17,6 +17,9 @@ router.post(
 // Login existing user
 router.post("/login", authLimiter, authController.login);
 
+router.post("/check-email", authLimiter, authController.checkEmail);
+router.post("/check-username", authLimiter, authController.checkUsername);
+
 // Email verification routes (query-param based: /verify-email?token=...)
 router.get("/verify-email", authController.verifyEmail);
 router.post(
