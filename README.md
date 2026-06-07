@@ -26,7 +26,7 @@ Contact the project owner for a demo login, or register a new account with a val
 
 ## Features
 
-- **Authentication** — JWT-based registration, login, email verification, and password reset. Registration protected by Cloudflare Turnstile CAPTCHA (feature-flagged for local dev).
+- **Authentication** — JWT-based registration, login, email verification, and password reset. Transactional auth emails are sent through Nodemailer SMTP. Registration protected by Cloudflare Turnstile CAPTCHA (feature-flagged for local dev).
 - **User Profiles** — CRUD with avatar uploads (ImageKit), interest tags, and badge portfolios
 - **Teams** — Create, join, manage members, assign roles, and archive teams
 - **Vacant Roles** — Post open positions on teams with desired tags, badges, and location preferences
@@ -52,7 +52,7 @@ Contact the project owner for a demo login, or register a new account with a val
 | Auth | JSON Web Tokens (jsonwebtoken, bcrypt) |
 | Validation | Joi |
 | File Uploads | ImageKit + Multer |
-| Email | Resend |
+| Email | Nodemailer SMTP |
 | Scheduling | node-cron |
 | CAPTCHA | Cloudflare Turnstile |
 | Rate Limiting | express-rate-limit |
@@ -104,14 +104,18 @@ IMAGEKIT_PUBLIC_KEY=<your-public-key>
 IMAGEKIT_PRIVATE_KEY=<your-private-key>
 IMAGEKIT_URL_ENDPOINT=https://ik.imagekit.io/<your-id>
 
-# Resend (email service)
-RESEND_API_KEY=<resend-api-key>
+# SMTP email (Gmail SMTP in the current deployment)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=<smtp-email-address>
+SMTP_PASS=<smtp-app-password>
 
 # Frontend URL (for CORS and email links)
 CLIENT_URL=http://localhost:5173
+FRONTEND_URL=http://localhost:5173
 
-# Skip email verification (set to "true" while no custom domain is configured)
-SKIP_EMAIL_VERIFICATION=true
+# Skip email verification for local development if needed
+SKIP_EMAIL_VERIFICATION=false
 
 # Cloudflare Turnstile (optional for local dev — if unset, CAPTCHA is skipped)
 # TURNSTILE_SECRET_KEY=<turnstile-secret-key>
@@ -197,7 +201,7 @@ Lomir-backend/
 │   │   ├── rateLimiter.js      # Rate limiting for auth endpoints
 │   │   └── uploadMiddleware.js # Multer wrapper for file/image uploads
 │   ├── services/
-│   │   └── emailService.js     # Resend transactional email
+│   │   └── emailService.js     # Nodemailer SMTP transactional email; Resend restore notes kept in comments
 │   ├── utils/
 │   │   ├── booleanSearchParser.js
 │   │   ├── imagekitUtils.js
@@ -348,6 +352,7 @@ Full transactional account deletion following the spec in `docs/USER_DELETION_SP
 - **`npm install` fails on bcrypt** — Install native build tools (see Prerequisites), then `rm -rf node_modules package-lock.json && npm install`
 - **CORS errors** — Make sure `CLIENT_URL` in `.env` matches your frontend origin (`http://localhost:5173`)
 - **Database connection issues** — Verify `DATABASE_URL` is correct and you have internet access
+- **SMTP transport is not configured** — Set `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS`; `SMTP_PORT` defaults to `587`
 - **Port already in use** — `lsof -i :5001` to find the process, `kill -9 <PID>` to free the port
 - **CAPTCHA not loading locally** — This is expected. If `TURNSTILE_SECRET_KEY` is unset, registration skips CAPTCHA.
 
@@ -357,3 +362,4 @@ Full transactional account deletion following the spec in `docs/USER_DELETION_SP
 
 - **Frontend repo:** [Lomir-frontend](https://github.com/KasparSinitsin/Lomir-frontend)
 - **Deletion spec:** [`docs/USER_DELETION_SPEC.md`](docs/USER_DELETION_SPEC.md)
+- **Email verification restore guide:** [`docs/RESTORE_EMAIL_VERIFICATION_GUIDE.md`](docs/RESTORE_EMAIL_VERIFICATION_GUIDE.md)
