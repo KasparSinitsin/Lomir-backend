@@ -530,7 +530,7 @@ const authController = {
         // ── INTERIM (disabled): if (!user.email_verified && process.env.SKIP_EMAIL_VERIFICATION !== "true") {
         return res.status(403).json({
           success: false,
-          message: "Please verify your email before logging in",
+          message: "Please verify your email before logging in. Check your inbox for the verification link — it expires 24 hours after registration.",
           requiresVerification: true,
         });
       }

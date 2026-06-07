@@ -95,8 +95,13 @@ const emailService = {
             </div>
             
             <p style="font-size: 14px; color: #666; line-height: 1.6;">
-              This link will expire in 24 hours. If you didn't create a Lomir account, 
-              you can safely ignore this email.
+              This link will expire in <strong>24 hours</strong>. If you don't verify your account
+              within this time, your registration will be automatically deleted and you'll need
+              to sign up again.
+            </p>
+            <p style="font-size: 14px; color: #666; line-height: 1.6;">
+              If you didn't create a Lomir account, you can safely ignore this email —
+              the unverified account will be removed automatically.
             </p>
             
             <hr style="border: none; border-top: 1px solid #eee; margin: 32px 0;" />

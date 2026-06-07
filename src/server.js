@@ -581,6 +581,9 @@ io.on("connection", (socket) => {
 // Initialize scheduled jobs
 initScheduledJobs();
 
+const cleanupUnverifiedAccounts = require("./jobs/cleanupUnverifiedAccounts");
+cleanupUnverifiedAccounts();
+
 // Start server
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT} with Socket.IO enabled`);
