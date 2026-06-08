@@ -229,14 +229,6 @@ const teamModel = {
     return result.rows[0] || null;
   },
 
-  /**
-   * Get all teams
-   * @returns {Array} List of teams
-   */
-  async getAllTeams() {
-    const result = await db.query("SELECT * FROM teams");
-    return result.rows;
-  },
 };
 
 module.exports = teamModel;
