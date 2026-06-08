@@ -36,8 +36,9 @@ Contact the project owner for a demo login, or register a new account with a val
 - **Badge System** — 30 badges across 5 categories; award badges to teammates with reasons and context
 - **Notifications** — In-app notifications for invitations, applications, badge awards, messages, @mentions, and role lifecycle events; each notification deep-links to the exact message that triggered it; stale notifications are cleaned up automatically on member removal, role deletion, and team deletion
 - **Account Deletion** — Full transactional account deletion with impact preview, automatic team ownership transfer, role reopening, and "Former Lomir User" handling for preserved references
-- **Geocoding** — Postal code lookup via Nominatim with built-in fallback mapping
-- **Security** — Rate limiting on auth endpoints, CORS allowlist, password policy enforcement, production log scrubbing
+- **Contact Form** — Public `/api/contact` endpoint with Joi validation, Turnstile CAPTCHA, file attachments (up to 5), and SMTP forwarding; rate-limited to 5 submissions/hr
+- **Geocoding** — Location enrichment via Nominatim: resolves a full location object (postal code, city, district, state, country, coordinates) from partial input. Built-in postal-code-to-district lookup for Berlin and Frankfurt (200+ mappings) used as a fast offline fallback before the API call. Works with country alone — does not require both postal code and city.
+- **Security** — Helmet security headers, request body size cap (1 MB), rate limiting on auth and contact endpoints, CORS allowlist, password policy enforcement, Socket.IO conversation/message authorization, production error message scrubbing
 
 ---
 
@@ -56,6 +57,7 @@ Contact the project owner for a demo login, or register a new account with a val
 | Scheduling | node-cron |
 | CAPTCHA | Cloudflare Turnstile |
 | Rate Limiting | express-rate-limit |
+| Security Headers | Helmet |
 
 ---
 
@@ -179,6 +181,7 @@ Lomir-backend/
 │   │   ├── vacantRoleController.js
 │   │   ├── searchController.js
 │   │   ├── badgeController.js
+│   │   ├── contactController.js       # Contact form: Joi validation, Turnstile CAPTCHA, SMTP forwarding
 │   │   ├── messageController.js
 │   │   ├── notificationController.js
 │   │   └── matchingController.js
@@ -189,6 +192,7 @@ Lomir-backend/
 │   │   ├── teamRoutes.js
 │   │   ├── searchRoutes.js
 │   │   ├── badgeRoutes.js
+│   │   ├── contactRoutes.js    # Contact form route with multer (up to 5 attachments)
 │   │   ├── messageRoutes.js
 │   │   ├── notificationRoutes.js
 │   │   ├── matchingRoutes.js
@@ -208,19 +212,23 @@ Lomir-backend/
 │   │   ├── fileValidation.js
 │   │   ├── fileCleanup.js      # File expiry check + ImageKit deletion helpers (used by scheduler)
 │   │   ├── jwtUtils.js
+│   │   ├── locationDerivation.js # Offline postal-code → city/district/state lookup (Berlin, Frankfurt)
 │   │   ├── matchingScorer.js   # Shared scoring utilities
 │   │   ├── searchQueryBuilder.js # Shared search distance/filter/sort SQL builders
 │   │   ├── socketMessageEmitter.js
 │   │   ├── turnstileVerify.js  # Cloudflare Turnstile CAPTCHA verification
 │   │   ├── vacantRoleSerializer.js
 │   │   ├── badgeVisibilityUtils.js # Helpers for badge award visibility (hidden/shown state)
-│   │   └── geocodingUtil.js
+│   │   └── geocodingUtil.js    # resolveLocationData (full enrichment) + geocodeAddress (coords only)
 │   ├── jobs/
-│   │   └── fileCleanupScheduler.js # node-cron job that calls fileCleanup utilities on a schedule
+│   │   ├── fileCleanupScheduler.js # node-cron job that calls fileCleanup utilities on a schedule
+│   │   └── cleanupUnverifiedAccounts.js # Runs every 6 hours; deletes expired unverified accounts
 │   └── database/
 │       └── migrations/
 ├── scripts/                    # SQL seed, migration, and utility scripts
-│   └── migrate-cloudinary-to-imagekit.js
+│   ├── migrate-cloudinary-to-imagekit.js
+│   ├── add-location-district-columns.sql  # Migration: adds district column to teams/users/roles
+│   └── backfill-location-data.js         # One-off script to backfill district/state from geocoding
 ├── test/                       # Controller unit tests
 │   ├── invitationController.test.js
 │   ├── searchController.test.js
@@ -247,7 +255,7 @@ All routes are prefixed with `/api`.
 
 | Prefix | Description |
 |---|---|
-| `/api/auth` | Register, login, email verification, password reset |
+| `/api/auth` | Register, login, email verification, password reset; `POST /auth/check-email` and `/auth/check-username` for real-time availability checks |
 | `/api/users` | User CRUD, tags, badges, avatar, account deletion with preview |
 | `/api/teams` | Team CRUD, members, applications, invitations, badge awards; `DELETE /invitations/:id/role` cancels only the role portion of a pending invitation |
 | `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management. Supports `?ids=1,2,3` for bulk filtering (bypasses the default status filter so polling can detect roles that transitioned to filled/closed) |
@@ -259,7 +267,8 @@ All routes are prefixed with `/api`.
 | `/api/notifications` | User notifications (includes `referenceType`, `typeTeamCounts` in unread count response) |
 | `/api/imagekit` | Auth params for client-side ImageKit uploads |
 | `/api/tags` | Tag catalog (structured by category) |
-| `/api/geocoding` | Postal code → city/country/coordinates lookup |
+| `/api/geocoding` | Postal code → city/district/country/coordinates lookup |
+| `/api/contact` | Public contact form submission with optional file attachments |
 
 ---
 
@@ -321,6 +330,35 @@ The shared scoring logic lives in `src/utils/matchingScorer.js` and is used by b
 
 ---
 
+## Geocoding and Location Enrichment
+
+Location data for users, teams, and vacant roles is resolved through `src/utils/geocodingUtil.js` via `resolveLocationData()`. Given any combination of postal code, city, district, state, and country, it returns a fully enriched location object:
+
+```json
+{ "postal_code": "10117", "city": "Berlin", "district": "Mitte", "state": "Berlin", "country": "DE", "latitude": 52.516, "longitude": 13.388 }
+```
+
+**Resolution order:**
+
+1. **Offline fallback** (`src/utils/locationDerivation.js`) — A built-in lookup table maps 200+ Berlin postal codes and select Frankfurt codes to their district, city, and state without any external call. Applied first as a fast pre-fill.
+2. **Nominatim API** — If geocoding proceeds, up to three queries are attempted in order (full combined query → postal code + country → city + country), stopping at the first result.
+3. **Country-only fallback** — If no specific result is found, the resolved object is returned without coordinates (coordinates are `null`, other known fields are preserved).
+
+Registration, team creation/update, and user profile update all call `resolveLocationData()` and write back the full enriched object — so location fields (including `district` and `state`) are normalized on save, not just at query time.
+
+The `district` field is stored in the `users`, `teams`, and `vacant_roles` tables. Existing rows can be backfilled with `scripts/backfill-location-data.js`; the required schema migration is `scripts/add-location-district-columns.sql`.
+
+---
+
+## Scheduled Jobs
+
+| Job | Schedule | Description |
+|---|---|---|
+| File cleanup | Configurable (see `fileCleanupScheduler.js`) | Expires and deletes orphaned ImageKit files |
+| Unverified account cleanup | Every 6 hours | Deletes accounts where email verification expired more than 1 hour ago |
+
+---
+
 ## Account Deletion
 
 Full transactional account deletion following the spec in `docs/USER_DELETION_SPEC.md`. Key highlights:
@@ -337,13 +375,18 @@ Full transactional account deletion following the spec in `docs/USER_DELETION_SP
 
 | Measure | Details |
 |---|---|
-| Rate limiting | 8 req/15 min on login/password flows, 10 req/hr on registration |
-| CAPTCHA | Cloudflare Turnstile on registration (feature-flagged) |
+| Security headers | Helmet middleware sets standard HTTP security headers on every response |
+| Request body cap | `express.json` and `express.urlencoded` limited to 1 MB |
+| Rate limiting | 8 req/15 min on login/password flows; 10 req/hr on registration; 5 req/hr on contact form |
+| CAPTCHA | Cloudflare Turnstile on registration and contact form (feature-flagged; skipped when `TURNSTILE_SECRET_KEY` is unset) |
 | CORS | Allowlist: exact match for production URL + regex for Vercel preview deploys |
 | Password policy | Min 8 chars, at least one letter and one number (registration, reset, change) |
-| Logging | All debug `console.log` gated behind `NODE_ENV`; errors and warnings always logged |
+| Socket.IO authorization | `conversation:join` validates team membership or existing DM before admitting the socket; `message:new` (team type) verifies the sender is a current team member before inserting |
+| Error message scrubbing | Internal error details (`error.message`, stack traces) only included in responses when `NODE_ENV === "development"` |
+| Logging | All debug `console.log` gated behind `NODE_ENV !== "production"`; errors and warnings always logged |
 | SQL injection | Parameterized queries throughout |
 | Auth | JWT on all protected routes, bcrypt with 10 salt rounds |
+| User data exposure | `GET /api/users` returns only public profiles (`is_public = TRUE`) with an explicit column allowlist; no `SELECT *` on user rows |
 
 ---
 

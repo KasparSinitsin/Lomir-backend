@@ -260,12 +260,11 @@ const addTeamMember = async (req, res) => {
       });
     } catch (dbError) {
       await client.query("ROLLBACK");
-      console.error("Database error while adding member:", dbError); // More specific message
+      console.error("Database error while adding member:", dbError);
       res.status(500).json({
         success: false,
-        message: "Database error while adding team member", // More specific message
-        errorDetails: dbError.message,
-        fullError: dbError,
+        message: "Database error while adding team member",
+        ...(process.env.NODE_ENV === "development" && { error: dbError.message }),
       });
     } finally {
       client.release();
@@ -1122,7 +1121,7 @@ const updateMemberRole = async (req, res) => {
       res.status(500).json({
         success: false,
         message: "Database error while updating member role",
-        errorDetails: dbError.message,
+        ...(process.env.NODE_ENV === "development" && { error: dbError.message }),
       });
     } finally {
       client.release();

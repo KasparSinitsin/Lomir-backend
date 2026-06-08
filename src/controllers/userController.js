@@ -2,11 +2,31 @@ const db = require("../config/database");
 const { pool } = db;
 const bcrypt = require("bcrypt");
 const {
-  geocodeAddress,
   hasLocationChanged,
+  resolveLocationData,
 } = require("../utils/geocodingUtil");
 const { deleteImageKitFile } = require("../utils/imagekitUtils");
 const { ensureBadgeVisibilityColumns } = require("../utils/badgeVisibilityUtils");
+
+const PUBLIC_USER_FIELDS = `
+  u.id, u.username, u.first_name, u.last_name, u.bio,
+  u.avatar_url, u.postal_code, u.city, u.state, u.district, u.country, u.is_public,
+  u.is_synthetic, u.created_at
+`;
+
+const SAFE_PUBLIC_USER_KEYS = [
+  'id', 'username', 'first_name', 'last_name', 'bio',
+  'avatar_url', 'postal_code', 'city', 'state', 'district', 'country', 'is_public',
+  'is_synthetic', 'created_at', 'tags',
+];
+
+const sanitizePublicUser = (row) => {
+  const safe = {};
+  for (const key of SAFE_PUBLIC_USER_KEYS) {
+    if (row[key] !== undefined) safe[key] = row[key];
+  }
+  return safe;
+};
 
 const buildUserDisplayName = (user) => {
   const fullName = [user.first_name, user.last_name].filter(Boolean).join(" ");
@@ -118,14 +138,21 @@ const getSuccessorCandidatesByTeam = async (queryable, teamIds, excludedUserId) 
 /**
  * @description Get all users
  * @route GET /api/users
- * @access Private
+ * @access Public
  */
 const getUsers = async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM users");
+    const result = await pool.query(`
+      SELECT ${PUBLIC_USER_FIELDS}
+      FROM users u
+      WHERE u.is_public = TRUE
+      ORDER BY u.created_at DESC
+      LIMIT 50
+    `);
+
     res.status(200).json({
       success: true,
-      data: result.rows,
+      data: result.rows.map(sanitizePublicUser),
     });
   } catch (error) {
     console.error("Error fetching users:", error);
@@ -140,11 +167,13 @@ const getUsers = async (req, res) => {
 /**
  * @description Get a single user by ID
  * @route GET /api/users/:id
- * @access Private
+ * @access Public (with optional auth for owner-only fields)
  */
 const getUserById = async (req, res) => {
   try {
     const userId = req.params.id;
+    const isOwner = req.user && Number(req.user.id) === Number(userId);
+
     if (process.env.NODE_ENV !== "production") {
       console.log(`Fetching user with ID: ${userId}`);
     }
@@ -165,6 +194,7 @@ const getUserById = async (req, res) => {
     u.city,
     u.country,
     u.state,
+    u.district,
     u.latitude,
     u.longitude,
     u.avatar_url,
@@ -272,7 +302,7 @@ const getUserById = async (req, res) => {
   FROM users u
   WHERE u.id = $1
 `,
-      [userId, Number(req.user?.id) === Number(userId)],
+      [userId, isOwner],
     );
 
     if (result.rows.length === 0) {
@@ -286,11 +316,52 @@ const getUserById = async (req, res) => {
 
     const user = result.rows[0];
 
-    // Send successful response with user data including tags as string
+    if (!isOwner && !user.is_public) {
+      // Teammates may see the full sanitized profile even if it is private
+      let sharesTeam = false;
+      if (req.user) {
+        const teamCheck = await pool.query(
+          `SELECT 1 FROM team_members tm1
+           JOIN team_members tm2 ON tm1.team_id = tm2.team_id
+           WHERE tm1.user_id = $1 AND tm2.user_id = $2
+           LIMIT 1`,
+          [req.user.id, userId],
+        );
+        sharesTeam = teamCheck.rows.length > 0;
+      }
+
+      if (!sharesTeam) {
+        return res.status(200).json({
+          success: true,
+          data: {
+            id: user.id,
+            username: user.username,
+            avatar_url: user.avatar_url,
+            is_public: false,
+            profile_access: "limited",
+          },
+        });
+      }
+    }
+
+    if (!isOwner) {
+      const publicData = sanitizePublicUser(user);
+      if (user.badges !== undefined) publicData.badges = user.badges;
+      if (user.total_badge_credits !== undefined) publicData.total_badge_credits = user.total_badge_credits;
+      if (user.hide_badges !== undefined) publicData.hide_badges = user.hide_badges;
+      if (user.updated_at !== undefined) publicData.updated_at = user.updated_at;
+
+      return res.status(200).json({
+        success: true,
+        message: "User retrieved successfully",
+        data: publicData,
+      });
+    }
+
+    // Owner view: include email and hidden award metadata needed for settings
     res.status(200).json({
       success: true,
       message: "User retrieved successfully",
-      // Data is already snake_case from DB, frontend interceptor handles conversion
       data: user,
     });
   } catch (error) {
@@ -310,6 +381,13 @@ const getUserById = async (req, res) => {
  */
 const updateUser = async (req, res) => {
   try {
+    if (Number(req.user.id) !== Number(req.params.id)) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only update your own profile",
+      });
+    }
+
     const userId = req.params.id;
     if (process.env.NODE_ENV !== "production") {
       console.log("updateUser called for ID:", userId);
@@ -317,7 +395,7 @@ const updateUser = async (req, res) => {
 
     // First, get the current user data to access the old avatar URL and location
     const currentUserResult = await pool.query(
-      "SELECT avatar_url, avatar_file_id, postal_code, city, country, state, latitude, longitude FROM users WHERE id = $1",
+      "SELECT avatar_url, avatar_file_id, postal_code, city, country, state, district, latitude, longitude FROM users WHERE id = $1",
       [userId],
     );
 
@@ -341,6 +419,8 @@ const updateUser = async (req, res) => {
       bio,
       postal_code,
       city,
+      state,
+      district,
       country,
       avatar_url,
       avatar_file_id,
@@ -409,17 +489,27 @@ const updateUser = async (req, res) => {
     }
     if (postal_code !== undefined) {
       updateFields.push(`postal_code = $${paramPosition}`);
-      queryParams.push(postal_code);
+      queryParams.push(postal_code || null);
       paramPosition++;
     }
     if (city !== undefined) {
       updateFields.push(`city = $${paramPosition}`);
-      queryParams.push(city);
+      queryParams.push(city || null);
+      paramPosition++;
+    }
+    if (state !== undefined) {
+      updateFields.push(`state = $${paramPosition}`);
+      queryParams.push(state || null);
+      paramPosition++;
+    }
+    if (district !== undefined) {
+      updateFields.push(`district = $${paramPosition}`);
+      queryParams.push(district || null);
       paramPosition++;
     }
     if (country !== undefined) {
       updateFields.push(`country = $${paramPosition}`);
-      queryParams.push(country);
+      queryParams.push(country || null);
       paramPosition++;
     }
 
@@ -458,6 +548,8 @@ const updateUser = async (req, res) => {
       postal_code:
         postal_code !== undefined ? postal_code : currentUser.postal_code,
       city: city !== undefined ? city : currentUser.city,
+      state: state !== undefined ? state : currentUser.state,
+      district: district !== undefined ? district : currentUser.district,
       country: country !== undefined ? country : currentUser.country,
     };
 
@@ -467,24 +559,36 @@ const updateUser = async (req, res) => {
       if (process.env.NODE_ENV !== "production") {
         console.log("Location data changed, triggering geocoding...");
       }
-      const coordinates = await geocodeAddress(newLocationData);
+      const resolvedLocation = await resolveLocationData(newLocationData);
 
-      if (coordinates) {
+      if (resolvedLocation) {
         if (process.env.NODE_ENV !== "production") {
           console.log(
-            `Geocoded new coordinates: lat=${coordinates.latitude}, lng=${coordinates.longitude}`,
+            `Resolved new location: lat=${resolvedLocation.latitude}, lng=${resolvedLocation.longitude}`,
           );
         }
+        const locationFieldsToPersist = {
+          postal_code: resolvedLocation.postal_code,
+          city: resolvedLocation.city,
+          state: resolvedLocation.state,
+          district: resolvedLocation.district,
+          country: resolvedLocation.country,
+        };
+
+        for (const [field, fieldValue] of Object.entries(locationFieldsToPersist)) {
+          if (!updateFields.some((entry) => entry.startsWith(`${field} = `))) {
+            updateFields.push(`${field} = $${paramPosition}`);
+            queryParams.push(fieldValue);
+            paramPosition++;
+          }
+        }
+
         updateFields.push(`latitude = $${paramPosition}`);
-        queryParams.push(coordinates.latitude);
+        queryParams.push(resolvedLocation.latitude);
         paramPosition++;
 
         updateFields.push(`longitude = $${paramPosition}`);
-        queryParams.push(coordinates.longitude);
-        paramPosition++;
-
-        updateFields.push(`state = $${paramPosition}`);
-        queryParams.push(coordinates.state);
+        queryParams.push(resolvedLocation.longitude);
         paramPosition++;
       } else {
         if (process.env.NODE_ENV !== "production") {
@@ -502,6 +606,10 @@ const updateUser = async (req, res) => {
         paramPosition++;
 
         updateFields.push(`state = $${paramPosition}`);
+        queryParams.push(null);
+        paramPosition++;
+
+        updateFields.push(`district = $${paramPosition}`);
         queryParams.push(null);
         paramPosition++;
       }
@@ -527,7 +635,7 @@ const updateUser = async (req, res) => {
       UPDATE users 
       SET ${updateFields.join(", ")} 
       WHERE id = $${paramPosition}
-      RETURNING id, username, email, first_name, last_name, bio, postal_code, city, country, state, latitude, longitude, avatar_url, is_public, is_synthetic, created_at, updated_at
+      RETURNING id, username, email, first_name, last_name, bio, postal_code, city, country, state, district, latitude, longitude, avatar_url, is_public, is_synthetic, created_at, updated_at
     `;
 
     const result = await pool.query(query, queryParams);

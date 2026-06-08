@@ -627,11 +627,13 @@ const getSharedTeams = async (req, res) => {
 /**
  * @description Get badges for a specific user (via badge routes)
  * @route GET /api/badges/user/:userId
- * @access Public
+ * @access Public (owner sees hidden awards; others see only visible ones)
  */
 const getUserBadges = async (req, res) => {
   try {
     const userId = req.params.userId;
+    const canViewHiddenAwards =
+      req.user && Number(req.user.id) === Number(userId);
 
     const result = await pool.query(
       `
@@ -666,12 +668,17 @@ const getUserBadges = async (req, res) => {
       FROM badge_awards ba
       JOIN badges b ON ba.badge_id = b.id
       LEFT JOIN users awarder ON ba.awarded_by_user_id = awarder.id
+      LEFT JOIN users awardee ON awardee.id = ba.awarded_to_user_id
       LEFT JOIN teams t ON ba.team_id = t.id
       LEFT JOIN tags tag ON ba.tag_id = tag.id
       WHERE ba.awarded_to_user_id = $1
+        AND (
+          $2::BOOLEAN = TRUE
+          OR NOT (ba.id = ANY(COALESCE(awardee.hidden_award_ids, '{}'::INTEGER[])))
+        )
       ORDER BY ba.created_at DESC, ba.id DESC
       `,
-      [userId],
+      [userId, canViewHiddenAwards],
     );
 
     res.status(200).json({ success: true, data: result.rows });

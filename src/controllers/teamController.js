@@ -1,9 +1,6 @@
 const db = require("../config/database");
 const Joi = require("joi");
-const {
-  geocodeAddress,
-  hasLocationChanged,
-} = require("../utils/geocodingUtil");
+const { resolveLocationData } = require("../utils/geocodingUtil");
 const {
   createNotification,
   notifyTeamMembers,
@@ -173,6 +170,7 @@ const teamCreationSchema = Joi.object({
   postal_code: Joi.string().allow(null, "").optional(),
   city: Joi.string().allow(null, "").optional(),
   state: Joi.string().allow(null, "").optional(),
+  district: Joi.string().allow(null, "").optional(),
   country: Joi.string().allow(null, "").optional(),
 
   teamavatar_url: Joi.string().uri().allow(null, "").messages({
@@ -203,21 +201,23 @@ const createTeam = async (req, res) => {
         errors: error.details.map((detail) => detail.message),
       });
     }
-    if (
-      !value.is_remote &&
-      (value.postal_code || value.city) &&
-      value.country
-    ) {
-      const coordinates = await geocodeAddress({
+    if (!value.is_remote && value.country) {
+      const resolvedLocation = await resolveLocationData({
         postal_code: value.postal_code,
         city: value.city,
+        state: value.state,
+        district: value.district,
         country: value.country,
       });
 
-      if (coordinates) {
-        value.latitude = coordinates.latitude;
-        value.longitude = coordinates.longitude;
-        value.state = coordinates.state;
+      if (resolvedLocation) {
+        value.postal_code = resolvedLocation.postal_code;
+        value.city = resolvedLocation.city;
+        value.state = resolvedLocation.state;
+        value.district = resolvedLocation.district;
+        value.country = resolvedLocation.country;
+        value.latitude = resolvedLocation.latitude;
+        value.longitude = resolvedLocation.longitude;
       }
     }
 
@@ -251,12 +251,13 @@ const createTeam = async (req, res) => {
     postal_code,
     city,
     state,
+    district,
     country,
     latitude,
     longitude,
     teamavatar_url,
     is_synthetic
-  ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+  ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
   RETURNING *
   `,
       [
@@ -269,11 +270,12 @@ const createTeam = async (req, res) => {
         value.is_remote ? null : (value.postal_code ?? null), // $7
         value.is_remote ? null : (value.city ?? null), // $8
         value.is_remote ? null : (value.state ?? null), // $9
-        value.is_remote ? null : (value.country ?? null), // $10
-        value.is_remote ? null : (value.latitude ?? null), // $11
-        value.is_remote ? null : (value.longitude ?? null), // $12
-        value.teamavatar_url ?? null, // $13
-        isOwnerSynthetic, // $14
+        value.is_remote ? null : (value.district ?? null), // $10
+        value.is_remote ? null : (value.country ?? null), // $11
+        value.is_remote ? null : (value.latitude ?? null), // $12
+        value.is_remote ? null : (value.longitude ?? null), // $13
+        value.teamavatar_url ?? null, // $14
+        isOwnerSynthetic, // $15
       ],
     );
 
@@ -328,12 +330,11 @@ const createTeam = async (req, res) => {
     });
   } catch (error) {
     await client.query("ROLLBACK");
-    console.error("--> Database error during team creation:", error); // More specific message
+    console.error("--> Database error during team creation:", error);
     res.status(500).json({
       success: false,
-      message: "Database error while creating team", // More specific message
-      errorDetails: error.message,
-      fullError: error,
+      message: "Database error while creating team",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   } finally {
     client.release();
@@ -388,6 +389,7 @@ const updateTeam = async (req, res) => {
       postal_code: Joi.string().allow(null, ""),
       city: Joi.string().allow(null, ""),
       state: Joi.string().allow(null, ""),
+      district: Joi.string().allow(null, ""),
       country: Joi.string().allow(null, ""),
 
       status: Joi.string().valid("active", "inactive"),
@@ -401,220 +403,6 @@ const updateTeam = async (req, res) => {
         }),
       ),
     });
-
-    // This nested function is unrelated to max_members;
-    // leaving it as-is from your original code.
-    const updateMemberRole = async (req, res) => {
-      try {
-        const teamId = req.params.teamId;
-        const memberId = req.params.memberId;
-        const userId = req.user.id;
-
-        // Accept both camelCase and snake_case
-        const { newRole, new_role } = req.body;
-        const roleToUpdate = newRole || new_role;
-
-        // Validate role
-        const validRoles = ["member", "admin"];
-        if (!validRoles.includes(roleToUpdate)) {
-          return res.status(400).json({
-            success: false,
-            message: "Invalid role. Must be 'member' or 'admin'",
-            debug: {
-              received: roleToUpdate,
-              expectedOneOf: validRoles,
-              receivedType: typeof roleToUpdate,
-            },
-          });
-        }
-
-        // Check if the user making the request is authorized (owner or admin)
-        const authCheck = await db.pool.query(
-          `
-      SELECT tm.role 
-      FROM team_members tm
-      JOIN teams t ON tm.team_id = t.id
-      WHERE tm.team_id = $1 
-      AND tm.user_id = $2
-      AND (tm.role = 'owner' OR tm.role = 'admin')
-      AND t.archived_at IS NULL
-    `,
-          [teamId, userId],
-        );
-
-        if (authCheck.rows.length === 0) {
-          return res.status(403).json({
-            success: false,
-            message: "Not authorized to change member roles in this team",
-          });
-        }
-
-        const userRole = authCheck.rows[0].role;
-
-        // Check if target member exists and get their current role
-        const memberCheck = await db.pool.query(
-          `
-      SELECT role FROM team_members 
-      WHERE team_id = $1 AND user_id = $2
-    `,
-          [teamId, memberId],
-        );
-
-        if (memberCheck.rows.length === 0) {
-          return res.status(404).json({
-            success: false,
-            message: "Member not found in this team",
-          });
-        }
-
-        const memberCurrentRole = memberCheck.rows[0].role;
-
-        // Only owners can change admin roles
-        if (memberCurrentRole === "admin" && userRole !== "owner") {
-          return res.status(403).json({
-            success: false,
-            message: "Only team owners can change admin roles",
-          });
-        }
-
-        // Only owners can promote to admin
-        if (roleToUpdate === "admin" && userRole !== "owner") {
-          return res.status(403).json({
-            success: false,
-            message: "Only team owners can promote members to admin",
-          });
-        }
-
-        // Can't change owner role
-        if (memberCurrentRole === "owner") {
-          return res.status(403).json({
-            success: false,
-            message: "Cannot change owner role",
-          });
-        }
-
-        // Update member role
-        const client = await db.pool.connect();
-
-        try {
-          await client.query("BEGIN");
-
-          // Delete all team chat messages first (before soft deleting team)
-          await client.query(`DELETE FROM messages WHERE team_id = $1`, [
-            teamId,
-          ]);
-
-          // Soft delete by setting archived_at
-          await client.query(
-            `
-        UPDATE teams
-        SET archived_at = NOW(), status = 'inactive'
-        WHERE id = $1
-      `,
-            [teamId],
-          );
-
-          await client.query("COMMIT");
-
-          // === CREATE NOTIFICATION FOR AFFECTED MEMBER ===
-          try {
-            // Get team name
-            const teamResult = await db.pool.query(
-              `SELECT name FROM teams WHERE id = $1`,
-              [teamId],
-            );
-            const teamName = teamResult.rows[0]?.name || "the team";
-
-            // Get changer's name (the admin/owner who made the change)
-            const changerResult = await db.pool.query(
-              `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-              [userId],
-            );
-            const changer = changerResult.rows[0];
-            const changerName =
-              changer.first_name && changer.last_name
-                ? `${changer.first_name} ${changer.last_name}`
-                : changer.username;
-
-            // Get affected member's name
-            const memberResult = await db.pool.query(
-              `SELECT first_name, last_name, username FROM users WHERE id = $1`,
-              [memberId],
-            );
-            const member = memberResult.rows[0];
-            const memberName =
-              member.first_name && member.last_name
-                ? `${member.first_name} ${member.last_name}`
-                : member.username;
-
-            // Determine if promoted or demoted
-            const action = roleToUpdate === "admin" ? "promoted" : "demoted";
-
-            // Send system message to affected member via DM
-            const teamToken = `${teamId}:${teamName}`;
-
-            const roleChangeMessage = `🔄 ROLE_CHANGED: ${teamToken} | ${userId}:${changerName} | ${memberId}:${memberName} | ${memberCurrentRole} | ${roleToUpdate}`;
-
-            const roleChangeMessageResult = await db.pool.query(
-              `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-               VALUES ($1, $2, $3, NOW())
-               RETURNING id, sender_id, receiver_id, content, sent_at`,
-              [userId, memberId, roleChangeMessage],
-            );
-            await emitInsertedMessage(req, roleChangeMessageResult.rows[0]);
-
-            // Create notification for affected member
-            await createNotification({
-              userId: parseInt(memberId),
-              type: "role_changed",
-              title: `You were ${action} to ${roleToUpdate} in ${teamName}`,
-              message: null,
-              referenceType: "message",
-              referenceId: roleChangeMessageResult.rows[0]?.id || parseInt(teamId),
-              teamId: parseInt(teamId),
-              actorId: parseInt(userId),
-            });
-
-            // Emit socket event to affected member
-            const io = req.app.get("io");
-            if (io) {
-              io.to(`user:${memberId}`).emit("notification:new", {
-                type: "role_changed",
-                teamId: parseInt(teamId),
-              });
-            }
-          } catch (notificationError) {
-            console.error(
-              "Error creating role change notification:",
-              notificationError,
-            );
-          }
-          // === END NOTIFICATION ===
-
-          res.status(200).json({
-            success: true,
-            message: `Member role updated to ${roleToUpdate} successfully`,
-          });
-        } catch (dbError) {
-          await client.query("ROLLBACK");
-          console.error("Database error while updating member role:", dbError);
-          res.status(500).json({
-            success: false,
-            message: "Database error while updating member role",
-            errorDetails: dbError.message,
-          });
-        } finally {
-          client.release();
-        }
-      } catch (error) {
-        console.error("Update member role error:", error);
-        res.status(500).json({
-          success: false,
-          message: "Error updating member role",
-          ...(process.env.NODE_ENV === "development" && { error: error.message }),
-        });
-      }
-    };
 
     // Validate request body
     const { error, value } = updateSchema.validate(req.body);
@@ -637,17 +425,20 @@ const updateTeam = async (req, res) => {
       value.postal_code !== undefined ||
       value.city !== undefined ||
       value.state !== undefined ||
+      value.district !== undefined ||
       value.country !== undefined;
 
     if (isRemoteProvided && isRemote) {
       value.postal_code = null;
       value.city = null;
       value.state = null;
+      value.district = null;
       value.country = null;
       if (isRemoteProvided && isRemote) {
         delete value.postal_code;
         delete value.city;
         delete value.state;
+        delete value.district;
         delete value.country;
       }
     } else if (!isRemoteProvided && hasAnyLocationField) {
@@ -659,30 +450,39 @@ const updateTeam = async (req, res) => {
     if (value.postal_code === "") value.postal_code = null;
     if (value.city === "") value.city = null;
     if (value.state === "") value.state = null;
+    if (value.district === "") value.district = null;
     if (value.country === "") value.country = null;
     if (value.teamavatar_file_id === "") value.teamavatar_file_id = null;
 
     // Geocode if location changed and not remote
-    if (!isRemote && (value.postal_code || value.city) && value.country) {
-      const coordinates = await geocodeAddress({
+    if (!isRemote && value.country) {
+      const resolvedLocation = await resolveLocationData({
         postal_code: value.postal_code,
         city: value.city,
+        state: value.state,
+        district: value.district,
         country: value.country,
       });
 
-      if (coordinates) {
-        value.latitude = coordinates.latitude;
-        value.longitude = coordinates.longitude;
-        value.state = coordinates.state;
+      if (resolvedLocation) {
+        value.postal_code = resolvedLocation.postal_code;
+        value.city = resolvedLocation.city;
+        value.state = resolvedLocation.state;
+        value.district = resolvedLocation.district;
+        value.country = resolvedLocation.country;
+        value.latitude = resolvedLocation.latitude;
+        value.longitude = resolvedLocation.longitude;
       } else {
         // Clear coordinates if geocoding fails
         value.latitude = null;
         value.longitude = null;
+        value.district = null;
       }
     } else if (isRemote) {
       // Clear coordinates for remote teams
       value.latitude = null;
       value.longitude = null;
+      value.district = null;
     }
 
     // Begin transaction
@@ -775,6 +575,13 @@ const updateTeam = async (req, res) => {
         paramCounter++;
       }
 
+      // district
+      if (value.district !== undefined) {
+        updateFields.push(`district = $${paramCounter}`);
+        queryParams.push(value.district); // already normalized to null above
+        paramCounter++;
+      }
+
       // country
       if (value.country !== undefined) {
         updateFields.push(`country = $${paramCounter}`);
@@ -859,9 +666,11 @@ const updateTeam = async (req, res) => {
 
       // Fetch the updated team data to return
       const updatedTeamResult = await client.query(
-        `
-  SELECT * FROM teams WHERE id = $1
-`,
+        `SELECT id, name, description, is_public, max_members,
+                owner_id, teamavatar_url, teamavatar_file_id, is_remote, is_synthetic,
+                postal_code, city, state, district, country,
+                created_at, updated_at
+         FROM teams WHERE id = $1`,
         [teamId],
       );
 
@@ -878,8 +687,7 @@ const updateTeam = async (req, res) => {
       res.status(500).json({
         success: false,
         message: "Database error while updating team",
-        errorDetails: dbError.message,
-        fullError: dbError,
+        ...(process.env.NODE_ENV === "development" && { error: dbError.message }),
       });
     } finally {
       client.release();
@@ -1013,12 +821,11 @@ const deleteTeam = async (req, res) => {
       });
     } catch (dbError) {
       await client.query("ROLLBACK");
-      console.error("Database error during team deletion:", dbError); // More specific message
+      console.error("Database error during team deletion:", dbError);
       res.status(500).json({
         success: false,
-        message: "Database error while deleting team", // More specific message
-        errorDetails: dbError.message,
-        fullError: dbError,
+        message: "Database error while deleting team",
+        ...(process.env.NODE_ENV === "development" && { error: dbError.message }),
       });
     } finally {
       client.release();

@@ -1,8 +1,33 @@
 const db = require("../config/database");
 
+const isTeamVisibleToViewer = async (teamId, viewerId) => {
+  const teamResult = await db.pool.query(
+    'SELECT is_public FROM teams WHERE id = $1 AND archived_at IS NULL',
+    [teamId],
+  );
+  if (teamResult.rows.length === 0) return false;
+
+  const team = teamResult.rows[0];
+  if (team.is_public === true || team.is_public === 'true') return true;
+
+  if (!viewerId) return false;
+
+  const memberCheck = await db.pool.query(
+    'SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2',
+    [teamId, viewerId],
+  );
+  return memberCheck.rows.length > 0;
+};
+
 const getTeamBadgeAwards = async (req, res) => {
   try {
     const teamId = req.params.id;
+    const viewerId = req.user?.id;
+
+    const visible = await isTeamVisibleToViewer(teamId, viewerId);
+    if (!visible) {
+      return res.status(404).json({ success: false, message: "Team not found" });
+    }
 
     const result = await db.pool.query(
       `
@@ -71,6 +96,12 @@ const getTeamBadgeAwards = async (req, res) => {
 const getTeamMemberBadges = async (req, res) => {
   try {
     const teamId = req.params.id;
+    const viewerId = req.user?.id;
+
+    const visible = await isTeamVisibleToViewer(teamId, viewerId);
+    if (!visible) {
+      return res.status(404).json({ success: false, message: "Team not found" });
+    }
 
     const result = await db.pool.query(
       `
@@ -138,9 +169,25 @@ const getTeamMemberBadges = async (req, res) => {
 const getMemberBadgesForTeams = async (req, res) => {
   try {
     const rawIds = String(req.query.teamIds || "").split(",");
-    const teamIds = rawIds
+    const requestedIds = rawIds
       .map((id) => parseInt(id, 10))
       .filter((id) => Number.isFinite(id) && id > 0);
+
+    if (requestedIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: {},
+        meta: { totalCreditsByTeam: {} },
+      });
+    }
+
+    // Filter to only teams the viewer may access
+    const viewerId = req.user?.id;
+    const teamIds = [];
+    for (const id of requestedIds) {
+      const visible = await isTeamVisibleToViewer(id, viewerId);
+      if (visible) teamIds.push(id);
+    }
 
     if (teamIds.length === 0) {
       return res.status(200).json({
@@ -228,6 +275,12 @@ const getMemberBadgesForTeams = async (req, res) => {
 const getTeamMemberBadgeAwards = async (req, res) => {
   try {
     const teamId = req.params.id;
+    const viewerId = req.user?.id;
+
+    const visible = await isTeamVisibleToViewer(teamId, viewerId);
+    if (!visible) {
+      return res.status(404).json({ success: false, message: "Team not found" });
+    }
 
     const result = await db.pool.query(
       `
