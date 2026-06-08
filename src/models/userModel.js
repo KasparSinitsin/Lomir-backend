@@ -23,6 +23,7 @@ const userModel = {
           postal_code,
           city,
           state,
+          district,
           country,
           latitude,
           longitude,
@@ -32,7 +33,7 @@ const userModel = {
           created_at,
           updated_at
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,FALSE,TRUE,NOW(),NOW())
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,FALSE,TRUE,NOW(),NOW())
         RETURNING *
         `,
         [
@@ -45,6 +46,7 @@ const userModel = {
           userData.postal_code || null,
           userData.city || null,
           userData.state || null,
+          userData.district || null,
           userData.country || null,
           userData.latitude || null,
           userData.longitude || null,

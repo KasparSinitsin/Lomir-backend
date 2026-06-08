@@ -45,6 +45,7 @@ const serializeEmbeddedVacantRole = (row, extraFields = {}) => ({
   city: row.role_city,
   country: row.role_country,
   state: row.role_state,
+  district: row.role_district,
   is_remote: row.role_is_remote,
   latitude: row.role_latitude,
   longitude: row.role_longitude,

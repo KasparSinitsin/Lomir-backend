@@ -1,5 +1,6 @@
 const express = require("express");
 const axios = require("axios");
+const { deriveLocationFromPostalCode } = require("../utils/locationDerivation");
 const router = express.Router();
 
 // Helper function to detect country from postal code
@@ -21,12 +22,13 @@ function detectCountryCode(postalCode) {
 // Simple postal code to city mapping for common European codes
 const postalCodeMapping = {
   // Germany
-  10115: { city: "Berlin", country: "Germany" },
-  80331: { city: "Munich", country: "Germany" },
-  20095: { city: "Hamburg", country: "Germany" },
-  50667: { city: "Cologne", country: "Germany" },
-  60308: { city: "Frankfurt", country: "Germany" },
-  55116: { city: "Mainz", country: "Germany" },
+  10115: { city: "Berlin", state: "Berlin", country: "Germany", district: "Mitte" },
+  12555: { city: "Berlin", state: "Berlin", country: "Germany", district: "Köpenick" },
+  80331: { city: "Munich", state: "Bavaria", country: "Germany", district: "Altstadt-Lehel" },
+  20095: { city: "Hamburg", state: "Hamburg", country: "Germany", district: "Hamburg-Altstadt" },
+  50667: { city: "Cologne", state: "North Rhine-Westphalia", country: "Germany", district: "Innenstadt" },
+  60308: { city: "Frankfurt am Main", state: "Hessen", country: "Germany", district: "Westend-Süd" },
+  55116: { city: "Mainz", state: "Rhineland-Palatinate", country: "Germany", district: "Altstadt" },
 
   // Netherlands
   1012: { city: "Amsterdam", country: "Netherlands" },
@@ -63,7 +65,8 @@ const postalCodeMapping = {
 router.get("/postal-code/:code", async (req, res) => {
   try {
     const { code } = req.params;
-    const detectedCountry = detectCountryCode(code);
+    const requestedCountry = req.query.country || null;
+    const detectedCountry = requestedCountry || detectCountryCode(code);
 
     if (process.env.NODE_ENV !== "production") {
       console.log(
@@ -71,20 +74,38 @@ router.get("/postal-code/:code", async (req, res) => {
       );
     }
 
-    // First, try our simple mapping
-    if (postalCodeMapping[code]) {
-      const location = postalCodeMapping[code];
+    const derivedLocation = deriveLocationFromPostalCode(code, detectedCountry);
+    const mappedLocation = postalCodeMapping[code];
+
+    // First, try our deterministic mapping
+    if (derivedLocation.city || mappedLocation) {
+      const location = {
+        ...mappedLocation,
+        ...derivedLocation,
+      };
       if (process.env.NODE_ENV !== "production") {
         console.log(
           `Found in mapping: ${code} -> ${location.city}, ${location.country}`
         );
       }
 
+      const district =
+        location.district ||
+        location.suburb ||
+        location.borough ||
+        location.cityDistrict ||
+        null;
       const locationInfo = {
         city: location.city,
-        state: null,
+        state: location.state || null,
         country: location.country,
-        displayName: `${location.city}, ${location.country}`,
+        district,
+        suburb: location.suburb || null,
+        borough: location.borough || null,
+        cityDistrict: location.cityDistrict || null,
+        displayName: [district, location.city, location.country]
+          .filter(Boolean)
+          .join(", "),
         latitude: null,
         longitude: null,
       };
@@ -126,9 +147,22 @@ router.get("/postal-code/:code", async (req, res) => {
             address.city || address.town || address.village || address.hamlet,
           state: address.state,
           country: address.country,
+          district:
+            address.city_district ||
+            address.suburb ||
+            address.quarter ||
+            address.neighbourhood ||
+            address.borough ||
+            null,
+          suburb: address.suburb || null,
+          borough: address.borough || null,
+          cityDistrict: address.city_district || null,
           displayName: formatDisplayName(address),
           latitude: parseFloat(result.lat),
           longitude: parseFloat(result.lon),
+          importance: result.importance,
+          osmType: result.osm_type,
+          rawAddress: address,
         };
 
         if (process.env.NODE_ENV !== "production") {

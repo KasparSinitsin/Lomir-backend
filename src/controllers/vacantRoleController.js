@@ -1,5 +1,5 @@
 const db = require("../config/database");
-const { geocodeAddress } = require("../utils/geocodingUtil");
+const { resolveLocationData } = require("../utils/geocodingUtil");
 const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 const { serializeVacantRole } = require("../utils/vacantRoleSerializer");
 const { createNotification } = require("./notificationController");
@@ -551,6 +551,34 @@ const getVacantRoles = async (req, res) => {
 const getVacantRoleById = async (req, res) => {
   try {
     const { teamId, roleId } = req.params;
+    const viewerId = req.user?.id;
+
+    // Check parent team visibility before revealing any role data
+    const teamResult = await db.pool.query(
+      'SELECT is_public FROM teams WHERE id = $1 AND archived_at IS NULL',
+      [teamId],
+    );
+
+    if (teamResult.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "Role not found" });
+    }
+
+    const teamIsPublic =
+      teamResult.rows[0].is_public === true ||
+      teamResult.rows[0].is_public === 'true';
+
+    if (!teamIsPublic) {
+      if (!viewerId) {
+        return res.status(404).json({ success: false, message: "Role not found" });
+      }
+      const memberCheck = await db.pool.query(
+        'SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2',
+        [teamId, viewerId],
+      );
+      if (memberCheck.rows.length === 0) {
+        return res.status(404).json({ success: false, message: "Role not found" });
+      }
+    }
 
     const roleResult = await db.pool.query(
       `${VACANT_ROLE_SELECT}
@@ -623,6 +651,7 @@ const createVacantRole = async (req, res) => {
       city,
       country,
       state,
+      district,
       max_distance_km,
       is_remote,
       tag_ids, // array of tag IDs
@@ -643,25 +672,26 @@ const createVacantRole = async (req, res) => {
     const finalCity = isRemote ? null : city || null;
     const finalCountry = isRemote ? null : country || null;
     let finalState = isRemote ? null : state || null;
+    let finalDistrict = isRemote ? null : district || null;
     let finalLatitude = null;
     let finalLongitude = null;
     const finalMaxDistance = isRemote ? null : max_distance_km || null;
 
     // ── Geocode if not remote and we have enough location data ──
-    if (!isRemote && (finalPostalCode || finalCity) && finalCountry) {
-      const coordinates = await geocodeAddress({
+    if (!isRemote && finalCountry) {
+      const resolvedLocation = await resolveLocationData({
         postal_code: finalPostalCode,
         city: finalCity,
+        state: finalState,
+        district: finalDistrict,
         country: finalCountry,
       });
 
-      if (coordinates) {
-        finalLatitude = coordinates.latitude;
-        finalLongitude = coordinates.longitude;
-        // Use geocoded state if we don't already have one
-        if (!finalState && coordinates.state) {
-          finalState = coordinates.state;
-        }
+      if (resolvedLocation) {
+        finalState = resolvedLocation.state;
+        finalDistrict = resolvedLocation.district;
+        finalLatitude = resolvedLocation.latitude;
+        finalLongitude = resolvedLocation.longitude;
       }
     }
 
@@ -674,10 +704,10 @@ const createVacantRole = async (req, res) => {
       const roleResult = await client.query(
         `INSERT INTO team_vacant_roles (
           team_id, created_by, role_name, bio,
-          postal_code, city, country, state,
+          postal_code, city, country, state, district,
           latitude, longitude, max_distance_km, is_remote,
           is_synthetic
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         RETURNING *`,
         [
           teamId,
@@ -688,6 +718,7 @@ const createVacantRole = async (req, res) => {
           finalCity,
           finalCountry,
           finalState,
+          finalDistrict,
           finalLatitude,
           finalLongitude,
           finalMaxDistance,
@@ -852,6 +883,7 @@ const updateVacantRole = async (req, res) => {
       city,
       country,
       state,
+      district,
       max_distance_km,
       is_remote,
       tag_ids,
@@ -864,24 +896,26 @@ const updateVacantRole = async (req, res) => {
     const finalCity = isRemote ? null : city || null;
     const finalCountry = isRemote ? null : country || null;
     let finalState = isRemote ? null : state || null;
+    let finalDistrict = isRemote ? null : district || null;
     let finalLatitude = null;
     let finalLongitude = null;
     const finalMaxDistance = isRemote ? null : max_distance_km || null;
 
     // ── Geocode if not remote and we have enough location data ──
-    if (!isRemote && (finalPostalCode || finalCity) && finalCountry) {
-      const coordinates = await geocodeAddress({
+    if (!isRemote && finalCountry) {
+      const resolvedLocation = await resolveLocationData({
         postal_code: finalPostalCode,
         city: finalCity,
+        state: finalState,
+        district: finalDistrict,
         country: finalCountry,
       });
 
-      if (coordinates) {
-        finalLatitude = coordinates.latitude;
-        finalLongitude = coordinates.longitude;
-        if (!finalState && coordinates.state) {
-          finalState = coordinates.state;
-        }
+      if (resolvedLocation) {
+        finalState = resolvedLocation.state;
+        finalDistrict = resolvedLocation.district;
+        finalLatitude = resolvedLocation.latitude;
+        finalLongitude = resolvedLocation.longitude;
       }
     }
 
@@ -899,12 +933,13 @@ const updateVacantRole = async (req, res) => {
           city            = $4,
           country         = $5,
           state           = $6,
-          latitude        = $7,
-          longitude       = $8,
-          max_distance_km = $9,
-          is_remote       = $10,
+          district        = $7,
+          latitude        = $8,
+          longitude       = $9,
+          max_distance_km = $10,
+          is_remote       = $11,
           updated_at      = NOW()
-        WHERE id = $11 AND team_id = $12
+        WHERE id = $12 AND team_id = $13
         RETURNING *`,
         [
           role_name?.trim() || null,
@@ -913,6 +948,7 @@ const updateVacantRole = async (req, res) => {
           finalCity,
           finalCountry,
           finalState,
+          finalDistrict,
           finalLatitude,
           finalLongitude,
           finalMaxDistance,

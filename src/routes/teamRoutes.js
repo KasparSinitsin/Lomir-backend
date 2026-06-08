@@ -16,7 +16,7 @@ router.get("/my-teams", auth.authenticateToken, teamReadController.getUserTeams)
 
 // Bulk variant of /:id/member-badges. Must be declared before any /:id route
 // so Express doesn't treat "member-badges" as a team id.
-router.get("/member-badges", teamBadgeController.getMemberBadgesForTeams);
+router.get("/member-badges", auth.optionalAuthenticateToken, teamBadgeController.getMemberBadgesForTeams);
 
 // DELETE /api/teams/:id/avatar - Delete team's avatar image
 router.delete(
@@ -30,9 +30,10 @@ router.delete(
 // Get all vacant roles for a team (public, but enriched with match score if authenticated)
 router.get("/:teamId/vacant-roles", auth.optionalAuthenticateToken, vacantRoleController.getVacantRoles);
 
-// Get a single vacant role by ID (public)
+// Get a single vacant role by ID (optional auth for private-team visibility check)
 router.get(
   "/:teamId/vacant-roles/:roleId",
+  auth.optionalAuthenticateToken,
   vacantRoleController.getVacantRoleById,
 );
 
@@ -167,13 +168,14 @@ router.post(
   teamApplicationsController.applyToJoinTeam,
 );
 
-router.get("/:id/badge-awards", teamBadgeController.getTeamBadgeAwards);
-router.get("/:id/member-badges", teamBadgeController.getTeamMemberBadges);
+router.get("/:id/badge-awards", auth.optionalAuthenticateToken, teamBadgeController.getTeamBadgeAwards);
+router.get("/:id/member-badges", auth.optionalAuthenticateToken, teamBadgeController.getTeamMemberBadges);
 router.get(
   "/:id/member-badge-awards",
+  auth.optionalAuthenticateToken,
   teamBadgeController.getTeamMemberBadgeAwards,
 );
-router.get("/:id", teamReadController.getTeamById);
+router.get("/:id", auth.optionalAuthenticateToken, teamReadController.getTeamById);
 router.put("/:id", auth.authenticateToken, teamController.updateTeam);
 router.delete("/:id", auth.authenticateToken, teamController.deleteTeam);
 

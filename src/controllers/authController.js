@@ -4,7 +4,7 @@ const userModel = require("../models/userModel");
 const { generateToken } = require("../utils/jwtUtils");
 const emailService = require("../services/emailService");
 const db = require("../config/database");
-const { geocodeAddress } = require("../utils/geocodingUtil");
+const { resolveLocationData } = require("../utils/geocodingUtil");
 const { verifyTurnstileToken } = require("../utils/turnstileVerify");
 const { uploadToImageKit } = require("../middlewares/uploadMiddleware");
 
@@ -26,6 +26,8 @@ const registerSchema = Joi.object({
   bio: Joi.string().allow("", null),
   postal_code: Joi.string().allow("", null),
   city: Joi.string().allow("", null),
+  state: Joi.string().allow("", null),
+  district: Joi.string().allow("", null),
   country: Joi.string().allow("", null),
   avatar_url: Joi.string().uri().allow(null),
   turnstile_token: Joi.string().optional(),
@@ -136,27 +138,32 @@ const authController = {
         });
       }
 
-      // Geocode the address if location data is provided
-      let coordinates = null;
-      if (value.postal_code || value.city) {
+      // Geocode and enrich the location if any location data is provided.
+      if (value.country) {
         if (process.env.NODE_ENV !== "production") {
-          console.log("Attempting to geocode address for new user...");
+          console.log("Attempting to resolve location for new user...");
         }
-        coordinates = await geocodeAddress({
+        const resolvedLocation = await resolveLocationData({
           postal_code: value.postal_code,
           city: value.city,
+          state: value.state,
+          district: value.district,
           country: value.country,
         });
 
-        if (coordinates) {
+        if (resolvedLocation) {
           if (process.env.NODE_ENV !== "production") {
             console.log(
-              `Geocoded coordinates for new user: lat=${coordinates.latitude}, lng=${coordinates.longitude}`,
+              `Resolved location for new user: lat=${resolvedLocation.latitude}, lng=${resolvedLocation.longitude}`,
             );
           }
-          value.latitude = coordinates.latitude;
-          value.longitude = coordinates.longitude;
-          value.state = coordinates.state;
+          value.postal_code = resolvedLocation.postal_code;
+          value.city = resolvedLocation.city;
+          value.state = resolvedLocation.state;
+          value.district = resolvedLocation.district;
+          value.country = resolvedLocation.country;
+          value.latitude = resolvedLocation.latitude;
+          value.longitude = resolvedLocation.longitude;
         }
       }
 

@@ -16,6 +16,7 @@ const {
   buildNearestPrioritySQL,
   buildPostalCodeDistanceSQL,
 } = require("../utils/searchQueryBuilder");
+const { deriveLocationFromPostalCode } = require("../utils/locationDerivation");
 
 const VALID_SEARCH_TYPES = ["all", "teams", "users", "roles"];
 const VALID_ROLE_SORTS = ["recent", "newest", "name", "match", "proximity"];
@@ -754,6 +755,7 @@ async function fetchOpenRoleSearchResults({
       vr.city,
       vr.country,
       vr.state,
+      vr.district,
       vr.postal_code,
       vr.latitude,
       vr.longitude,
@@ -953,6 +955,68 @@ function appendUserSearchClause({
   return { nextParamIndex, query: userQuery };
 }
 
+// Exact GPS coordinates are stripped to protect privacy. Search results expose
+// rounded coordinates only, including legacy latitude/longitude keys so older
+// map clients can still place pins without receiving precise stored values.
+const toApproxCoord = (v) => {
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? Math.round(n * 10) / 10 : null;
+};
+
+const sanitizeSearchUser = ({ latitude, longitude, ...safe }) => {
+  const approxLat = toApproxCoord(latitude);
+  const approxLng = toApproxCoord(longitude);
+  const derivedLocation = deriveLocationFromPostalCode(
+    safe.postal_code,
+    safe.country,
+  );
+
+  return {
+    ...safe,
+    city: safe.city || derivedLocation.city || null,
+    state: safe.state || derivedLocation.state || null,
+    country: safe.country || derivedLocation.country || null,
+    district:
+      safe.district ||
+      safe.suburb ||
+      safe.borough ||
+      safe.cityDistrict ||
+      derivedLocation.district ||
+      null,
+    latitude: approxLat,
+    longitude: approxLng,
+    approximate_latitude: approxLat,
+    approximate_longitude: approxLng,
+  };
+};
+
+const sanitizeSearchTeam = ({ latitude, longitude, ...safe }) => {
+  const approxLat = toApproxCoord(latitude);
+  const approxLng = toApproxCoord(longitude);
+  const derivedLocation = deriveLocationFromPostalCode(
+    safe.postal_code,
+    safe.country,
+  );
+
+  return {
+    ...safe,
+    city: safe.city || derivedLocation.city || null,
+    state: safe.state || derivedLocation.state || null,
+    country: safe.country || derivedLocation.country || null,
+    district:
+      safe.district ||
+      safe.suburb ||
+      safe.borough ||
+      safe.cityDistrict ||
+      derivedLocation.district ||
+      null,
+    latitude: approxLat,
+    longitude: approxLng,
+    approximate_latitude: approxLat,
+    approximate_longitude: approxLng,
+  };
+};
+
 async function executeSearchQueries({
   params,
   query = null,
@@ -1059,6 +1123,7 @@ async function executeSearchQueries({
           t.postal_code,
           t.city,
           t.state,
+          t.district,
           t.country,
           t.latitude,
           t.longitude,
@@ -1114,7 +1179,7 @@ ${teamDistanceSelect}
   );
   const teamGroupByClause = `
         GROUP BY
-          t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote, t.postal_code, t.city, t.state, t.country, t.latitude, t.longitude
+          t.id, t.name, t.description, t.is_public, t.is_synthetic, t.max_members, t.owner_id, t.teamavatar_url, t.created_at, t.updated_at, t.is_remote, t.postal_code, t.city, t.state, t.district, t.country, t.latitude, t.longitude
       `;
 
   teamQuery += `
@@ -1183,6 +1248,7 @@ ${teamDistanceSelect}
           u.city,
           u.country,
           u.state,
+          u.district,
           u.avatar_url,
           u.is_public,
           u.is_synthetic,
@@ -1263,7 +1329,7 @@ ${teamDistanceSelect}
   if (hasSearchTerm) {
     userQuery += `
         GROUP BY
-          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.country, u.state, u.avatar_url, u.is_public, u.is_synthetic, u.created_at, u.updated_at, u.latitude, u.longitude${userDistanceGroupBy}
+          u.id, u.username, u.first_name, u.last_name, u.bio, u.postal_code, u.city, u.country, u.state, u.district, u.avatar_url, u.is_public, u.is_synthetic, u.created_at, u.updated_at, u.latitude, u.longitude${userDistanceGroupBy}
         ORDER BY ${userOrderBy}
       `;
   } else {
@@ -1586,7 +1652,7 @@ const searchController = {
           if (matchRoleId) {
             const roleResult = await db.pool.query(
               `SELECT id, role_name, is_remote, latitude, longitude, max_distance_km,
-                      city, country, state
+                      city, country, state, district
                FROM team_vacant_roles WHERE id = $1 AND status = 'open'`,
               [matchRoleId],
             );
@@ -1735,8 +1801,8 @@ const searchController = {
       res.status(200).json({
         success: true,
         data: {
-          teams: paginatedTeams,
-          users: paginatedUsers,
+          teams: paginatedTeams.map(sanitizeSearchTeam),
+          users: paginatedUsers.map(sanitizeSearchUser),
           roles: rolesForAll,
         },
         pagination: {
@@ -1952,7 +2018,7 @@ const searchController = {
           if (matchRoleId) {
             const roleResult = await db.pool.query(
               `SELECT id, role_name, is_remote, latitude, longitude, max_distance_km,
-                      city, country, state
+                      city, country, state, district
                FROM team_vacant_roles WHERE id = $1 AND status = 'open'`,
               [matchRoleId],
             );
@@ -2100,8 +2166,8 @@ const searchController = {
       res.status(200).json({
         success: true,
         data: {
-          teams: paginatedTeams,
-          users: paginatedUsers,
+          teams: paginatedTeams.map(sanitizeSearchTeam),
+          users: paginatedUsers.map(sanitizeSearchUser),
           roles: rolesForAll,
         },
         pagination: {

@@ -810,6 +810,28 @@ const getMessageById = async (req, res) => {
     }
 
     const row = result.rows[0];
+    const currentUserId = Number(req.user?.id ?? req.userId);
+
+    if (row.team_id) {
+      const memberCheck = await db.query(
+        'SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2',
+        [row.team_id, currentUserId],
+      );
+      if (memberCheck.rows.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to view this message',
+        });
+      }
+    } else {
+      if (Number(row.sender_id) !== currentUserId &&
+          Number(row.receiver_id) !== currentUserId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to view this message',
+        });
+      }
+    }
 
     res.status(200).json({
       success: true,
@@ -829,6 +851,7 @@ const getMessageById = async (req, res) => {
       },
     });
   } catch (error) {
+    console.error("Error fetching message:", error);
     res.status(500).json({
       success: false,
       message: "Error fetching message",
@@ -957,7 +980,11 @@ const updateMessage = async (req, res) => {
     });
   } catch (error) {
     console.error("updateMessage error:", error);
-    return res.status(500).json({ message: "Failed to edit message" });
+    return res.status(500).json({
+      success: false,
+      message: "Failed to edit message",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
   }
 };
 
@@ -1037,7 +1064,11 @@ const deleteMessage = async (req, res) => {
     return res.status(200).json({ success: true, message: "Message deleted" });
   } catch (error) {
     console.error("deleteMessage error:", error);
-    return res.status(500).json({ message: "Failed to delete message" });
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete message",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
   }
 };
 

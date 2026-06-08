@@ -1,9 +1,6 @@
 const db = require("../config/database");
 const Joi = require("joi");
-const {
-  geocodeAddress,
-  hasLocationChanged,
-} = require("../utils/geocodingUtil");
+const { resolveLocationData } = require("../utils/geocodingUtil");
 const {
   createNotification,
   notifyTeamMembers,
@@ -173,6 +170,7 @@ const teamCreationSchema = Joi.object({
   postal_code: Joi.string().allow(null, "").optional(),
   city: Joi.string().allow(null, "").optional(),
   state: Joi.string().allow(null, "").optional(),
+  district: Joi.string().allow(null, "").optional(),
   country: Joi.string().allow(null, "").optional(),
 
   teamavatar_url: Joi.string().uri().allow(null, "").messages({
@@ -203,21 +201,23 @@ const createTeam = async (req, res) => {
         errors: error.details.map((detail) => detail.message),
       });
     }
-    if (
-      !value.is_remote &&
-      (value.postal_code || value.city) &&
-      value.country
-    ) {
-      const coordinates = await geocodeAddress({
+    if (!value.is_remote && value.country) {
+      const resolvedLocation = await resolveLocationData({
         postal_code: value.postal_code,
         city: value.city,
+        state: value.state,
+        district: value.district,
         country: value.country,
       });
 
-      if (coordinates) {
-        value.latitude = coordinates.latitude;
-        value.longitude = coordinates.longitude;
-        value.state = coordinates.state;
+      if (resolvedLocation) {
+        value.postal_code = resolvedLocation.postal_code;
+        value.city = resolvedLocation.city;
+        value.state = resolvedLocation.state;
+        value.district = resolvedLocation.district;
+        value.country = resolvedLocation.country;
+        value.latitude = resolvedLocation.latitude;
+        value.longitude = resolvedLocation.longitude;
       }
     }
 
@@ -251,12 +251,13 @@ const createTeam = async (req, res) => {
     postal_code,
     city,
     state,
+    district,
     country,
     latitude,
     longitude,
     teamavatar_url,
     is_synthetic
-  ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+  ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
   RETURNING *
   `,
       [
@@ -269,11 +270,12 @@ const createTeam = async (req, res) => {
         value.is_remote ? null : (value.postal_code ?? null), // $7
         value.is_remote ? null : (value.city ?? null), // $8
         value.is_remote ? null : (value.state ?? null), // $9
-        value.is_remote ? null : (value.country ?? null), // $10
-        value.is_remote ? null : (value.latitude ?? null), // $11
-        value.is_remote ? null : (value.longitude ?? null), // $12
-        value.teamavatar_url ?? null, // $13
-        isOwnerSynthetic, // $14
+        value.is_remote ? null : (value.district ?? null), // $10
+        value.is_remote ? null : (value.country ?? null), // $11
+        value.is_remote ? null : (value.latitude ?? null), // $12
+        value.is_remote ? null : (value.longitude ?? null), // $13
+        value.teamavatar_url ?? null, // $14
+        isOwnerSynthetic, // $15
       ],
     );
 
@@ -328,12 +330,11 @@ const createTeam = async (req, res) => {
     });
   } catch (error) {
     await client.query("ROLLBACK");
-    console.error("--> Database error during team creation:", error); // More specific message
+    console.error("--> Database error during team creation:", error);
     res.status(500).json({
       success: false,
-      message: "Database error while creating team", // More specific message
-      errorDetails: error.message,
-      fullError: error,
+      message: "Database error while creating team",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
     });
   } finally {
     client.release();
@@ -388,6 +389,7 @@ const updateTeam = async (req, res) => {
       postal_code: Joi.string().allow(null, ""),
       city: Joi.string().allow(null, ""),
       state: Joi.string().allow(null, ""),
+      district: Joi.string().allow(null, ""),
       country: Joi.string().allow(null, ""),
 
       status: Joi.string().valid("active", "inactive"),
@@ -601,7 +603,7 @@ const updateTeam = async (req, res) => {
           res.status(500).json({
             success: false,
             message: "Database error while updating member role",
-            errorDetails: dbError.message,
+            ...(process.env.NODE_ENV === "development" && { error: dbError.message }),
           });
         } finally {
           client.release();
@@ -637,17 +639,20 @@ const updateTeam = async (req, res) => {
       value.postal_code !== undefined ||
       value.city !== undefined ||
       value.state !== undefined ||
+      value.district !== undefined ||
       value.country !== undefined;
 
     if (isRemoteProvided && isRemote) {
       value.postal_code = null;
       value.city = null;
       value.state = null;
+      value.district = null;
       value.country = null;
       if (isRemoteProvided && isRemote) {
         delete value.postal_code;
         delete value.city;
         delete value.state;
+        delete value.district;
         delete value.country;
       }
     } else if (!isRemoteProvided && hasAnyLocationField) {
@@ -659,30 +664,39 @@ const updateTeam = async (req, res) => {
     if (value.postal_code === "") value.postal_code = null;
     if (value.city === "") value.city = null;
     if (value.state === "") value.state = null;
+    if (value.district === "") value.district = null;
     if (value.country === "") value.country = null;
     if (value.teamavatar_file_id === "") value.teamavatar_file_id = null;
 
     // Geocode if location changed and not remote
-    if (!isRemote && (value.postal_code || value.city) && value.country) {
-      const coordinates = await geocodeAddress({
+    if (!isRemote && value.country) {
+      const resolvedLocation = await resolveLocationData({
         postal_code: value.postal_code,
         city: value.city,
+        state: value.state,
+        district: value.district,
         country: value.country,
       });
 
-      if (coordinates) {
-        value.latitude = coordinates.latitude;
-        value.longitude = coordinates.longitude;
-        value.state = coordinates.state;
+      if (resolvedLocation) {
+        value.postal_code = resolvedLocation.postal_code;
+        value.city = resolvedLocation.city;
+        value.state = resolvedLocation.state;
+        value.district = resolvedLocation.district;
+        value.country = resolvedLocation.country;
+        value.latitude = resolvedLocation.latitude;
+        value.longitude = resolvedLocation.longitude;
       } else {
         // Clear coordinates if geocoding fails
         value.latitude = null;
         value.longitude = null;
+        value.district = null;
       }
     } else if (isRemote) {
       // Clear coordinates for remote teams
       value.latitude = null;
       value.longitude = null;
+      value.district = null;
     }
 
     // Begin transaction
@@ -772,6 +786,13 @@ const updateTeam = async (req, res) => {
       if (value.state !== undefined) {
         updateFields.push(`state = $${paramCounter}`);
         queryParams.push(value.state); // already normalized to null above
+        paramCounter++;
+      }
+
+      // district
+      if (value.district !== undefined) {
+        updateFields.push(`district = $${paramCounter}`);
+        queryParams.push(value.district); // already normalized to null above
         paramCounter++;
       }
 
@@ -878,8 +899,7 @@ const updateTeam = async (req, res) => {
       res.status(500).json({
         success: false,
         message: "Database error while updating team",
-        errorDetails: dbError.message,
-        fullError: dbError,
+        ...(process.env.NODE_ENV === "development" && { error: dbError.message }),
       });
     } finally {
       client.release();
@@ -1013,12 +1033,11 @@ const deleteTeam = async (req, res) => {
       });
     } catch (dbError) {
       await client.query("ROLLBACK");
-      console.error("Database error during team deletion:", dbError); // More specific message
+      console.error("Database error during team deletion:", dbError);
       res.status(500).json({
         success: false,
-        message: "Database error while deleting team", // More specific message
-        errorDetails: dbError.message,
-        fullError: dbError,
+        message: "Database error while deleting team",
+        ...(process.env.NODE_ENV === "development" && { error: dbError.message }),
       });
     } finally {
       client.release();

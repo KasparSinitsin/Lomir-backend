@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../../config/database');
+const { authenticateToken } = require('../../middlewares/auth');
 
 // GET /api/tags/structured
 router.get('/structured', async (req, res) => {
@@ -73,16 +74,20 @@ router.get('/structured', async (req, res) => {
 });
 
 // POST /api/tags/create
-router.post('/create', async (req, res) => {
+router.post('/create', authenticateToken, async (req, res) => {
   try {
     const { name, category, supercategory } = req.body;
+
+    if (!name || typeof name !== 'string' || name.trim().length === 0 || name.trim().length > 100) {
+      return res.status(400).json({ error: 'Tag name is required and must be 1-100 characters' });
+    }
 
     const insertQuery = `
       INSERT INTO tags (name, category, supercategory)
       VALUES ($1, $2, $3)
       RETURNING id, name, category, supercategory
     `;
-    const result = await db.query(insertQuery, [name, category, supercategory]);
+    const result = await db.query(insertQuery, [name.trim(), category, supercategory]);
 
     res.status(201).json({ tag: result.rows[0] });
   } catch (error) {
@@ -111,37 +116,8 @@ router.get('/search', async (req, res) => {
   }
 });
 
-// PUT /api/tags/users/:userId
-router.put('/users/:userId/tags', async (req, res) => {
-  try {
-    const userId = req.params.userId;
-    const { tags } = req.body; 
-
-    if (!Array.isArray(tags) || tags.length === 0) {
-      return res.status(400).json({ error: 'Tags must be a non-empty array' });
-    }
-
-    const deleteQuery = `
-      DELETE FROM user_tags WHERE user_id = $1
-    `;
-    await db.query(deleteQuery, [userId]);
-
-    const insertQuery = `
-      INSERT INTO user_tags (user_id, tag_id)
-      VALUES ($1, $2)
-      RETURNING user_id, tag_id
-    `;
-    
-    for (const tagId of tags) {
-      await db.query(insertQuery, [userId, tagId]);
-    }
-
-    res.status(200).json({ message: 'User tags updated successfully' });
-  } catch (error) {
-    console.error('Error updating user tags:', error);
-    res.status(500).json({ error: 'Failed to update user tags' });
-  }
-});
+// PUT /api/tags/users/:userId/tags — REMOVED (duplicate of PUT /api/users/:id/tags in userRoutes.js)
+// That route already has authenticateToken and owner validation
 
 // GET /api/tags/popular - Get most used tags
 router.get('/popular', async (req, res) => {

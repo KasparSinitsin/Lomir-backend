@@ -27,12 +27,14 @@ const teamModel = {
     is_remote,
     postal_code,
     city,
+    state,
+    district,
     country,
     is_synthetic
-  ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+  ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
   RETURNING
     id, name, description, is_public, max_members,
-    teamavatar_url, is_remote, postal_code, city, country, is_synthetic
+    teamavatar_url, is_remote, postal_code, city, state, district, country, is_synthetic
 `,
         [
           teamDetails.name,
@@ -43,6 +45,8 @@ const teamModel = {
           teamDetails.is_remote ?? false,
           teamDetails.is_remote ? null : (teamDetails.postal_code ?? null),
           teamDetails.is_remote ? null : (teamDetails.city ?? null),
+          teamDetails.is_remote ? null : (teamDetails.state ?? null),
+          teamDetails.is_remote ? null : (teamDetails.district ?? null),
           teamDetails.is_remote ? null : (teamDetails.country ?? null),
           teamDetails.is_synthetic,
         ],
@@ -110,11 +114,15 @@ const teamModel = {
       const postalCode =
         teamDetails.postal_code ?? teamDetails.postalCode ?? null;
       const city = teamDetails.city ?? null;
+      const state = teamDetails.state ?? null;
+      const district = teamDetails.district ?? null;
       const country = teamDetails.country ?? null;
 
       // If remote: force location fields to NULL
       const finalPostalCode = isRemote ? null : postalCode || null;
       const finalCity = isRemote ? null : city || null;
+      const finalState = isRemote ? null : state || null;
+      const finalDistrict = isRemote ? null : district || null;
       const finalCountry = isRemote ? null : country || null;
 
       // --- Update teams table ---
@@ -131,11 +139,13 @@ const teamModel = {
         is_remote = $7,
         postal_code = $8,
         city = $9,
-        country = $10
+        state = $10,
+        district = $11,
+        country = $12
       WHERE id = $1
       RETURNING
         id, name, description, is_public, max_members,
-        teamavatar_url, is_remote, postal_code, city, country
+        teamavatar_url, is_remote, postal_code, city, state, district, country
       `,
         [
           teamId,
@@ -152,6 +162,8 @@ const teamModel = {
           isRemote,
           finalPostalCode,
           finalCity,
+          finalState,
+          finalDistrict,
           finalCountry,
         ],
       );
@@ -208,7 +220,7 @@ const teamModel = {
     const result = await db.query(
       `SELECT
      id, name, description, is_public, max_members,
-     teamavatar_url, is_remote, postal_code, city, country
+     teamavatar_url, is_remote, postal_code, city, state, district, country
    FROM teams
    WHERE id = $1`,
       [id],

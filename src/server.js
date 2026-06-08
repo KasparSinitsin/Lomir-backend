@@ -102,15 +102,45 @@ io.on("connection", (socket) => {
   io.emit("users:online", Array.from(connectedUsers.keys()));
 
   // Handle joining a conversation
-  socket.on("conversation:join", (data) => {
-    const conversationId =
-      typeof data === "object" ? data.conversationId : data;
-    const type = typeof data === "object" ? data.type : "direct";
+  socket.on("conversation:join", async (data) => {
+    try {
+      const conversationId =
+        typeof data === "object" ? data.conversationId : data;
+      const db = require("./config/database");
 
-    // Join the conversation room
-    socket.join(`conversation:${conversationId}`);
-    if (process.env.NODE_ENV !== "production") {
-      console.log(`User ${userId} joined ${type} conversation ${conversationId}`);
+      const teamCheck = await db.query(
+        "SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2",
+        [conversationId, userId],
+      );
+
+      if (teamCheck.rows.length > 0) {
+        socket.join(`conversation:${conversationId}`);
+        if (process.env.NODE_ENV !== "production") {
+          console.log(`User ${userId} joined team conversation ${conversationId}`);
+        }
+        return;
+      }
+
+      const dmCheck = await db.query(
+        `SELECT 1 FROM messages
+         WHERE team_id IS NULL
+           AND ((sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1))
+         LIMIT 1`,
+        [userId, conversationId],
+      );
+
+      if (dmCheck.rows.length > 0) {
+        socket.join(`conversation:${conversationId}`);
+        if (process.env.NODE_ENV !== "production") {
+          console.log(`User ${userId} joined direct conversation ${conversationId}`);
+        }
+        return;
+      }
+
+      socket.emit("error", { message: "Not authorized to join this conversation" });
+    } catch (error) {
+      console.error("Error validating conversation join:", error);
+      socket.emit("error", { message: "Error joining conversation" });
     }
   });
 
@@ -189,6 +219,15 @@ io.on("connection", (socket) => {
       let replyTo = null;
 
       if (type === "team") {
+        const memberCheck = await db.query(
+          `SELECT tm.user_id FROM team_members tm WHERE tm.team_id = $1 AND tm.user_id = $2`,
+          [conversationId, userId],
+        );
+        if (memberCheck.rows.length === 0) {
+          socket.emit("error", { message: "Not authorized to send messages to this team" });
+          return;
+        }
+
         messageResult = await db.query(
           `INSERT INTO messages (sender_id, team_id, content, reply_to_id, image_url, file_url, file_name, file_size, file_expires_at, sent_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())

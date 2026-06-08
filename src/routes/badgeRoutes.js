@@ -1,6 +1,6 @@
 const express = require("express");
 const badgeController = require("../controllers/badgeController");
-const { authenticateToken } = require("../middlewares/auth");
+const { authenticateToken, optionalAuthenticateToken } = require("../middlewares/auth");
 
 const router = express.Router();
 
@@ -25,7 +25,7 @@ router.get(
   badgeController.getSharedTeams,
 );
 
-// Get badges for a specific user (public)
-router.get("/user/:userId", badgeController.getUserBadges);
+// Get badges for a specific user (optional auth so owner sees hidden awards)
+router.get("/user/:userId", optionalAuthenticateToken, badgeController.getUserBadges);
 
 module.exports = router;
