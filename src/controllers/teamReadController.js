@@ -68,7 +68,8 @@ const getTeamById = async (req, res) => {
              t.owner_id, t.teamavatar_url, t.is_remote, t.is_synthetic,
              t.created_at, t.updated_at, t.postal_code, t.city, t.country, t.state, t.district,
              COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
-             (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count
+             (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count,
+             (SELECT COALESCE(json_agg(vr.role_name ORDER BY vr.role_name ASC), '[]'::json) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_names
       FROM teams t
       LEFT JOIN team_members tm ON t.id = tm.team_id
       WHERE t.id = $1 AND t.archived_at IS NULL
