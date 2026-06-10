@@ -742,7 +742,7 @@ async function fetchOpenRoleSearchResults({
   }
 
   let roleDistanceSelect = "";
-  if (userLocation && (sort === "proximity" || hasValidMaxDistance)) {
+  if (userLocation) {
     roleDistanceSelect = buildDistanceSelectSQL("vr", userLocation);
   }
 
@@ -1099,7 +1099,7 @@ async function executeSearchQueries({
   teamCountParams.push(...teamCountFilters.params);
 
   let teamDistanceSelect = "";
-  if (userLocation && (sort === "proximity" || hasValidMaxDistance)) {
+  if (userLocation) {
     teamDistanceSelect = buildDistanceSelectSQL(
       "t",
       userLocation,
@@ -1133,6 +1133,7 @@ async function executeSearchQueries({
             ELSE t.max_members - COALESCE(COUNT(DISTINCT tm.user_id), 0)
           END as available_capacity,
           (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count,
+          (SELECT COALESCE(json_agg(vr.role_name ORDER BY vr.role_name ASC), '[]'::json) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_names,
           COALESCE(
   json_agg(
     DISTINCT jsonb_build_object(
@@ -1230,10 +1231,7 @@ ${teamDistanceSelect}
 
   let userDistanceSelect = "";
   const userDistanceGroupBy = "";
-  if (
-    userLocation &&
-    ((sort === "proximity" && direction !== "REMOTE") || hasValidMaxDistance)
-  ) {
+  if (userLocation) {
     userDistanceSelect = buildDistanceSelectSQL("u", userLocation);
   }
 
@@ -1597,6 +1595,7 @@ const searchController = {
           team.open_role_count !== null && team.open_role_count !== undefined
             ? parseInt(team.open_role_count, 10)
             : 0,
+        open_role_names: normalizeJsonArray(team.open_role_names),
       }));
 
       const usersWithFixedVisibility = userResults.rows.map((user) => ({
@@ -1963,6 +1962,7 @@ const searchController = {
           team.open_role_count !== null && team.open_role_count !== undefined
             ? parseInt(team.open_role_count, 10)
             : 0,
+        open_role_names: normalizeJsonArray(team.open_role_names),
       }));
 
       const usersWithFixedVisibility = userResults.rows.map((user) => ({
