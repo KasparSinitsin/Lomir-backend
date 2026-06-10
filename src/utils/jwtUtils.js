@@ -15,7 +15,6 @@ const generateToken = (user) => {
   const payload = {
     id: user.id,
     username: user.username,
-    email: user.email
   };
 
   if (process.env.NODE_ENV !== 'production') {
