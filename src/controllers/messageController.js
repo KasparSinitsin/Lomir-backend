@@ -234,13 +234,14 @@ const getConversations = async (req, res) => {
           AND team_id IS NULL
         GROUP BY sender_id
       )
-      SELECT 
+      SELECT
         lm.partner_id as id,
         'direct' as type,
         u.username,
         u.first_name,
         u.last_name,
         u.avatar_url,
+        u.is_synthetic,
         lm.last_message,
         lm.last_message_time as updated_at,
         COALESCE(uc.unread_count, 0) as unread_count
@@ -318,6 +319,8 @@ const getConversations = async (req, res) => {
         firstName: row.first_name,
         lastName: row.last_name,
         avatarUrl: row.avatar_url,
+        isSynthetic: row.is_synthetic,
+        is_synthetic: row.is_synthetic,
       },
       lastMessage: row.last_message,
       updatedAt: row.updated_at,
@@ -402,12 +405,13 @@ const getConversationById = async (req, res) => {
     } else {
       // Get direct conversation partner details
       const userQuery = `
-        SELECT 
+        SELECT
           id,
           username,
           first_name,
           last_name,
-          avatar_url
+          avatar_url,
+          is_synthetic
         FROM users
         WHERE id = $1
       `;
@@ -434,6 +438,8 @@ const getConversationById = async (req, res) => {
             firstName: partner.first_name,
             lastName: partner.last_name,
             avatarUrl: partner.avatar_url,
+            isSynthetic: partner.is_synthetic,
+            is_synthetic: partner.is_synthetic,
           },
         },
       });
