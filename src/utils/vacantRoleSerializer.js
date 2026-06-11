@@ -4,6 +4,7 @@ const FILLED_BY_USER_COLUMN_NAMES = [
   "filled_by_user_last_name",
   "filled_by_user_username",
   "filled_by_user_avatar_url",
+  "filled_by_user_is_public",
 ];
 
 const buildFilledByUserFromRow = (row, prefix = "") => {
@@ -19,6 +20,7 @@ const buildFilledByUserFromRow = (row, prefix = "") => {
     last_name: row[`${prefix}filled_by_user_last_name`] ?? null,
     username: row[`${prefix}filled_by_user_username`] ?? null,
     avatar_url: row[`${prefix}filled_by_user_avatar_url`] ?? null,
+    is_public: row[`${prefix}filled_by_user_is_public`] ?? null,
   };
 };
 
