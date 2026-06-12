@@ -3,6 +3,81 @@ const {
   deleteImageKitFile,
   isImageKitUrl,
 } = require("../utils/imagekitUtils");
+const { validateChatFileUrl } = require("../utils/fileValidation");
+
+const CHAT_FILE_RETENTION_DAYS = 60;
+
+const getChatFileExpiresAt = () =>
+  new Date(Date.now() + CHAT_FILE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+
+const validateMessageFileInputs = async ({ imageUrl, fileUrl }) => {
+  let fileSize = null;
+  let fileExpiresAt = null;
+
+  if (imageUrl) {
+    const validation = await validateChatFileUrl(imageUrl, "chatImage");
+    if (!validation.valid) {
+      return { valid: false, message: validation.error };
+    }
+    fileSize = validation.size || null;
+    fileExpiresAt = getChatFileExpiresAt();
+  }
+
+  if (fileUrl) {
+    const validation = await validateChatFileUrl(fileUrl, "chatFile");
+    if (!validation.valid) {
+      return { valid: false, message: validation.error };
+    }
+    fileSize = validation.size || null;
+    fileExpiresAt = getChatFileExpiresAt();
+  }
+
+  return { valid: true, fileSize, fileExpiresAt };
+};
+
+const ensureTeamMessageAccess = async (teamId, userId) => {
+  const result = await db.query(
+    `SELECT 1
+     FROM team_members tm
+     JOIN teams t ON t.id = tm.team_id
+     WHERE tm.team_id = $1
+       AND tm.user_id = $2
+       AND t.archived_at IS NULL
+     LIMIT 1`,
+    [teamId, userId],
+  );
+
+  return result.rows.length > 0;
+};
+
+const ensureReplyMessageAccess = async ({ replyToId, userId, conversationId, type }) => {
+  if (!replyToId) return true;
+
+  const result =
+    type === "team"
+      ? await db.query(
+          `SELECT 1
+           FROM messages
+           WHERE id = $1
+             AND team_id = $2
+           LIMIT 1`,
+          [replyToId, conversationId],
+        )
+      : await db.query(
+          `SELECT 1
+           FROM messages
+           WHERE id = $1
+             AND team_id IS NULL
+             AND (
+               (sender_id = $2 AND receiver_id = $3)
+               OR (sender_id = $3 AND receiver_id = $2)
+             )
+           LIMIT 1`,
+          [replyToId, userId, conversationId],
+        );
+
+  return result.rows.length > 0;
+};
 
 const emitMessageReceived = async (req, messageRow, type, conversationId) => {
   const io = req.app.get("io");
@@ -403,6 +478,25 @@ const getConversationById = async (req, res) => {
         },
       });
     } else {
+      const participantCheck = await db.query(
+        `SELECT 1
+         FROM messages
+         WHERE team_id IS NULL
+           AND (
+             (sender_id = $1 AND receiver_id = $2)
+             OR (sender_id = $2 AND receiver_id = $1)
+           )
+         LIMIT 1`,
+        [userId, conversationId],
+      );
+
+      if (participantCheck.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Conversation not found or access denied",
+        });
+      }
+
       // Get direct conversation partner details
       const userQuery = `
         SELECT
@@ -689,6 +783,7 @@ const sendMessage = async (req, res) => {
       reply_to_id: bodyReplyToIdSnake,
     } = req.body;
     const replyToId = bodyReplyToId || bodyReplyToIdSnake || null;
+    const messageType = type === "team" ? "team" : "direct";
 
     // Allow content OR imageUrl OR fileUrl (or combinations)
     if ((!content || content.trim() === "") && !imageUrl && !fileUrl) {
@@ -698,39 +793,57 @@ const sendMessage = async (req, res) => {
       });
     }
 
-    /**
-     * ✅ Fix 2: Backend - Block messages to archived teams
-     * Use the "targetTeamId" derived from:
-     * - conversationId when type === "team"
-     * - req.body.team_id (if some clients send it)
-     *
-     * (We use db.query here for consistency with the rest of this controller.
-     * If your database module exposes db.pool.query as well, you can swap it in.)
-     */
-    const targetTeamId =
-      type === "team" ? conversationId : req.body.team_id || req.body.teamId;
+    const fileValidation = await validateMessageFileInputs({ imageUrl, fileUrl });
+    if (!fileValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: fileValidation.message,
+      });
+    }
 
-    if (targetTeamId) {
-      const teamCheck = await db.query(
-        `SELECT archived_at FROM teams WHERE id = $1`,
-        [targetTeamId],
-      );
-
-      if (teamCheck.rows.length > 0 && teamCheck.rows[0].archived_at) {
+    if (messageType === "team") {
+      const canAccessTeam = await ensureTeamMessageAccess(conversationId, userId);
+      if (!canAccessTeam) {
         return res.status(403).json({
           success: false,
-          message: "Cannot send messages to a deleted team",
+          message: "Not authorized to send messages to this team",
+        });
+      }
+    } else {
+      const recipientResult = await db.query(
+        `SELECT id FROM users WHERE id = $1`,
+        [conversationId],
+      );
+
+      if (recipientResult.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Recipient not found",
         });
       }
     }
 
+    const replyAllowed = await ensureReplyMessageAccess({
+      replyToId,
+      userId,
+      conversationId,
+      type: messageType,
+    });
+
+    if (!replyAllowed) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to reply to this message",
+      });
+    }
+
     let messageResult;
 
-    if (type === "team") {
+    if (messageType === "team") {
       messageResult = await db.query(
-        `INSERT INTO messages (sender_id, team_id, content, reply_to_id, image_url, file_url, file_name, sent_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-     RETURNING id, sender_id, team_id, content, reply_to_id, image_url, file_url, file_name, sent_at`,
+        `INSERT INTO messages (sender_id, team_id, content, reply_to_id, image_url, file_url, file_name, file_size, file_expires_at, sent_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+     RETURNING id, sender_id, team_id, content, reply_to_id, image_url, file_url, file_name, file_size, file_expires_at, sent_at`,
         [
           userId,
           conversationId,
@@ -739,13 +852,15 @@ const sendMessage = async (req, res) => {
           imageUrl || null,
           fileUrl || null,
           fileName || null,
+          fileValidation.fileSize,
+          fileValidation.fileExpiresAt,
         ],
       );
     } else {
       messageResult = await db.query(
-        `INSERT INTO messages (sender_id, receiver_id, content, reply_to_id, image_url, file_url, file_name, sent_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-     RETURNING id, sender_id, receiver_id, content, reply_to_id, image_url, file_url, file_name, sent_at`,
+        `INSERT INTO messages (sender_id, receiver_id, content, reply_to_id, image_url, file_url, file_name, file_size, file_expires_at, sent_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+     RETURNING id, sender_id, receiver_id, content, reply_to_id, image_url, file_url, file_name, file_size, file_expires_at, sent_at`,
         [
           userId,
           conversationId,
@@ -754,6 +869,8 @@ const sendMessage = async (req, res) => {
           imageUrl || null,
           fileUrl || null,
           fileName || null,
+          fileValidation.fileSize,
+          fileValidation.fileExpiresAt,
         ],
       );
     }
@@ -761,7 +878,7 @@ const sendMessage = async (req, res) => {
     await emitMessageReceived(
       req,
       messageResult.rows[0],
-      type === "team" ? "team" : "direct",
+      messageType,
       conversationId,
     );
 
@@ -899,6 +1016,15 @@ const updateMessage = async (req, res) => {
         .json({ message: "Not authorized to edit this message" });
     }
 
+    if (msg.team_id) {
+      const canAccessTeam = await ensureTeamMessageAccess(msg.team_id, currentUserId);
+      if (!canAccessTeam) {
+        return res
+          .status(403)
+          .json({ message: "Not authorized to edit this message" });
+      }
+    }
+
     if (msg.deleted_at) {
       return res.status(400).json({ message: "Cannot edit a deleted message" });
     }
@@ -1021,6 +1147,15 @@ const deleteMessage = async (req, res) => {
       return res
         .status(403)
         .json({ message: "Not authorized to delete this message" });
+    }
+
+    if (msg.team_id) {
+      const canAccessTeam = await ensureTeamMessageAccess(msg.team_id, currentUserId);
+      if (!canAccessTeam) {
+        return res
+          .status(403)
+          .json({ message: "Not authorized to delete this message" });
+      }
     }
 
     const imageUrl = msg.image_url;

@@ -74,9 +74,13 @@ const getTeamBadgeAwards = async (req, res) => {
       LEFT JOIN teams t_ctx ON ba.team_id = t_ctx.id
       LEFT JOIN tags tag ON ba.tag_id = tag.id
       WHERE ba.tag_id IS NOT NULL
+        AND (
+          ba.awarded_to_user_id = $2
+          OR NOT (ba.id = ANY(COALESCE(recipient.hidden_award_ids, '{}'::INTEGER[])))
+        )
       ORDER BY ba.created_at DESC, ba.id DESC
       `,
-      [teamId],
+      [teamId, viewerId || null],
     );
 
     res.status(200).json({
@@ -122,6 +126,11 @@ const getTeamMemberBadges = async (req, res) => {
         JOIN badges b         ON ba.badge_id = b.id
         JOIN team_members tm  ON ba.awarded_to_user_id = tm.user_id
                              AND tm.team_id = $1
+        LEFT JOIN users recipient ON recipient.id = ba.awarded_to_user_id
+        WHERE (
+          ba.awarded_to_user_id = $2
+          OR NOT (ba.id = ANY(COALESCE(recipient.hidden_award_ids, '{}'::INTEGER[])))
+        )
         GROUP BY b.id, b.name, b.description, b.category, b.color,
                  b.image_url, b.cat_image_url
       ),
@@ -143,7 +152,7 @@ const getTeamMemberBadges = async (req, res) => {
       JOIN category_totals ct ON bt.category = ct.category
       ORDER BY bt.category, bt.total_credits DESC, bt.name
       `,
-      [teamId],
+      [teamId, viewerId || null],
     );
 
     const grandTotalCredits = result.rows.reduce(
@@ -217,6 +226,11 @@ const getMemberBadgesForTeams = async (req, res) => {
         JOIN badges b         ON ba.badge_id = b.id
         JOIN team_members tm  ON ba.awarded_to_user_id = tm.user_id
                              AND tm.team_id = ANY($1)
+        LEFT JOIN users recipient ON recipient.id = ba.awarded_to_user_id
+        WHERE (
+          ba.awarded_to_user_id = $2
+          OR NOT (ba.id = ANY(COALESCE(recipient.hidden_award_ids, '{}'::INTEGER[])))
+        )
         GROUP BY tm.team_id, b.id, b.name, b.description, b.category, b.color,
                  b.image_url, b.cat_image_url
       ),
@@ -240,7 +254,7 @@ const getMemberBadgesForTeams = async (req, res) => {
         ON bt.category = ct.category AND bt.team_id = ct.team_id
       ORDER BY bt.team_id, bt.category, bt.total_credits DESC, bt.name
       `,
-      [teamIds],
+      [teamIds, viewerId || null],
     );
 
     const dataByTeam = {};
@@ -324,9 +338,13 @@ const getTeamMemberBadgeAwards = async (req, res) => {
       LEFT JOIN users recipient ON ba.awarded_to_user_id = recipient.id
       LEFT JOIN teams t_ctx ON ba.team_id = t_ctx.id
       LEFT JOIN tags tag ON ba.tag_id = tag.id
+      WHERE (
+        ba.awarded_to_user_id = $2
+        OR NOT (ba.id = ANY(COALESCE(recipient.hidden_award_ids, '{}'::INTEGER[])))
+      )
       ORDER BY ba.created_at DESC, ba.id DESC
       `,
-      [teamId],
+      [teamId, viewerId || null],
     );
 
     res.status(200).json({

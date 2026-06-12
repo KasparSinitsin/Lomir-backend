@@ -30,6 +30,14 @@ const registerSchema = Joi.object({
   district: Joi.string().allow("", null),
   country: Joi.string().allow("", null),
   avatar_url: Joi.string().uri().allow(null),
+  acceptedTerms: Joi.boolean().truthy("true").valid(true).required().messages({
+    "any.only": "Terms of Service must be accepted",
+    "any.required": "Terms of Service must be accepted",
+  }),
+  acceptedPrivacy: Joi.boolean().truthy("true").valid(true).required().messages({
+    "any.only": "Privacy Policy must be accepted",
+    "any.required": "Privacy Policy must be accepted",
+  }),
   turnstile_token: Joi.string().optional(),
   tags: Joi.array()
     .items(
@@ -77,7 +85,11 @@ const authController = {
         ...req.body,
         tags: tags || [],
         avatar_url: avatarUrl,
+        acceptedTerms: req.body.acceptedTerms ?? req.body.accepted_terms,
+        acceptedPrivacy: req.body.acceptedPrivacy ?? req.body.accepted_privacy,
       };
+      delete userData.accepted_terms;
+      delete userData.accepted_privacy;
 
       // Validate the payload
       const { error, value } = registerSchema.validate(userData);

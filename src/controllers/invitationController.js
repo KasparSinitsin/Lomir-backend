@@ -340,6 +340,7 @@ const getUserReceivedInvitations = async (req, res) => {
         u.first_name as inviter_first_name, u.last_name as inviter_last_name,
         u.avatar_url as inviter_avatar_url,
         u.is_synthetic as inviter_is_synthetic,
+        u.is_public as inviter_is_public,
         EXISTS (
           SELECT 1 FROM team_members tm
           WHERE tm.team_id = t.id AND tm.user_id = $1
@@ -590,6 +591,7 @@ const getUserReceivedInvitations = async (req, res) => {
         last_name: row.inviter_last_name,
         avatar_url: row.inviter_avatar_url,
         is_synthetic: row.inviter_is_synthetic === true,
+        is_public: row.inviter_is_public === true || row.inviter_is_public === "true",
       },
       is_internal: row.is_internal === true || row.is_internal === "true",
     }));
@@ -651,6 +653,7 @@ const getTeamSentInvitations = async (req, res) => {
     inv.last_name as inviter_last_name,
     inv.avatar_url as inviter_avatar_url,
     inv.is_synthetic as inviter_is_synthetic,
+    inv.is_public as inviter_is_public,
     EXISTS (
       SELECT 1 FROM team_members tm
       WHERE tm.team_id = ti.team_id AND tm.user_id = ti.invitee_id
@@ -825,6 +828,7 @@ const getTeamSentInvitations = async (req, res) => {
         last_name: row.inviter_last_name,
         avatar_url: row.inviter_avatar_url,
         is_synthetic: row.inviter_is_synthetic === true,
+        is_public: row.inviter_is_public === true || row.inviter_is_public === "true",
       },
       role_is_synthetic: row.role_is_synthetic === true,
       inviter_username: row.inviter_username,

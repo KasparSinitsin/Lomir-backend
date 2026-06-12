@@ -3,6 +3,66 @@ const bcrypt = require("bcrypt");
 
 const SALT_ROUNDS = 10;
 
+const CREATED_USER_FIELDS = `
+  id,
+  username,
+  email,
+  first_name,
+  last_name,
+  bio,
+  postal_code,
+  city,
+  state,
+  district,
+  country,
+  avatar_url,
+  email_verified,
+  is_public,
+  is_synthetic,
+  created_at,
+  updated_at
+`;
+
+const AUTH_USER_FIELDS = `
+  id,
+  username,
+  email,
+  password_hash,
+  email_verified,
+  first_name,
+  last_name,
+  bio,
+  postal_code,
+  city,
+  state,
+  district,
+  country,
+  avatar_url,
+  is_public,
+  is_synthetic,
+  created_at,
+  updated_at
+`;
+
+const CURRENT_USER_FIELDS = `
+  id,
+  username,
+  email,
+  first_name,
+  last_name,
+  bio,
+  postal_code,
+  city,
+  state,
+  district,
+  country,
+  avatar_url,
+  is_public,
+  is_synthetic,
+  created_at,
+  updated_at
+`;
+
 const userModel = {
   // ==============================
   // CREATE USER
@@ -34,7 +94,7 @@ const userModel = {
           updated_at
         )
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,FALSE,TRUE,NOW(),NOW())
-        RETURNING *
+        RETURNING ${CREATED_USER_FIELDS}
         `,
         [
           userData.username,
@@ -66,7 +126,9 @@ const userModel = {
   // ==============================
   async findByEmail(email) {
     const result = await db.query(
-      `SELECT * FROM users WHERE lower(email) = lower($1)`,
+      `SELECT ${AUTH_USER_FIELDS}
+       FROM users
+       WHERE lower(email) = lower($1)`,
       [email],
     );
     return result.rows[0];
@@ -77,7 +139,9 @@ const userModel = {
   // ==============================
   async findByUsername(username) {
     const result = await db.query(
-      `SELECT * FROM users WHERE lower(username) = lower($1)`,
+      `SELECT id, username
+       FROM users
+       WHERE lower(username) = lower($1)`,
       [username],
     );
     return result.rows[0];
@@ -88,7 +152,9 @@ const userModel = {
   // ==============================
   async findById(id) {
     const result = await db.query(
-      `SELECT * FROM users WHERE id = $1`,
+      `SELECT ${CURRENT_USER_FIELDS}
+       FROM users
+       WHERE id = $1`,
       [id],
     );
     return result.rows[0];

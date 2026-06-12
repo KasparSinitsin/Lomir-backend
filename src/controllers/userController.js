@@ -331,23 +331,22 @@ const getUserById = async (req, res) => {
       }
 
       if (!sharesTeam) {
-        return res.status(200).json({
-          success: true,
-          data: {
-            id: user.id,
-            username: user.username,
-            avatar_url: user.avatar_url,
-            is_public: false,
-            profile_access: "limited",
-          },
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
         });
       }
     }
 
     if (!isOwner) {
       const publicData = sanitizePublicUser(user);
-      if (user.badges !== undefined) publicData.badges = user.badges;
-      if (user.total_badge_credits !== undefined) publicData.total_badge_credits = user.total_badge_credits;
+      if (user.hide_badges) {
+        publicData.badges = [];
+        publicData.total_badge_credits = 0;
+      } else {
+        if (user.badges !== undefined) publicData.badges = user.badges;
+        if (user.total_badge_credits !== undefined) publicData.total_badge_credits = user.total_badge_credits;
+      }
       if (user.hide_badges !== undefined) publicData.hide_badges = user.hide_badges;
       if (user.updated_at !== undefined) publicData.updated_at = user.updated_at;
 
@@ -1591,6 +1590,38 @@ const getUserTags = async (req, res) => {
     const userId = req.params.id;
     const canViewHiddenAwards = Number(req.user?.id) === Number(userId);
 
+    const userVisibility = await pool.query(
+      `SELECT id, is_public, COALESCE(hide_badges, FALSE) AS hide_badges
+       FROM users
+       WHERE id = $1`,
+      [userId],
+    );
+
+    if (userVisibility.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const userRow = userVisibility.rows[0];
+    const userIsPublic =
+      userRow.is_public === true || userRow.is_public === "true";
+
+    if (!canViewHiddenAwards && !userIsPublic) {
+      let sharesTeam = false;
+      if (req.user) {
+        const teamCheck = await pool.query(
+          `SELECT 1 FROM team_members tm1
+           JOIN team_members tm2 ON tm1.team_id = tm2.team_id
+           WHERE tm1.user_id = $1 AND tm2.user_id = $2
+           LIMIT 1`,
+          [req.user.id, userId],
+        );
+        sharesTeam = teamCheck.rows.length > 0;
+      }
+      if (!sharesTeam) {
+        return res.status(404).json({ success: false, message: "User not found" });
+      }
+    }
+
     await ensureBadgeVisibilityColumns();
 
     const result = await pool.query(
@@ -1622,6 +1653,7 @@ const getUserTags = async (req, res) => {
               AND ba2.awarded_to_user_id = ut.user_id
               AND (
                 $2::BOOLEAN = TRUE
+                OR COALESCE(u.hide_badges, FALSE) = TRUE
                 OR NOT (ba2.id = ANY(COALESCE(u.hidden_award_ids, '{}'::INTEGER[])))
               )
             GROUP BY b2.category
@@ -1633,6 +1665,7 @@ const getUserTags = async (req, res) => {
           AND ba.awarded_to_user_id = ut.user_id
           AND (
             $2::BOOLEAN = TRUE
+            OR COALESCE(u.hide_badges, FALSE) = TRUE
             OR NOT (ba.id = ANY(COALESCE(u.hidden_award_ids, '{}'::INTEGER[])))
           )
       ) tag_award_stats ON TRUE
@@ -1643,7 +1676,15 @@ const getUserTags = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: result.rows,
+      data: userRow.hide_badges && !canViewHiddenAwards
+        ? result.rows.map((row) => ({
+            ...row,
+            badge_credits: 0,
+            dominant_badge_category: null,
+            linked_badge_count: 0,
+            awarder_count: 0,
+          }))
+        : result.rows,
     });
   } catch (error) {
     console.error("Error fetching user tags:", error);
@@ -1862,6 +1903,42 @@ const getUserBadges = async (req, res) => {
   try {
     const userId = req.params.id;
     const canViewHiddenAwards = Number(req.user?.id) === Number(userId);
+
+    const userVisibility = await pool.query(
+      `SELECT id, is_public, COALESCE(hide_badges, FALSE) AS hide_badges
+       FROM users
+       WHERE id = $1`,
+      [userId],
+    );
+
+    if (userVisibility.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const userRow = userVisibility.rows[0];
+    const userIsPublic =
+      userRow.is_public === true || userRow.is_public === "true";
+
+    if (!canViewHiddenAwards && !userIsPublic) {
+      let sharesTeam = false;
+      if (req.user) {
+        const teamCheck = await pool.query(
+          `SELECT 1 FROM team_members tm1
+           JOIN team_members tm2 ON tm1.team_id = tm2.team_id
+           WHERE tm1.user_id = $1 AND tm2.user_id = $2
+           LIMIT 1`,
+          [req.user.id, userId],
+        );
+        sharesTeam = teamCheck.rows.length > 0;
+      }
+      if (!sharesTeam) {
+        return res.status(404).json({ success: false, message: "User not found" });
+      }
+    }
+
+    if (!canViewHiddenAwards && userRow.hide_badges) {
+      return res.status(200).json({ success: true, data: [] });
+    }
 
     await ensureBadgeVisibilityColumns();
 

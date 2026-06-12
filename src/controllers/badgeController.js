@@ -100,6 +100,22 @@ const recalculateUserTagBadgeCredits = async (client, userId, tagId) => {
   );
 };
 
+const BADGE_AWARD_RETURNING_FIELDS = `
+  id,
+  awarded_to_user_id,
+  badge_id,
+  awarded_by_user_id,
+  credits,
+  context_type,
+  context_id,
+  team_id,
+  tag_id,
+  custom_team_name,
+  project_name,
+  created_at,
+  updated_at
+`;
+
 /**
  * @description Award a badge to a user
  * @route POST /api/badges/award
@@ -294,7 +310,7 @@ const awardBadge = async (req, res) => {
       `INSERT INTO badge_awards
   (awarded_to_user_id, badge_id, awarded_by_user_id, credits, reason, context_type, context_id, team_id, tag_id, custom_team_name, project_name, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
-       RETURNING *`,
+       RETURNING ${BADGE_AWARD_RETURNING_FIELDS}`,
       [
         awarded_to_user_id,
         badge_id,

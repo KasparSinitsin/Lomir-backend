@@ -112,7 +112,9 @@ app.use((req, res) => {
 
 app.use((err, req, res, next) => {
   console.error(`[${new Date().toISOString()}] Error: ${err.message}`);
-  console.error(err.stack);
+  if (process.env.NODE_ENV !== "production") {
+    console.error(err.stack);
+  }
 
   const statusCode = err.statusCode || 500;
 
