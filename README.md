@@ -217,7 +217,7 @@ Lomir-backend/
 │   │   ├── searchQueryBuilder.js # Shared search distance/filter/sort SQL builders
 │   │   ├── socketMessageEmitter.js
 │   │   ├── turnstileVerify.js  # Cloudflare Turnstile CAPTCHA verification
-│   │   ├── vacantRoleSerializer.js
+│   │   ├── vacantRoleSerializer.js    # Serializes vacant role rows; builds creator and filled_by user sub-objects (id, name, avatar_url, is_public)
 │   │   ├── badgeVisibilityUtils.js # Helpers for badge award visibility (hidden/shown state)
 │   │   └── geocodingUtil.js    # resolveLocationData (full enrichment) + geocodeAddress (coords only)
 │   ├── jobs/
@@ -226,7 +226,7 @@ Lomir-backend/
 │   └── database/
 │       └── migrations/
 ├── scripts/                    # SQL seed, migration, and utility scripts
-│   ├── migrate-cloudinary-to-imagekit.js
+│   ├── migrate-cloudinary-to-imagekit.js   # One-time migration (already run): converted Cloudinary URLs to ImageKit URLs in the database
 │   ├── add-location-district-columns.sql  # Migration: adds district column to teams/users/roles
 │   └── backfill-location-data.js         # One-off script to backfill district/state from geocoding
 ├── test/                       # Controller unit tests
@@ -258,7 +258,7 @@ All routes are prefixed with `/api`.
 | `/api/auth` | Register, login, email verification, password reset; `POST /auth/check-email` and `/auth/check-username` for real-time availability checks |
 | `/api/users` | User CRUD, tags, badges, avatar, account deletion with preview |
 | `/api/teams` | Team CRUD, members, applications, invitations, badge awards; `DELETE /invitations/:id/role` cancels only the role portion of a pending invitation |
-| `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management. Supports `?ids=1,2,3` for bulk filtering (bypasses the default status filter so polling can detect roles that transitioned to filled/closed) |
+| `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management. Supports `?ids=1,2,3` for bulk filtering (bypasses the default status filter so polling can detect roles that transitioned to filled/closed). Role responses include `is_public` on the `creator` and `filled_by` user sub-objects. |
 | `/api/search/global` | Keyword/boolean search across teams, users, and roles with tag/badge/location/role filtering |
 | `/api/search/all` | Initial search-page data without a required keyword, using the same filtering/sorting core |
 | `/api/matching` | Role ↔ user matching scores and candidate lists |
