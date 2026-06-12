@@ -18,7 +18,7 @@ const successResponse = {
 const contactController = {
   async submitContactForm(req, res) {
     try {
-      const { error, value } = contactSchema.validate(req.body);
+      const { error, value } = contactSchema.validate(req.body, { stripUnknown: true });
 
       if (error) {
         if (process.env.NODE_ENV !== "production") {
