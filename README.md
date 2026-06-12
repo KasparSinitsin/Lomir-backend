@@ -36,7 +36,7 @@ Contact the project owner for a demo login, or register a new account with a val
 - **Badge System** — 30 badges across 5 categories; award badges to teammates with reasons and context
 - **Notifications** — In-app notifications for invitations, applications, badge awards, messages, @mentions, and role lifecycle events; each notification deep-links to the exact message that triggered it; stale notifications are cleaned up automatically on member removal, role deletion, and team deletion
 - **Account Deletion** — Full transactional account deletion with impact preview, automatic team ownership transfer, role reopening, and "Former Lomir User" handling for preserved references
-- **Contact Form** — Public `/api/contact` endpoint with Joi validation, Turnstile CAPTCHA, file attachments (up to 5), and SMTP forwarding; rate-limited to 5 submissions/hr
+- **Contact Form** — Public `/api/contact` endpoint with Joi validation, Turnstile CAPTCHA, in-memory file attachments (up to 5), and SMTP forwarding; unexpected body fields are stripped defensively so multipart attachment fields cannot break validation; rate-limited to 5 submissions/hr
 - **Geocoding** — Location enrichment via Nominatim: resolves a full location object (postal code, city, district, state, country, coordinates) from partial input. Built-in postal-code-to-district lookup for Berlin and Frankfurt (200+ mappings) used as a fast offline fallback before the API call. Works with country alone — does not require both postal code and city.
 - **Security** — Helmet security headers, request body size cap (1 MB), rate limiting on auth and contact endpoints, CORS allowlist, password policy enforcement, Socket.IO conversation/message authorization, production error message scrubbing
 
@@ -181,7 +181,8 @@ Lomir-backend/
 │   │   ├── vacantRoleController.js
 │   │   ├── searchController.js
 │   │   ├── badgeController.js
-│   │   ├── contactController.js       # Contact form: Joi validation, Turnstile CAPTCHA, SMTP forwarding
+│   │   ├── contactController.js       # Contact form: Joi validation with unknown-field stripping,
+│   │   │                              #   Turnstile CAPTCHA, SMTP forwarding
 │   │   ├── messageController.js
 │   │   ├── notificationController.js
 │   │   └── matchingController.js
@@ -268,7 +269,7 @@ All routes are prefixed with `/api`.
 | `/api/imagekit` | Auth params for client-side ImageKit uploads |
 | `/api/tags` | Tag catalog (structured by category) |
 | `/api/geocoding` | Postal code → city/district/country/coordinates lookup |
-| `/api/contact` | Public contact form submission with optional file attachments |
+| `/api/contact` | Public contact form submission with optional file attachments forwarded by SMTP |
 
 ---
 
