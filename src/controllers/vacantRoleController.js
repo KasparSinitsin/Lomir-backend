@@ -9,11 +9,13 @@ const VACANT_ROLE_SELECT = `SELECT vr.*,
               u.first_name AS creator_first_name,
               u.last_name AS creator_last_name,
               u.username AS creator_username,
+              u.is_public AS creator_is_public,
               fu.id AS filled_by_user_id,
               fu.first_name AS filled_by_user_first_name,
               fu.last_name AS filled_by_user_last_name,
               fu.username AS filled_by_user_username,
-              fu.avatar_url AS filled_by_user_avatar_url
+              fu.avatar_url AS filled_by_user_avatar_url,
+              fu.is_public AS filled_by_user_is_public
        FROM team_vacant_roles vr
        JOIN users u ON vr.created_by = u.id
        LEFT JOIN users fu ON vr.filled_by = fu.id`;
