@@ -60,7 +60,7 @@ const getFileSizeFromUrl = (url) => {
 
       request.on("timeout", () => {
         request.destroy();
-        console.warn(`[FILE VALIDATION] Timeout getting file size for: ${url}`);
+        console.warn("[FILE VALIDATION] Timeout getting file size");
         resolve(null);
       });
 
@@ -101,7 +101,7 @@ const validateChatFileUrl = async (url, type = "chatImage") => {
 
   // Must be an ImageKit URL
   if (!isImageKitUrl(url)) {
-    console.warn(`[FILE VALIDATION] Rejected non-ImageKit URL: ${url}`);
+    console.warn("[FILE VALIDATION] Rejected non-ImageKit URL");
     return { valid: false, error: "Files must be uploaded through Lomir" };
   }
 
@@ -130,7 +130,7 @@ const validateChatFileUrl = async (url, type = "chatImage") => {
 
   // If we can't verify size, allow it but log a warning
   if (fileSize === null) {
-    console.warn(`[FILE VALIDATION] Could not verify file size: ${url}`);
+    console.warn("[FILE VALIDATION] Could not verify file size");
     return { valid: true, warning: "Could not verify file size", filename };
   }
 

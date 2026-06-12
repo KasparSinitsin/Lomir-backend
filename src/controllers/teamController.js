@@ -11,6 +11,28 @@ const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer")
 const { deleteImageKitFile } = require("../utils/imagekitUtils");
 const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
 
+const TEAM_RETURNING_FIELDS = `
+  id,
+  name,
+  description,
+  owner_id,
+  is_public,
+  max_members,
+  is_remote,
+  postal_code,
+  city,
+  state,
+  district,
+  country,
+  latitude,
+  longitude,
+  teamavatar_url,
+  is_synthetic,
+  archived_at,
+  created_at,
+  updated_at
+`;
+
 const permanentlyDeleteTeam = async (teamId) => {
   const client = await db.pool.connect();
 
@@ -258,7 +280,7 @@ const createTeam = async (req, res) => {
     teamavatar_url,
     is_synthetic
   ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-  RETURNING *
+  RETURNING ${TEAM_RETURNING_FIELDS}
   `,
       [
         value.name, // $1
@@ -619,7 +641,7 @@ const updateTeam = async (req, res) => {
           UPDATE teams 
           SET ${updateFields.join(", ")}
           WHERE id = $${paramCounter}
-          RETURNING *
+          RETURNING ${TEAM_RETURNING_FIELDS}
         `;
 
         await client.query(updateQuery, queryParams);

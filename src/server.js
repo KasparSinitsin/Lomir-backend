@@ -7,7 +7,78 @@ const app = require("./app");
 const http = require("http");
 const socketIo = require("socket.io");
 const { verifyToken } = require("./utils/jwtUtils");
+const db = require("./config/database");
 const PORT = process.env.PORT || 5001;
+
+const CHAT_FILE_RETENTION_DAYS = 60;
+
+const getChatFileExpiresAt = () =>
+  new Date(Date.now() + CHAT_FILE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+
+const isActiveTeamMember = async (teamId, userId) => {
+  const result = await db.query(
+    `SELECT 1
+     FROM team_members tm
+     JOIN teams t ON t.id = tm.team_id
+     WHERE tm.team_id = $1
+       AND tm.user_id = $2
+       AND t.archived_at IS NULL
+     LIMIT 1`,
+    [teamId, userId],
+  );
+
+  return result.rows.length > 0;
+};
+
+const hasDirectConversationAccess = async (userId, conversationId) => {
+  const result = await db.query(
+    `SELECT 1
+     FROM messages
+     WHERE team_id IS NULL
+       AND (
+         (sender_id = $1 AND receiver_id = $2)
+         OR (sender_id = $2 AND receiver_id = $1)
+       )
+     LIMIT 1`,
+    [userId, conversationId],
+  );
+
+  return result.rows.length > 0;
+};
+
+const userExists = async (userId) => {
+  const result = await db.query(`SELECT id FROM users WHERE id = $1`, [userId]);
+  return result.rows.length > 0;
+};
+
+const canAccessReplyMessage = async ({ replyToId, userId, conversationId, type }) => {
+  if (!replyToId) return true;
+
+  const result =
+    type === "team"
+      ? await db.query(
+          `SELECT 1
+           FROM messages
+           WHERE id = $1
+             AND team_id = $2
+           LIMIT 1`,
+          [replyToId, conversationId],
+        )
+      : await db.query(
+          `SELECT 1
+           FROM messages
+           WHERE id = $1
+             AND team_id IS NULL
+             AND (
+               (sender_id = $2 AND receiver_id = $3)
+               OR (sender_id = $3 AND receiver_id = $2)
+             )
+           LIMIT 1`,
+          [replyToId, userId, conversationId],
+        );
+
+  return result.rows.length > 0;
+};
 
 // Create HTTP server
 const server = http.createServer(app);
@@ -78,7 +149,6 @@ io.on("connection", (socket) => {
   // Join user to all their team rooms
   const joinUserTeams = async () => {
     try {
-      const db = require("./config/database");
       const userTeamsResult = await db.query(
         `SELECT tm.team_id FROM team_members tm WHERE tm.user_id = $1`,
         [userId],
@@ -106,10 +176,14 @@ io.on("connection", (socket) => {
     try {
       const conversationId =
         typeof data === "object" ? data.conversationId : data;
-      const db = require("./config/database");
 
       const teamCheck = await db.query(
-        "SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2",
+        `SELECT 1
+         FROM team_members tm
+         JOIN teams t ON t.id = tm.team_id
+         WHERE tm.team_id = $1
+           AND tm.user_id = $2
+           AND t.archived_at IS NULL`,
         [conversationId, userId],
       );
 
@@ -190,8 +264,7 @@ io.on("connection", (socket) => {
           return;
         }
         fileSize = validation.size || null;
-        // Set expiration to 60 days from now
-        fileExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+        fileExpiresAt = getChatFileExpiresAt();
       }
 
       // Validate file URL and extract metadata
@@ -205,11 +278,9 @@ io.on("connection", (socket) => {
           return;
         }
         fileSize = validation.size || null;
-        // Set expiration to 60 days from now
-        fileExpiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+        fileExpiresAt = getChatFileExpiresAt();
       }
 
-      const db = require("./config/database");
       const senderResult = await db.query(
         `SELECT username, first_name, last_name FROM users WHERE id = $1`,
         [userId],
@@ -219,12 +290,21 @@ io.on("connection", (socket) => {
       let replyTo = null;
 
       if (type === "team") {
-        const memberCheck = await db.query(
-          `SELECT tm.user_id FROM team_members tm WHERE tm.team_id = $1 AND tm.user_id = $2`,
-          [conversationId, userId],
-        );
-        if (memberCheck.rows.length === 0) {
+        const canAccessTeam = await isActiveTeamMember(conversationId, userId);
+        if (!canAccessTeam) {
           socket.emit("error", { message: "Not authorized to send messages to this team" });
+          return;
+        }
+
+        const canReply = await canAccessReplyMessage({
+          replyToId,
+          userId,
+          conversationId,
+          type: "team",
+        });
+
+        if (!canReply) {
+          socket.emit("error", { message: "Not authorized to reply to this message" });
           return;
         }
 
@@ -300,6 +380,24 @@ io.on("connection", (socket) => {
 
         io.to(`team:${conversationId}`).emit("message:received", message);
       } else {
+        const recipientExists = await userExists(conversationId);
+        if (!recipientExists) {
+          socket.emit("error", { message: "Recipient not found" });
+          return;
+        }
+
+        const canReply = await canAccessReplyMessage({
+          replyToId,
+          userId,
+          conversationId,
+          type: "direct",
+        });
+
+        if (!canReply) {
+          socket.emit("error", { message: "Not authorized to reply to this message" });
+          return;
+        }
+
         messageResult = await db.query(
           `INSERT INTO messages (sender_id, receiver_id, content, reply_to_id, image_url, file_url, file_name, file_size, file_expires_at, sent_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
@@ -397,6 +495,16 @@ io.on("connection", (socket) => {
 
         for (const mentionedUserId of notified) {
           try {
+            if (type === "team") {
+              const mentionedMember = await isActiveTeamMember(
+                conversationId,
+                mentionedUserId,
+              );
+              if (!mentionedMember) continue;
+            } else if (String(mentionedUserId) !== String(conversationId)) {
+              continue;
+            }
+
             await createNotification({
               userId: mentionedUserId,
               type: "message_mention",
@@ -428,7 +536,7 @@ io.on("connection", (socket) => {
   });
 
   // Handle typing indicator - start
-  socket.on("typing:start", (data) => {
+  socket.on("typing:start", async (data) => {
     const { conversationId, type = "direct" } = data;
     if (process.env.NODE_ENV !== "production") {
       console.log(
@@ -437,6 +545,12 @@ io.on("connection", (socket) => {
     }
 
     if (type === "team") {
+      const canAccessTeam = await isActiveTeamMember(conversationId, userId);
+      if (!canAccessTeam) {
+        socket.emit("error", { message: "Not authorized for this team conversation" });
+        return;
+      }
+
       // For team messages, broadcast to all team members except sender
       socket.to(`team:${conversationId}`).emit("typing:update", {
         conversationId: String(conversationId),
@@ -446,6 +560,12 @@ io.on("connection", (socket) => {
         type: "team",
       });
     } else {
+      const canAccessDirect = await hasDirectConversationAccess(userId, conversationId);
+      if (!canAccessDirect) {
+        socket.emit("error", { message: "Not authorized for this direct conversation" });
+        return;
+      }
+
       // For direct messages
       socket.to(`user:${conversationId}`).emit("typing:update", {
         conversationId: String(userId),
@@ -458,7 +578,7 @@ io.on("connection", (socket) => {
   });
 
   // Handle typing indicator - stop
-  socket.on("typing:stop", (data) => {
+  socket.on("typing:stop", async (data) => {
     const { conversationId, type = "direct" } = data;
     if (process.env.NODE_ENV !== "production") {
       console.log(
@@ -467,6 +587,12 @@ io.on("connection", (socket) => {
     }
 
     if (type === "team") {
+      const canAccessTeam = await isActiveTeamMember(conversationId, userId);
+      if (!canAccessTeam) {
+        socket.emit("error", { message: "Not authorized for this team conversation" });
+        return;
+      }
+
       // For team messages, broadcast to all team members except sender
       socket.to(`team:${conversationId}`).emit("typing:update", {
         conversationId: String(conversationId),
@@ -476,6 +602,12 @@ io.on("connection", (socket) => {
         type: "team",
       });
     } else {
+      const canAccessDirect = await hasDirectConversationAccess(userId, conversationId);
+      if (!canAccessDirect) {
+        socket.emit("error", { message: "Not authorized for this direct conversation" });
+        return;
+      }
+
       // For direct messages
       socket.to(`user:${conversationId}`).emit("typing:update", {
         conversationId: String(userId),
@@ -491,7 +623,6 @@ io.on("connection", (socket) => {
   socket.on("message:read", async (data) => {
     try {
       const { conversationId, type = "direct" } = data;
-      const db = require("./config/database");
 
       if (process.env.NODE_ENV !== "production") {
         console.log(
@@ -500,6 +631,12 @@ io.on("connection", (socket) => {
       }
 
       if (type === "team") {
+        const canAccessTeam = await isActiveTeamMember(conversationId, userId);
+        if (!canAccessTeam) {
+          socket.emit("error", { message: "Not authorized for this team conversation" });
+          return;
+        }
+
         const readStatusResult = await db.query(
           `WITH inserted_reads AS (
              INSERT INTO message_reads (message_id, user_id, read_at)
@@ -571,6 +708,12 @@ io.on("connection", (socket) => {
           });
         }
       } else {
+        const canAccessDirect = await hasDirectConversationAccess(userId, conversationId);
+        if (!canAccessDirect) {
+          socket.emit("error", { message: "Not authorized for this direct conversation" });
+          return;
+        }
+
         // Mark direct messages as read
         await db.query(
           `UPDATE messages

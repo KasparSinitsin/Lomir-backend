@@ -14,14 +14,20 @@ const buildFilledByUserFromRow = (row, prefix = "") => {
     return null;
   }
 
-  return {
+  const user = {
     id,
     first_name: row[`${prefix}filled_by_user_first_name`] ?? null,
     last_name: row[`${prefix}filled_by_user_last_name`] ?? null,
     username: row[`${prefix}filled_by_user_username`] ?? null,
     avatar_url: row[`${prefix}filled_by_user_avatar_url`] ?? null,
-    is_public: row[`${prefix}filled_by_user_is_public`] ?? null,
   };
+
+  const isPublic = row[`${prefix}filled_by_user_is_public`];
+  if (isPublic !== null && isPublic !== undefined) {
+    user.is_public = isPublic;
+  }
+
+  return user;
 };
 
 const stripFilledByUserColumns = (row, prefix = "") => {
