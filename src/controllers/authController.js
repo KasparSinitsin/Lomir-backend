@@ -413,12 +413,13 @@ const authController = {
         });
       }
 
-      // Mark email as verified and clear the token
+      // Mark email as verified, make profile public, and clear the token
       await db.query(
-        `UPDATE users 
-         SET email_verified = TRUE, 
-             verification_token = NULL, 
-             verification_token_expires = NULL 
+        `UPDATE users
+         SET email_verified = TRUE,
+             is_public = TRUE,
+             verification_token = NULL,
+             verification_token_expires = NULL
          WHERE id = $1`,
         [user.id],
       );

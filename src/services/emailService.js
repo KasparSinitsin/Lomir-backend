@@ -94,6 +94,13 @@ const emailService = {
               </a>
             </div>
             
+            <p style="font-size: 14px; color: #333; line-height: 1.6;">
+              Once verified, your profile will be set to <strong>public</strong> so other Lomir users can find you.
+              If you prefer to stay private, you can change this at any time in your
+              <a href="${process.env.FRONTEND_URL}/settings" style="color: #6366f1;">account settings</a>
+              after logging in.
+            </p>
+
             <p style="font-size: 14px; color: #666; line-height: 1.6;">
               This link will expire in <strong>24 hours</strong>. If you don't verify your account
               within this time, your registration will be automatically deleted and you'll need
