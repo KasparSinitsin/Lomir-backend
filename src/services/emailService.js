@@ -95,8 +95,8 @@ const emailService = {
             </div>
             
             <p style="font-size: 14px; color: #333; line-height: 1.6;">
-              Once verified, your profile will be set to <strong>public</strong> so other Lomir users can find you.
-              If you prefer to stay private, you can change this at any time in your
+              Once verified, your profile will remain <strong>private by default</strong>.
+              Other Lomir users can only find your full profile if you actively make it public in your
               <a href="${process.env.FRONTEND_URL}/settings" style="color: #6366f1;">account settings</a>
               after logging in.
             </p>

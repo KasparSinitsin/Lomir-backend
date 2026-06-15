@@ -26,7 +26,7 @@ Contact the project owner for a demo login, or register a new account with a val
 
 ## Features
 
-- **Authentication** — JWT-based registration, login, email verification, and password reset. Transactional auth emails are sent through Nodemailer SMTP. Registration protected by Cloudflare Turnstile CAPTCHA (feature-flagged for local dev).
+- **Authentication** — JWT-based registration, login, email verification, and password reset. Transactional auth emails are sent through Nodemailer SMTP. Registration protected by Cloudflare Turnstile CAPTCHA (feature-flagged for local dev). Registration requires explicit acceptance of Terms of Service, acknowledgement of the Privacy Policy, and confirmation of minimum age (16+); the version of each legal document is stamped on the user row at sign-up.
 - **User Profiles** — CRUD with avatar uploads (ImageKit), interest tags, badge portfolios, and user-controlled public/private visibility. Verified accounts remain private by default until the user opts in to public visibility.
 - **Teams** — Create, join, manage members, assign roles, and archive teams
 - **Vacant Roles** — Post open positions on teams with desired tags, badges, and location preferences
@@ -168,7 +168,8 @@ Lomir-backend/
 │   ├── server.js               # HTTP server + Socket.IO setup
 │   ├── config/
 │   │   ├── database.js         # PostgreSQL connection pool (Neon)
-│   │   └── imagekit.js         # ImageKit client configuration
+│   │   ├── imagekit.js         # ImageKit client configuration
+│   │   └── legalDocuments.js   # Current version constants for Terms, Privacy Policy, and age confirmation
 │   ├── controllers/
 │   │   ├── authController.js
 │   │   ├── userController.js
@@ -229,6 +230,7 @@ Lomir-backend/
 ├── scripts/                    # SQL seed, migration, and utility scripts
 │   ├── migrate-cloudinary-to-imagekit.js   # One-time migration (already run): converted Cloudinary URLs to ImageKit URLs in the database
 │   ├── add-location-district-columns.sql  # Migration: adds district column to teams/users/roles
+│   ├── add-legal-consent-columns.sql      # Standalone SQL for the legal consent migration (see migrations/add_legal_consent_to_users.js)
 │   └── backfill-location-data.js         # One-off script to backfill district/state from geocoding
 ├── test/                       # Controller unit tests
 │   ├── invitationController.test.js
@@ -237,6 +239,7 @@ Lomir-backend/
 │   ├── userController.deleteUser.test.js
 │   ├── userController.deletionPreview.test.js
 │   ├── teamController.applications.test.js
+│   ├── userModel.legalConsent.test.js
 │   └── vacantRoleController.test.js
 ├── docs/
 │   ├── USER_DELETION_SPEC.md              # Full account deletion specification
@@ -256,7 +259,7 @@ All routes are prefixed with `/api`.
 
 | Prefix | Description |
 |---|---|
-| `/api/auth` | Register, login, email verification, password reset; `POST /auth/check-email` and `/auth/check-username` for real-time availability checks |
+| `/api/auth` | Register (requires `acceptedTerms`, `acceptedPrivacy`, `confirmedAge16`), login, email verification, password reset; `POST /auth/check-email` and `/auth/check-username` for real-time availability checks |
 | `/api/users` | User CRUD, tags, badges, avatar, account deletion with preview |
 | `/api/teams` | Team CRUD, members, applications, invitations, badge awards; `DELETE /invitations/:id/role` cancels only the role portion of a pending invitation |
 | `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management. Supports `?ids=1,2,3` for bulk filtering (bypasses the default status filter so polling can detect roles that transitioned to filled/closed). Role responses include `is_public` on the `creator` and `filled_by` user sub-objects. |
@@ -387,6 +390,7 @@ Full transactional account deletion following the spec in `docs/USER_DELETION_SP
 | Logging | All debug `console.log` gated behind `NODE_ENV !== "production"`; errors and warnings always logged |
 | SQL injection | Parameterized queries throughout |
 | Auth | JWT on all protected routes, bcrypt with 10 salt rounds |
+| Legal consent | Registration requires `acceptedTerms`, `acceptedPrivacy`, and `confirmedAge16` (all must be `true`). The version of each document (`accepted_terms_version`, `accepted_privacy_version`, `confirmed_age_16_version`) and the acceptance timestamp are stored on the user row for audit purposes. |
 | User data exposure | `GET /api/users` returns only public profiles (`is_public = TRUE`) with an explicit column allowlist; newly verified users remain private until they opt in; no `SELECT *` on user rows |
 
 ---

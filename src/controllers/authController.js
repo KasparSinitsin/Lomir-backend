@@ -7,6 +7,11 @@ const db = require("../config/database");
 const { resolveLocationData } = require("../utils/geocodingUtil");
 const { verifyTurnstileToken } = require("../utils/turnstileVerify");
 const { uploadToImageKit } = require("../middlewares/uploadMiddleware");
+const {
+  CURRENT_AGE_CONFIRMATION_VERSION,
+  CURRENT_PRIVACY_VERSION,
+  CURRENT_TERMS_VERSION,
+} = require("../config/legalDocuments");
 
 // Validation schema for registration
 const registerSchema = Joi.object({
@@ -35,8 +40,12 @@ const registerSchema = Joi.object({
     "any.required": "Terms of Service must be accepted",
   }),
   acceptedPrivacy: Joi.boolean().truthy("true").valid(true).required().messages({
-    "any.only": "Privacy Policy must be accepted",
-    "any.required": "Privacy Policy must be accepted",
+    "any.only": "Privacy Policy must be acknowledged",
+    "any.required": "Privacy Policy must be acknowledged",
+  }),
+  confirmedAge16: Joi.boolean().truthy("true").valid(true).required().messages({
+    "any.only": "You must confirm that you are at least 16 years old",
+    "any.required": "You must confirm that you are at least 16 years old",
   }),
   turnstile_token: Joi.string().optional(),
   tags: Joi.array()
@@ -87,9 +96,19 @@ const authController = {
         avatar_url: avatarUrl,
         acceptedTerms: req.body.acceptedTerms ?? req.body.accepted_terms,
         acceptedPrivacy: req.body.acceptedPrivacy ?? req.body.accepted_privacy,
+        confirmedAge16:
+          req.body.confirmedAge16 ??
+          req.body.confirmed_age_16 ??
+          req.body.confirmed_age16 ??
+          req.body.confirmedMinimumAge ??
+          req.body.confirmed_minimum_age,
       };
       delete userData.accepted_terms;
       delete userData.accepted_privacy;
+      delete userData.confirmed_age_16;
+      delete userData.confirmed_age16;
+      delete userData.confirmedMinimumAge;
+      delete userData.confirmed_minimum_age;
 
       // Validate the payload
       const { error, value } = registerSchema.validate(userData);
@@ -178,6 +197,10 @@ const authController = {
           value.longitude = resolvedLocation.longitude;
         }
       }
+
+      value.accepted_terms_version = CURRENT_TERMS_VERSION;
+      value.accepted_privacy_version = CURRENT_PRIVACY_VERSION;
+      value.confirmed_age_16_version = CURRENT_AGE_CONFIRMATION_VERSION;
 
       // Create the user (email_verified defaults to FALSE)
       const user = await userModel.createUser(value);
