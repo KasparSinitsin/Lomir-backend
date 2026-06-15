@@ -1,6 +1,7 @@
 const Joi = require("joi");
 const emailService = require("../services/emailService");
 const { verifyTurnstileToken } = require("../utils/turnstileVerify");
+const { validateContactAttachments } = require("../utils/contactAttachments");
 
 const contactSchema = Joi.object({
   name: Joi.string().trim().min(1).max(120).required(),
@@ -29,6 +30,14 @@ const contactController = {
           success: false,
           message: "Invalid input data",
           errors: error.details.map((detail) => detail.message),
+        });
+      }
+
+      const attachmentValidation = validateContactAttachments(req.files);
+      if (!attachmentValidation.valid) {
+        return res.status(400).json({
+          success: false,
+          message: attachmentValidation.error,
         });
       }
 
