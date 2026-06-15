@@ -4,6 +4,7 @@ const {
   isImageKitUrl,
 } = require("../utils/imagekitUtils");
 const { validateChatFileUrl } = require("../utils/fileValidation");
+const userModel = require("../models/userModel");
 
 const CHAT_FILE_RETENTION_DAYS = 60;
 
@@ -140,6 +141,11 @@ const getUnreadCount = async (req, res) => {
            MAX(sent_at) AS latest
          FROM messages
          WHERE receiver_id = $1 AND read_at IS NULL AND team_id IS NULL AND deleted_at IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM user_blocks ub
+             WHERE (ub.blocker_id = messages.sender_id AND ub.blocked_id = $1)
+                OR (ub.blocked_id = messages.sender_id AND ub.blocker_id = $1)
+           )
          GROUP BY sender_id
        ),
        team_unread AS (
@@ -159,6 +165,11 @@ const getUnreadCount = async (req, res) => {
              WHERE mr.message_id = m.id
                AND mr.user_id = $1
            )
+           AND NOT EXISTS (
+             SELECT 1 FROM user_blocks ub
+             WHERE (ub.blocker_id = m.sender_id AND ub.blocked_id = $1)
+                OR (ub.blocked_id = m.sender_id AND ub.blocker_id = $1)
+           )
          GROUP BY m.team_id
        ),
        combined AS (
@@ -173,10 +184,17 @@ const getUnreadCount = async (req, res) => {
          (SELECT COUNT(*)::int FROM team_unread) AS team_count,
          (SELECT COUNT(DISTINCT m.sender_id)::int
           FROM messages m
-          WHERE (m.receiver_id = $1 AND m.read_at IS NULL AND m.team_id IS NULL AND m.deleted_at IS NULL)
-             OR (m.team_id IS NOT NULL AND m.sender_id != $1 AND m.deleted_at IS NULL
-                 AND EXISTS (SELECT 1 FROM team_members tm WHERE tm.team_id = m.team_id AND tm.user_id = $1)
-                 AND NOT EXISTS (SELECT 1 FROM message_reads mr WHERE mr.message_id = m.id AND mr.user_id = $1))
+          WHERE (
+                  (m.receiver_id = $1 AND m.read_at IS NULL AND m.team_id IS NULL AND m.deleted_at IS NULL)
+               OR (m.team_id IS NOT NULL AND m.sender_id != $1 AND m.deleted_at IS NULL
+                   AND EXISTS (SELECT 1 FROM team_members tm WHERE tm.team_id = m.team_id AND tm.user_id = $1)
+                   AND NOT EXISTS (SELECT 1 FROM message_reads mr WHERE mr.message_id = m.id AND mr.user_id = $1))
+                )
+            AND NOT EXISTS (
+              SELECT 1 FROM user_blocks ub
+              WHERE (ub.blocker_id = m.sender_id AND ub.blocked_id = $1)
+                 OR (ub.blocked_id = m.sender_id AND ub.blocker_id = $1)
+            )
          ) AS sender_count
        FROM combined`,
       [userId],
@@ -237,6 +255,13 @@ const startConversation = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Recipient not found",
+      });
+    }
+
+    if (await userModel.isBlockedBetween(senderId, receiverId)) {
+      return res.status(403).json({
+        success: false,
+        message: "You can no longer message this user",
       });
     }
 
@@ -323,6 +348,11 @@ const getConversations = async (req, res) => {
       FROM latest_messages lm
       JOIN users u ON lm.partner_id = u.id
       LEFT JOIN unread_counts uc ON lm.partner_id = uc.partner_id
+      WHERE NOT EXISTS (
+        SELECT 1 FROM user_blocks ub
+        WHERE (ub.blocker_id = $1 AND ub.blocked_id = lm.partner_id)
+           OR (ub.blocked_id = $1 AND ub.blocker_id = lm.partner_id)
+      )
       ORDER BY lm.last_message_time DESC
     `;
 
@@ -336,23 +366,33 @@ const getConversations = async (req, res) => {
         FROM messages m
         JOIN team_members tm ON m.team_id = tm.team_id
         WHERE tm.user_id = $1 AND m.team_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM user_blocks ub
+            WHERE (ub.blocker_id = m.sender_id AND ub.blocked_id = $1)
+               OR (ub.blocked_id = m.sender_id AND ub.blocker_id = $1)
+          )
         GROUP BY m.team_id
       ),
       latest_team_messages AS (
-        SELECT 
+        SELECT
           tc.team_id,
           tc.last_message_time,
           m.content as last_message
         FROM team_conversations tc
         JOIN messages m ON m.team_id = tc.team_id AND m.sent_at = tc.last_message_time
+          AND NOT EXISTS (
+            SELECT 1 FROM user_blocks ub
+            WHERE (ub.blocker_id = m.sender_id AND ub.blocked_id = $1)
+               OR (ub.blocked_id = m.sender_id AND ub.blocker_id = $1)
+          )
       ),
       team_unread_counts AS (
-        SELECT 
+        SELECT
           m.team_id,
           COUNT(*) as unread_count
         FROM messages m
         JOIN team_members tm ON m.team_id = tm.team_id
-        WHERE tm.user_id = $1 
+        WHERE tm.user_id = $1
           AND m.sender_id != $1
           AND m.team_id IS NOT NULL
           AND NOT EXISTS (
@@ -360,6 +400,11 @@ const getConversations = async (req, res) => {
             FROM message_reads mr
             WHERE mr.message_id = m.id
               AND mr.user_id = $1
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM user_blocks ub
+            WHERE (ub.blocker_id = m.sender_id AND ub.blocked_id = $1)
+               OR (ub.blocked_id = m.sender_id AND ub.blocker_id = $1)
           )
         GROUP BY m.team_id
       )
@@ -478,6 +523,13 @@ const getConversationById = async (req, res) => {
         },
       });
     } else {
+      if (await userModel.isBlockedBetween(userId, conversationId)) {
+        return res.status(404).json({
+          success: false,
+          message: "Conversation not found or access denied",
+        });
+      }
+
       const participantCheck = await db.query(
         `SELECT 1
          FROM messages
@@ -618,6 +670,11 @@ const getMessages = async (req, res) => {
     FROM messages m
     LEFT JOIN users u ON m.sender_id = u.id
     LEFT JOIN messages rm ON m.reply_to_id = rm.id
+      AND NOT EXISTS (
+        SELECT 1 FROM user_blocks ubr
+        WHERE (ubr.blocker_id = rm.sender_id AND ubr.blocked_id = $2)
+           OR (ubr.blocked_id = rm.sender_id AND ubr.blocker_id = $2)
+      )
     LEFT JOIN users ru ON rm.sender_id = ru.id
     LEFT JOIN LATERAL (
       SELECT mr.read_at
@@ -646,6 +703,11 @@ const getMessages = async (req, res) => {
       LEFT JOIN users u ON u.id = mr.user_id
       WHERE mr.message_id = m.id
         AND mr.user_id != m.sender_id
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks ubrd
+          WHERE (ubrd.blocker_id = mr.user_id AND ubrd.blocked_id = $2)
+             OR (ubrd.blocked_id = mr.user_id AND ubrd.blocker_id = $2)
+        )
     ) read_stats ON TRUE
     LEFT JOIN LATERAL (
       SELECT COUNT(*)::int as recipient_count
@@ -654,6 +716,11 @@ const getMessages = async (req, res) => {
         AND tm.user_id != m.sender_id
     ) recipient_stats ON TRUE
     WHERE m.team_id = $1
+      AND NOT EXISTS (
+        SELECT 1 FROM user_blocks ub
+        WHERE (ub.blocker_id = m.sender_id AND ub.blocked_id = $2)
+           OR (ub.blocked_id = m.sender_id AND ub.blocker_id = $2)
+      )
     ${before ? "AND m.id < $3" : ""}
     ORDER BY m.sent_at DESC, m.id DESC
     LIMIT $${before ? "4" : "3"}
@@ -662,8 +729,15 @@ const getMessages = async (req, res) => {
         ? [conversationId, userId, before, limit]
         : [conversationId, userId, limit];
     } else {
+      if (await userModel.isBlockedBetween(userId, conversationId)) {
+        return res.status(403).json({
+          success: false,
+          message: "You can no longer view this conversation",
+        });
+      }
+
       messagesQuery = `
-    SELECT 
+    SELECT
       m.id,
       m.sender_id,
       m.receiver_id,
@@ -819,6 +893,13 @@ const sendMessage = async (req, res) => {
         return res.status(404).json({
           success: false,
           message: "Recipient not found",
+        });
+      }
+
+      if (await userModel.isBlockedBetween(userId, conversationId)) {
+        return res.status(403).json({
+          success: false,
+          message: "You can no longer message this user",
         });
       }
     }

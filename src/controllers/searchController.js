@@ -378,6 +378,20 @@ function buildUserFilters(config, startParamIndex = 1) {
     whereFragments.push(` AND u.is_public = TRUE`);
   }
 
+  // Mutually hide blocked users: drop anyone the viewer has blocked or who has
+  // blocked the viewer from search results.
+  if (userId) {
+    whereFragments.push(`
+          AND NOT EXISTS (
+            SELECT 1 FROM user_blocks ub
+            WHERE (ub.blocker_id = u.id AND ub.blocked_id = $${nextParamIndex})
+               OR (ub.blocked_id = u.id AND ub.blocker_id = $${nextParamIndex})
+          )
+        `);
+    params.push(userId);
+    nextParamIndex++;
+  }
+
   if (!includeDemoData) {
     whereFragments.push(` AND u.is_synthetic IS NOT TRUE`);
   }

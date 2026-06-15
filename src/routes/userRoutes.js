@@ -38,6 +38,36 @@ router.delete(
   userController.deleteAvatar,
 );
 
+// === User Blocks ===
+
+// GET /api/users/:id/blocks - List users the current user has blocked
+// Access: Private (self only)
+router.get(
+  "/:id/blocks",
+  auth.authenticateToken,
+  userController.getBlockedUsers,
+);
+
+// POST /api/users/:id/blocks - Block a user
+// Access: Private (self only)
+router.post("/:id/blocks", auth.authenticateToken, userController.blockUser);
+
+// DELETE /api/users/:id/blocks/:blockedId - Unblock a user
+// Access: Private (self only)
+router.delete(
+  "/:id/blocks/:blockedId",
+  auth.authenticateToken,
+  userController.unblockUser,
+);
+
+// GET /api/users/:id/block-relationships - Ids in a block relationship (either direction)
+// Access: Private (self only)
+router.get(
+  "/:id/block-relationships",
+  auth.authenticateToken,
+  userController.getBlockRelationships,
+);
+
 // === User-Specific Sub-Resources ===
 
 // GET /api/users/:id/teams - Get teams associated with a specific user

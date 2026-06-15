@@ -28,6 +28,7 @@ Contact the project owner for a demo login, or register a new account with a val
 
 - **Authentication** — JWT-based registration, login, email verification, and password reset. Transactional auth emails are sent through Nodemailer SMTP. Registration protected by Cloudflare Turnstile CAPTCHA (feature-flagged for local dev). Registration requires explicit acceptance of Terms of Service, acknowledgement of the Privacy Policy, and confirmation of minimum age (16+); the version of each legal document is stamped on the user row at sign-up.
 - **User Profiles** — CRUD with avatar uploads (ImageKit), interest tags, badge portfolios, and user-controlled public/private visibility. Verified accounts remain private by default until the user opts in to public visibility.
+- **User Blocking** — Authenticated users can manage a private blocklist. Block relationships hide profiles and user-search results where requester context is available, suppress team application visibility, disable direct messaging, and exclude blocked users from team chat realtime events where needed.
 - **Teams** — Create, join, manage members, assign roles, and archive teams
 - **Vacant Roles** — Post open positions on teams with desired tags, badges, and location preferences
 - **Matching Engine** — Score users against roles (and vice versa) using weighted tag/badge/distance criteria
@@ -260,7 +261,7 @@ All routes are prefixed with `/api`.
 | Prefix | Description |
 |---|---|
 | `/api/auth` | Register (requires `acceptedTerms`, `acceptedPrivacy`, `confirmedAge16`), login, email verification, password reset; `POST /auth/check-email` and `/auth/check-username` for real-time availability checks |
-| `/api/users` | User CRUD, tags, badges, avatar, account deletion with preview |
+| `/api/users` | User CRUD, tags, badges, avatar, self-only blocklist endpoints, account deletion with preview |
 | `/api/teams` | Team CRUD, members, applications, invitations, badge awards; `DELETE /invitations/:id/role` cancels only the role portion of a pending invitation |
 | `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management. Supports `?ids=1,2,3` for bulk filtering (bypasses the default status filter so polling can detect roles that transitioned to filled/closed). Role responses include `is_public` on the `creator` and `filled_by` user sub-objects. |
 | `/api/search/global` | Keyword/boolean search across teams, users, and roles with tag/badge/location/role filtering |
@@ -292,7 +293,22 @@ Supported search controls include:
 - `sortDir`: `asc`, `desc`, or `remote`
 - `tagIds`, `badgeIds`, `maxDistance`, `openRolesOnly`, `excludeOwnTeams`, `excludeTeamId`, `includeDemoData`
 
+Authenticated user searches automatically exclude users who are in a block relationship with the requester, in either direction.
+
 The team search response intentionally returns `teamavatarUrl` from the SQL alias `teamavatar_url as "teamavatarUrl"` for API compatibility with the frontend.
+
+---
+
+## User Blocking
+
+Blocking is stored in the `user_blocks` table and is treated as a mutual visibility boundary throughout the backend:
+
+- `GET /api/users/:id/blocks` — list users the authenticated user has blocked
+- `POST /api/users/:id/blocks` — block another user using `blockedId` or `blocked_id`
+- `DELETE /api/users/:id/blocks/:blockedId` — unblock a user
+- `GET /api/users/:id/block-relationships` — return every user ID in a block relationship with the authenticated user, in either direction
+
+Blocklist routes are self-only: `:id` must match the authenticated user. When either user has blocked the other, profiles are returned as not found, user search excludes the match, direct messages are blocked, unread/conversation counts skip blocked senders, and team-chat broadcasts such as messages, typing indicators, and read receipts exclude blocked user rooms where relevant.
 
 ---
 
@@ -309,6 +325,7 @@ The server uses Socket.IO for real-time features. Clients authenticate via JWT t
 | `message:read` | Client → Server | Mark messages as read |
 | `message:status` | Server → Client | Read receipt notification |
 | `typing:start` / `typing:stop` | Bidirectional | Typing indicators |
+| `blocks:updated` | Server → Client | Tells both affected users to re-sync block state after a block or unblock |
 | `users:online` | Server → Client | Updated list of online user IDs |
 | `team:member_left` | Server → Client | Member removal (e.g. account deletion) |
 | `team:member_kicked` | Server → Client | Emitted to the removed member to kick them from the team chat |
@@ -385,13 +402,13 @@ Full transactional account deletion following the spec in `docs/USER_DELETION_SP
 | CAPTCHA | Cloudflare Turnstile on registration and contact form (feature-flagged; skipped when `TURNSTILE_SECRET_KEY` is unset) |
 | CORS | Allowlist: exact match for production URL + regex for Vercel preview deploys |
 | Password policy | Min 8 chars, at least one letter and one number (registration, reset, change) |
-| Socket.IO authorization | `conversation:join` validates team membership or existing DM before admitting the socket; `message:new` (team type) verifies the sender is a current team member before inserting |
+| Socket.IO authorization | `conversation:join` validates team membership or existing DM before admitting the socket; direct conversations are denied when either user has blocked the other; `message:new` (team type) verifies the sender is a current team member before inserting |
 | Error message scrubbing | Internal error details (`error.message`, stack traces) only included in responses when `NODE_ENV === "development"` |
 | Logging | All debug `console.log` gated behind `NODE_ENV !== "production"`; errors and warnings always logged |
 | SQL injection | Parameterized queries throughout |
 | Auth | JWT on all protected routes, bcrypt with 10 salt rounds |
 | Legal consent | Registration requires `acceptedTerms`, `acceptedPrivacy`, and `confirmedAge16` (all must be `true`). The version of each document (`accepted_terms_version`, `accepted_privacy_version`, `confirmed_age_16_version`) and the acceptance timestamp are stored on the user row for audit purposes. |
-| User data exposure | `GET /api/users` returns only public profiles (`is_public = TRUE`) with an explicit column allowlist; newly verified users remain private until they opt in; no `SELECT *` on user rows |
+| User data exposure | Public user listings return only public profiles (`is_public = TRUE`) with an explicit column allowlist; auth-aware profile/search reads also exclude users in a block relationship with the requester where supported; newly verified users remain private until they opt in; no `SELECT *` on user rows |
 
 ---
 

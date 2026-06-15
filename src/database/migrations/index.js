@@ -7,6 +7,7 @@ const createMessageReads = require("./create_message_reads");
 const addMessageEditColumns = require("./add_message_edit_columns");
 const addReplyToId = require("./add_reply_to_id");
 const addLegalConsentToUsers = require("./add_legal_consent_to_users");
+const createUserBlocks = require("./create_user_blocks");
 
 const runMigrations = async () => {
   try {
@@ -17,6 +18,7 @@ const runMigrations = async () => {
     await addMessageEditColumns();
     await addReplyToId();
     await addLegalConsentToUsers();
+    await createUserBlocks();
 
     console.log("All migrations completed successfully!");
   } catch (error) {

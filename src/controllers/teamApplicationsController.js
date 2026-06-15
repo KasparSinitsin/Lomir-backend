@@ -464,8 +464,13 @@ const getTeamApplications = async (req, res) => {
        LEFT JOIN team_vacant_roles vr ON ta.role_id = vr.id
        LEFT JOIN users fu ON vr.filled_by = fu.id
        WHERE ta.team_id = $1 AND ta.status = 'pending'
+         AND NOT EXISTS (
+           SELECT 1 FROM user_blocks ub
+           WHERE (ub.blocker_id = ta.applicant_id AND ub.blocked_id = $2)
+              OR (ub.blocked_id = ta.applicant_id AND ub.blocker_id = $2)
+         )
        ORDER BY ta.created_at ASC`,
-      [teamId],
+      [teamId, userId],
     );
 
     // Batch-fetch role tags and badges for applications that reference a vacant role
