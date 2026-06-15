@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const dotenv = require("dotenv");
+const { buildErrorResponse } = require("./utils/errorResponse");
 
 dotenv.config();
 
@@ -116,13 +117,9 @@ app.use((err, req, res, next) => {
     console.error(err.stack);
   }
 
-  const statusCode = err.statusCode || 500;
+  const { statusCode, body } = buildErrorResponse(err);
 
-  res.status(statusCode).json({
-    success: false,
-    message: err.message || "Internal server error",
-    error: process.env.NODE_ENV === "development" ? err.stack : undefined,
-  });
+  res.status(statusCode).json(body);
 });
 
 module.exports = app;
