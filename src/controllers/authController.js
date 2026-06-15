@@ -62,6 +62,8 @@ const loginSchema = Joi.object({
   password: Joi.string().min(6).required(),
 });
 
+const INVALID_LOGIN_MESSAGE = "Invalid email or password";
+
 const authController = {
   /**
    * Register a new user and send verification email
@@ -564,17 +566,7 @@ const authController = {
       if (!user) {
         return res.status(401).json({
           success: false,
-          message: "Invalid email",
-        });
-      }
-
-      // Original — enforce email verification for all users
-      if (!user.email_verified) {
-        // ── INTERIM (disabled): if (!user.email_verified && process.env.SKIP_EMAIL_VERIFICATION !== "true") {
-        return res.status(403).json({
-          success: false,
-          message: "Please verify your email before logging in. Check your inbox for the verification link — it expires 24 hours after registration.",
-          requiresVerification: true,
+          message: INVALID_LOGIN_MESSAGE,
         });
       }
 
@@ -586,7 +578,17 @@ const authController = {
       if (!isValidPassword) {
         return res.status(401).json({
           success: false,
-          message: "Invalid password",
+          message: INVALID_LOGIN_MESSAGE,
+        });
+      }
+
+      // Original — enforce email verification for all users
+      if (!user.email_verified) {
+        // ── INTERIM (disabled): if (!user.email_verified && process.env.SKIP_EMAIL_VERIFICATION !== "true") {
+        return res.status(403).json({
+          success: false,
+          message: "Please verify your email before logging in. Check your inbox for the verification link — it expires 24 hours after registration.",
+          requiresVerification: true,
         });
       }
 
