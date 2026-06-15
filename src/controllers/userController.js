@@ -21,6 +21,8 @@ const SAFE_PUBLIC_USER_KEYS = [
   'is_synthetic', 'created_at', 'tags',
 ];
 
+const DELETED_USER_DISPLAY_NAME = "Former Lomir User";
+
 const sanitizePublicUser = (row) => {
   const safe = {};
   for (const key of SAFE_PUBLIC_USER_KEYS) {
@@ -990,7 +992,11 @@ const deleteUser = async (req, res) => {
       await client.query(
         `INSERT INTO messages (sender_id, team_id, content, sent_at)
          VALUES ($1, $2, $3, NOW())`,
-        [null, membership.teamId, `🚪 ${userDisplayName} has left Lomir.`],
+        [
+          null,
+          membership.teamId,
+          `🚪 ${DELETED_USER_DISPLAY_NAME} has left Lomir.`,
+        ],
       );
     }
 
@@ -1188,7 +1194,7 @@ const deleteUser = async (req, res) => {
         [
           null,
           team.teamId,
-          `👑 OWNERSHIP_TEAM: ${userDisplayName} | ${successor.name}`,
+          `👑 OWNERSHIP_TEAM: ${DELETED_USER_DISPLAY_NAME} | ${successor.name}`,
         ],
       );
 
