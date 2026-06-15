@@ -16,6 +16,12 @@ const CREATED_USER_FIELDS = `
   district,
   country,
   avatar_url,
+  accepted_terms_at,
+  accepted_privacy_at,
+  confirmed_age_16_at,
+  accepted_terms_version,
+  accepted_privacy_version,
+  confirmed_age_16_version,
   email_verified,
   is_public,
   is_synthetic,
@@ -38,6 +44,12 @@ const AUTH_USER_FIELDS = `
   district,
   country,
   avatar_url,
+  accepted_terms_at,
+  accepted_privacy_at,
+  confirmed_age_16_at,
+  accepted_terms_version,
+  accepted_privacy_version,
+  confirmed_age_16_version,
   is_public,
   is_synthetic,
   created_at,
@@ -57,6 +69,12 @@ const CURRENT_USER_FIELDS = `
   district,
   country,
   avatar_url,
+  accepted_terms_at,
+  accepted_privacy_at,
+  confirmed_age_16_at,
+  accepted_terms_version,
+  accepted_privacy_version,
+  confirmed_age_16_version,
   is_public,
   is_synthetic,
   created_at,
@@ -88,12 +106,18 @@ const userModel = {
           latitude,
           longitude,
           avatar_url,
+          accepted_terms_at,
+          accepted_privacy_at,
+          confirmed_age_16_at,
+          accepted_terms_version,
+          accepted_privacy_version,
+          confirmed_age_16_version,
           email_verified,
           is_public,
           created_at,
           updated_at
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,FALSE,FALSE,NOW(),NOW())
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),NOW(),NOW(),$15,$16,$17,FALSE,FALSE,NOW(),NOW())
         RETURNING ${CREATED_USER_FIELDS}
         `,
         [
@@ -111,6 +135,9 @@ const userModel = {
           userData.latitude || null,
           userData.longitude || null,
           userData.avatar_url || null,
+          userData.accepted_terms_version,
+          userData.accepted_privacy_version,
+          userData.confirmed_age_16_version,
         ],
       );
 
