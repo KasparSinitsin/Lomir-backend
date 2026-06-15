@@ -7,6 +7,7 @@ const {
 } = require("../utils/geocodingUtil");
 const { deleteImageKitFile } = require("../utils/imagekitUtils");
 const { ensureBadgeVisibilityColumns } = require("../utils/badgeVisibilityUtils");
+const userModel = require("../models/userModel");
 
 const PUBLIC_USER_FIELDS = `
   u.id, u.username, u.first_name, u.last_name, u.bio,
@@ -142,13 +143,27 @@ const getSuccessorCandidatesByTeam = async (queryable, teamIds, excludedUserId) 
  */
 const getUsers = async (req, res) => {
   try {
-    const result = await pool.query(`
+    const viewerId = req.user?.id ?? null;
+    // Hide anyone in a block relationship with the viewer (mutual). When the
+    // request is unauthenticated, viewerId is null and the filter is a no-op.
+    const blockFilter = viewerId
+      ? `AND NOT EXISTS (
+           SELECT 1 FROM user_blocks ub
+           WHERE (ub.blocker_id = u.id AND ub.blocked_id = $1)
+              OR (ub.blocked_id = u.id AND ub.blocker_id = $1)
+         )`
+      : "";
+    const result = await pool.query(
+      `
       SELECT ${PUBLIC_USER_FIELDS}
       FROM users u
       WHERE u.is_public = TRUE
+      ${blockFilter}
       ORDER BY u.created_at DESC
       LIMIT 50
-    `);
+    `,
+      viewerId ? [viewerId] : [],
+    );
 
     res.status(200).json({
       success: true,
@@ -315,6 +330,19 @@ const getUserById = async (req, res) => {
     }
 
     const user = result.rows[0];
+
+    // Blocked users are mutually hidden: if either party has blocked the other,
+    // present the profile as "not found" (same shape the frontend already uses
+    // for missing/private-non-shared profiles).
+    if (!isOwner && req.user) {
+      const blocked = await userModel.isBlockedBetween(req.user.id, userId);
+      if (blocked) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+    }
 
     if (!isOwner && !user.is_public) {
       // Teammates may see the full sanitized profile even if it is private
@@ -2004,6 +2032,151 @@ const getUserBadges = async (req, res) => {
   }
 };
 
+// ============================================================
+// USER BLOCKS
+// ============================================================
+
+// Guards that the authenticated user is acting on their own blocklist.
+const isSelf = (req) => Number(req.user?.id) === Number(req.params.id);
+
+// Tell both parties' clients (all devices) to re-sync block state in realtime,
+// so a block/unblock instantly hides/restores chats without a manual refresh.
+const emitBlocksUpdated = (req, blockerId, blockedId, blocked) => {
+  const io = req.app.get("io");
+  if (!io) return;
+  io.to(`user:${blockedId}`).emit("blocks:updated", {
+    withUserId: Number(blockerId),
+    blocked,
+  });
+  io.to(`user:${blockerId}`).emit("blocks:updated", {
+    withUserId: Number(blockedId),
+    blocked,
+  });
+};
+
+/**
+ * @description List users the current user has blocked.
+ * @route GET /api/users/:id/blocks
+ * @access Private (self only)
+ */
+const getBlockedUsers = async (req, res) => {
+  try {
+    if (!isSelf(req)) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    const blocked = await userModel.getBlockedUsers(req.user.id);
+    res.status(200).json({ success: true, data: blocked });
+  } catch (error) {
+    console.error("Error fetching blocked users:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching blocked users",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
+/**
+ * @description Block a user.
+ * @route POST /api/users/:id/blocks
+ * @access Private (self only)
+ */
+const blockUser = async (req, res) => {
+  try {
+    if (!isSelf(req)) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    const blockedId = Number(req.body.blocked_id ?? req.body.blockedId);
+    if (!blockedId || Number.isNaN(blockedId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "blockedId is required" });
+    }
+    if (blockedId === Number(req.user.id)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "You cannot block yourself" });
+    }
+
+    const target = await pool.query(`SELECT id FROM users WHERE id = $1`, [
+      blockedId,
+    ]);
+    if (target.rows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    await userModel.blockUser(req.user.id, blockedId);
+    emitBlocksUpdated(req, req.user.id, blockedId, true);
+    res
+      .status(201)
+      .json({ success: true, message: "User blocked successfully" });
+  } catch (error) {
+    console.error("Error blocking user:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error blocking user",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
+/**
+ * @description Unblock a user.
+ * @route DELETE /api/users/:id/blocks/:blockedId
+ * @access Private (self only)
+ */
+const unblockUser = async (req, res) => {
+  try {
+    if (!isSelf(req)) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    const blockedId = Number(req.params.blockedId);
+    if (!blockedId || Number.isNaN(blockedId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid blocked user id" });
+    }
+    await userModel.unblockUser(req.user.id, blockedId);
+    emitBlocksUpdated(req, req.user.id, blockedId, false);
+    res
+      .status(200)
+      .json({ success: true, message: "User unblocked successfully" });
+  } catch (error) {
+    console.error("Error unblocking user:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error unblocking user",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
+/**
+ * @description Get every user id in a block relationship with the current user
+ *              (either direction) — used by the client to mutually anonymize
+ *              blocked users in shared teams.
+ * @route GET /api/users/:id/block-relationships
+ * @access Private (self only)
+ */
+const getBlockRelationships = async (req, res) => {
+  try {
+    if (!isSelf(req)) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    const ids = await userModel.getBlockRelationshipIds(req.user.id);
+    res.status(200).json({ success: true, data: { ids } });
+  } catch (error) {
+    console.error("Error fetching block relationships:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching block relationships",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
 module.exports = {
   getUsers,
   getUserById,
@@ -2015,4 +2188,8 @@ module.exports = {
   updateUserTags,
   updateUserBadgeVisibility,
   getUserBadges,
+  getBlockedUsers,
+  blockUser,
+  unblockUser,
+  getBlockRelationships,
 };

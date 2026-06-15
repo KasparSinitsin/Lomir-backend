@@ -197,6 +197,72 @@ const userModel = {
   async verifyPassword(password, hash) {
     return bcrypt.compare(password, hash);
   },
+
+  // ==============================
+  // USER BLOCKS
+  // ==============================
+  async blockUser(blockerId, blockedId) {
+    await db.query(
+      `INSERT INTO user_blocks (blocker_id, blocked_id)
+       VALUES ($1, $2)
+       ON CONFLICT (blocker_id, blocked_id) DO NOTHING`,
+      [blockerId, blockedId],
+    );
+  },
+
+  async unblockUser(blockerId, blockedId) {
+    await db.query(
+      `DELETE FROM user_blocks
+       WHERE blocker_id = $1 AND blocked_id = $2`,
+      [blockerId, blockedId],
+    );
+  },
+
+  // Users that `blockerId` has blocked (these are the ones they can unblock),
+  // returned with the card fields the blocklist UI needs, newest first.
+  async getBlockedUsers(blockerId) {
+    const result = await db.query(
+      `SELECT u.id, u.username, u.first_name, u.last_name, u.avatar_url,
+              u.city, u.country, u.is_public, u.is_synthetic, ub.created_at,
+              COALESCE((
+                SELECT json_agg(t.name ORDER BY t.name ASC)
+                FROM teams t
+                JOIN team_members tm1 ON t.id = tm1.team_id AND tm1.user_id = ub.blocker_id
+                JOIN team_members tm2 ON t.id = tm2.team_id AND tm2.user_id = ub.blocked_id
+                WHERE t.archived_at IS NULL
+              ), '[]'::json) AS shared_teams
+       FROM user_blocks ub
+       JOIN users u ON u.id = ub.blocked_id
+       WHERE ub.blocker_id = $1
+       ORDER BY ub.created_at DESC`,
+      [blockerId],
+    );
+    return result.rows;
+  },
+
+  // Every user id in a block relationship with `userId` in EITHER direction —
+  // used to mutually hide/anonymize profiles across the app.
+  async getBlockRelationshipIds(userId) {
+    const result = await db.query(
+      `SELECT blocked_id AS id FROM user_blocks WHERE blocker_id = $1
+       UNION
+       SELECT blocker_id AS id FROM user_blocks WHERE blocked_id = $1`,
+      [userId],
+    );
+    return result.rows.map((row) => row.id);
+  },
+
+  // True when either user has blocked the other.
+  async isBlockedBetween(a, b) {
+    const result = await db.query(
+      `SELECT 1 FROM user_blocks
+       WHERE (blocker_id = $1 AND blocked_id = $2)
+          OR (blocker_id = $2 AND blocked_id = $1)
+       LIMIT 1`,
+      [a, b],
+    );
+    return result.rows.length > 0;
+  },
 };
 
 module.exports = userModel;

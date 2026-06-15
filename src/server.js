@@ -8,7 +8,15 @@ const http = require("http");
 const socketIo = require("socket.io");
 const { verifyToken } = require("./utils/jwtUtils");
 const db = require("./config/database");
+const userModel = require("./models/userModel");
 const PORT = process.env.PORT || 5001;
+
+// Socket rooms (`user:<id>`) to exclude when delivering `senderId`'s realtime
+// events, so blocked users never see each other's messages/typing in team chats.
+const getBlockedUserRooms = async (senderId) => {
+  const ids = await userModel.getBlockRelationshipIds(senderId);
+  return ids.map((id) => `user:${id}`);
+};
 
 const CHAT_FILE_RETENTION_DAYS = 60;
 
@@ -31,6 +39,11 @@ const isActiveTeamMember = async (teamId, userId) => {
 };
 
 const hasDirectConversationAccess = async (userId, conversationId) => {
+  // A block (either direction) revokes access to the DM conversation entirely.
+  if (await userModel.isBlockedBetween(userId, conversationId)) {
+    return false;
+  }
+
   const result = await db.query(
     `SELECT 1
      FROM messages
@@ -378,11 +391,23 @@ io.on("connection", (socket) => {
           type: "team",
         };
 
-        io.to(`team:${conversationId}`).emit("message:received", message);
+        const blockedRooms = await getBlockedUserRooms(userId);
+        const teamEmitter =
+          blockedRooms.length > 0
+            ? io.to(`team:${conversationId}`).except(blockedRooms)
+            : io.to(`team:${conversationId}`);
+        teamEmitter.emit("message:received", message);
       } else {
         const recipientExists = await userExists(conversationId);
         if (!recipientExists) {
           socket.emit("error", { message: "Recipient not found" });
+          return;
+        }
+
+        if (await userModel.isBlockedBetween(userId, conversationId)) {
+          socket.emit("error", {
+            message: "You can no longer message this user",
+          });
           return;
         }
 
@@ -551,8 +576,14 @@ io.on("connection", (socket) => {
         return;
       }
 
-      // For team messages, broadcast to all team members except sender
-      socket.to(`team:${conversationId}`).emit("typing:update", {
+      // For team messages, broadcast to all team members except sender and
+      // anyone in a block relationship with the typing user.
+      const blockedRooms = await getBlockedUserRooms(userId);
+      const typingEmitter =
+        blockedRooms.length > 0
+          ? socket.to(`team:${conversationId}`).except(blockedRooms)
+          : socket.to(`team:${conversationId}`);
+      typingEmitter.emit("typing:update", {
         conversationId: String(conversationId),
         userId,
         username: socket.username,
@@ -593,8 +624,14 @@ io.on("connection", (socket) => {
         return;
       }
 
-      // For team messages, broadcast to all team members except sender
-      socket.to(`team:${conversationId}`).emit("typing:update", {
+      // For team messages, broadcast to all team members except sender and
+      // anyone in a block relationship with the typing user.
+      const blockedRooms = await getBlockedUserRooms(userId);
+      const typingEmitter =
+        blockedRooms.length > 0
+          ? socket.to(`team:${conversationId}`).except(blockedRooms)
+          : socket.to(`team:${conversationId}`);
+      typingEmitter.emit("typing:update", {
         conversationId: String(conversationId),
         userId,
         username: socket.username,
@@ -691,9 +728,15 @@ io.on("connection", (socket) => {
           [conversationId, userId],
         );
 
-        // Emit read status update to the team room
+        // Emit read status update to the team room (excluding blocked users so
+        // the reader's identity stays hidden from anyone they've blocked).
         if (readStatusResult.rows.length > 0) {
-          socket.to(`team:${conversationId}`).emit("message:status", {
+          const blockedRooms = await getBlockedUserRooms(userId);
+          const readEmitter =
+            blockedRooms.length > 0
+              ? socket.to(`team:${conversationId}`).except(blockedRooms)
+              : socket.to(`team:${conversationId}`);
+          readEmitter.emit("message:status", {
             conversationId: String(conversationId),
             type: "team",
             readBy: userId,

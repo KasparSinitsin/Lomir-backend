@@ -258,10 +258,20 @@ const getUserTeams = async (req, res) => {
              t.is_remote,
              COALESCE(COUNT(DISTINCT tm.user_id), 0) AS current_members_count,
              (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count,
-             (SELECT COUNT(*)::int FROM team_applications ta WHERE ta.team_id = t.id AND ta.status = 'pending') AS pending_applications_count,
+             (SELECT COUNT(*)::int FROM team_applications ta WHERE ta.team_id = t.id AND ta.status = 'pending'
+               AND NOT EXISTS (
+                 SELECT 1 FROM user_blocks ub
+                 WHERE (ub.blocker_id = ta.applicant_id AND ub.blocked_id = $1)
+                    OR (ub.blocked_id = ta.applicant_id AND ub.blocker_id = $1)
+               )) AS pending_applications_count,
              (SELECT COUNT(*)::int FROM team_invitations ti WHERE ti.team_id = t.id AND ti.status = 'pending') AS pending_sent_invitations_count,
              GREATEST(
-               (SELECT MAX(ta.created_at) FROM team_applications ta WHERE ta.team_id = t.id AND ta.status = 'pending'),
+               (SELECT MAX(ta.created_at) FROM team_applications ta WHERE ta.team_id = t.id AND ta.status = 'pending'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM user_blocks ub
+                   WHERE (ub.blocker_id = ta.applicant_id AND ub.blocked_id = $1)
+                      OR (ub.blocked_id = ta.applicant_id AND ub.blocker_id = $1)
+                 )),
                (SELECT MAX(ti.created_at) FROM team_invitations ti WHERE ti.team_id = t.id AND ti.status = 'pending')
              ) AS latest_request_timestamp,
              tmr.role as user_role,
