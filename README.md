@@ -20,14 +20,14 @@ Built with Node.js, Express, PostgreSQL (Neon), and Socket.IO.
 
 ### Test Credentials
 
-Contact the project owner for a demo login, or register a new account with a valid email address (email verification is required).
+Contact the project owner for a demo login, or register a new account with a valid email address. Email verification is required, and new profiles stay private until the user changes visibility in settings.
 
 ---
 
 ## Features
 
 - **Authentication** — JWT-based registration, login, email verification, and password reset. Transactional auth emails are sent through Nodemailer SMTP. Registration protected by Cloudflare Turnstile CAPTCHA (feature-flagged for local dev).
-- **User Profiles** — CRUD with avatar uploads (ImageKit), interest tags, and badge portfolios
+- **User Profiles** — CRUD with avatar uploads (ImageKit), interest tags, badge portfolios, and user-controlled public/private visibility. Verified accounts remain private by default until the user opts in to public visibility.
 - **Teams** — Create, join, manage members, assign roles, and archive teams
 - **Vacant Roles** — Post open positions on teams with desired tags, badges, and location preferences
 - **Matching Engine** — Score users against roles (and vice versa) using weighted tag/badge/distance criteria
@@ -387,7 +387,7 @@ Full transactional account deletion following the spec in `docs/USER_DELETION_SP
 | Logging | All debug `console.log` gated behind `NODE_ENV !== "production"`; errors and warnings always logged |
 | SQL injection | Parameterized queries throughout |
 | Auth | JWT on all protected routes, bcrypt with 10 salt rounds |
-| User data exposure | `GET /api/users` returns only public profiles (`is_public = TRUE`) with an explicit column allowlist; no `SELECT *` on user rows |
+| User data exposure | `GET /api/users` returns only public profiles (`is_public = TRUE`) with an explicit column allowlist; newly verified users remain private until they opt in; no `SELECT *` on user rows |
 
 ---
 
