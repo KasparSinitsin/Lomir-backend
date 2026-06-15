@@ -89,7 +89,7 @@ Recipients keep their badges and credits intact. Frontend displays **"Former Lom
 |------|--------|
 | `team_members` row | **DELETE** |
 
-Team chat receives system message: `"🚪 [Name] has left Lomir."` (uses the user's real name one final time).
+Team chat receives system message: `"🚪 Former Lomir User has left Lomir."`
 
 ### 6. Roles the User FILLED
 | Item | Action |
@@ -144,7 +144,7 @@ All DMs involving the user are removed. The other party loses the conversation. 
 | `messages.sender_id` where `sender_id = userId AND team_id IS NOT NULL` | **SET NULL** |
 | System messages containing user's name | **REPLACE** name with `"Former Lomir User"` in `content` |
 
-**New departure message** posted to each team: `"🚪 [Real Name] has left Lomir."` — this is the last record of their name.
+**New departure message** posted to each team: `"🚪 Former Lomir User has left Lomir."`
 
 **Backend query fix required:** `getMessages` must change `JOIN users u ON m.sender_id = u.id` → `LEFT JOIN users u ON m.sender_id = u.id`.
 
@@ -279,7 +279,7 @@ The `deleteUser` controller executes all operations in a **single database trans
 
 **Phase B — Messages & chat cleanup (while sender_id still identifies the user):**
 3. **Delete all DMs** involving the user (`sender_id = userId OR receiver_id = userId` where `team_id IS NULL`)
-4. **Post departure messages** to all team chats: `"🚪 [Name] has left Lomir."`
+4. **Post anonymized departure messages** to all team chats: `"🚪 Former Lomir User has left Lomir."`
 5. **Replace user's name** in existing system messages in team chats with `"Former Lomir User"`
 
 **Phase C — Team ownership (while team_members still exist):**
