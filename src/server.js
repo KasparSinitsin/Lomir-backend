@@ -8,6 +8,7 @@ const http = require("http");
 const socketIo = require("socket.io");
 const { verifyToken } = require("./utils/jwtUtils");
 const { getTokenFromCookieHeader } = require("./utils/authCookie");
+const { isAllowedOrigin } = require("./utils/allowedOrigins");
 const db = require("./config/database");
 const userModel = require("./models/userModel");
 const PORT = process.env.PORT || 5001;
@@ -101,20 +102,7 @@ const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
     origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      try {
-        const url = new URL(origin);
-        if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
-          return callback(null, true);
-        }
-      } catch (_) {}
-      const allowed = [
-        "https://lomir-frontend.vercel.app",
-        process.env.CLIENT_URL,
-        process.env.FRONTEND_URL,
-        process.env.FRONTEND_ORIGIN,
-      ].filter(Boolean);
-      if (allowed.includes(origin)) return callback(null, true);
+      if (isAllowedOrigin(origin)) return callback(null, true);
       callback(new Error("Not allowed by CORS"));
     },
     methods: ["GET", "POST"],
