@@ -260,7 +260,7 @@ All routes are prefixed with `/api`.
 
 | Prefix | Description |
 |---|---|
-| `/api/auth` | Register (requires `acceptedTerms`, `acceptedPrivacy`, `confirmedAge16`), login, email verification, password reset; `POST /auth/check-email` and `/auth/check-username` for real-time availability checks |
+| `/api/auth` | Register (requires `acceptedTerms`, `acceptedPrivacy`, `confirmedAge16`), login, email verification, password reset; `POST /auth/check-username` for rate-limited username availability checks |
 | `/api/users` | User CRUD, tags, badges, avatar, self-only blocklist endpoints, account deletion with preview |
 | `/api/teams` | Team CRUD, members, applications, invitations, badge awards; `DELETE /invitations/:id/role` cancels only the role portion of a pending invitation |
 | `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management. Supports `?ids=1,2,3` for bulk filtering (bypasses the default status filter so polling can detect roles that transitioned to filled/closed). Role responses include `is_public` on the `creator` and `filled_by` user sub-objects. |

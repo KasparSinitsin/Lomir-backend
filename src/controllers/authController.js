@@ -62,7 +62,30 @@ const loginSchema = Joi.object({
   password: Joi.string().min(6).required(),
 });
 
+const usernameAvailabilitySchema = Joi.object({
+  username: Joi.string().alphanum().min(3).max(30).required(),
+});
+
 const INVALID_LOGIN_MESSAGE = "Invalid email or password";
+const GENERIC_REGISTRATION_VERIFICATION_MESSAGE =
+  "If this email address can be used for registration, a verification link will be sent.";
+const GENERIC_RESEND_VERIFICATION_MESSAGE =
+  "If an account exists with this email and still needs verification, a verification link will be sent.";
+
+const sendGenericRegistrationVerificationResponse = (res) =>
+  res.status(201).json({
+    success: true,
+    message: GENERIC_REGISTRATION_VERIFICATION_MESSAGE,
+    data: {
+      requiresVerification: true,
+    },
+  });
+
+const sendGenericResendVerificationResponse = (res) =>
+  res.status(200).json({
+    success: true,
+    message: GENERIC_RESEND_VERIFICATION_MESSAGE,
+  });
 
 const authController = {
   /**
@@ -158,10 +181,7 @@ const authController = {
       ]);
 
       if (existingUserByEmail) {
-        return res.status(400).json({
-          success: false,
-          message: "User with this email already exists",
-        });
+        return sendGenericRegistrationVerificationResponse(res);
       }
 
       if (existingUserByUsername) {
@@ -281,21 +301,8 @@ const authController = {
         // Still return success - user was created, they can request a new email
       }
 
-      // Return success WITHOUT a JWT token (user must verify email first)
-      res.status(201).json({
-        success: true,
-        message:
-          "Registration successful! Please check your email to verify your account.",
-        data: {
-          requiresVerification: true,
-          user: {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            is_synthetic: user.is_synthetic,
-          },
-        },
-      });
+      // Return success WITHOUT a JWT token (user must verify email first).
+      return sendGenericRegistrationVerificationResponse(res);
     } catch (error) {
       console.error("Registration error:", error);
 
@@ -311,10 +318,7 @@ const authController = {
         }
 
         if (constraint === "users_email_unique_ci") {
-          return res.status(400).json({
-            success: false,
-            message: "User with this email already exists",
-          });
+          return sendGenericRegistrationVerificationResponse(res);
         }
 
         return res.status(400).json({
@@ -332,54 +336,20 @@ const authController = {
     }
   },
 
-  async checkEmail(req, res) {
-    try {
-      const { email } = req.body;
-
-      if (!email) {
-        return res.status(400).json({
-          success: false,
-          message: "Email is required",
-        });
-      }
-
-      const result = await db.query(
-        `SELECT id FROM users WHERE LOWER(email) = LOWER($1)`,
-        [email],
-      );
-
-      const available = result.rows.length === 0;
-
-      res.status(200).json({
-        success: true,
-        available,
-        ...(available
-          ? {}
-          : { message: "This email address is already registered." }),
-      });
-    } catch (error) {
-      console.error("Check email error:", error);
-      res.status(500).json({
-        success: false,
-        message: "Error checking email availability",
-      });
-    }
-  },
-
   async checkUsername(req, res) {
     try {
-      const { username } = req.body;
+      const { error, value } = usernameAvailabilitySchema.validate(req.body);
 
-      if (!username) {
+      if (error) {
         return res.status(400).json({
           success: false,
-          message: "Username is required",
+          message: "Invalid username format",
         });
       }
 
       const result = await db.query(
         `SELECT id FROM users WHERE LOWER(username) = LOWER($1)`,
-        [username],
+        [value.username],
       );
 
       const available = result.rows.length === 0;
@@ -486,22 +456,14 @@ const authController = {
       );
 
       if (result.rows.length === 0) {
-        // Don't reveal if email exists or not
-        return res.status(200).json({
-          success: true,
-          message:
-            "If an account exists with this email, a verification link has been sent.",
-        });
+        return sendGenericResendVerificationResponse(res);
       }
 
       const user = result.rows[0];
 
       // Check if already verified
       if (user.email_verified) {
-        return res.status(400).json({
-          success: false,
-          message: "Email is already verified. You can log in.",
-        });
+        return sendGenericResendVerificationResponse(res);
       }
 
       // Generate new verification token
@@ -525,17 +487,9 @@ const authController = {
 
       if (!emailResult.success) {
         console.error("Failed to resend verification email");
-        return res.status(500).json({
-          success: false,
-          message: "Failed to send verification email. Please try again later.",
-        });
       }
 
-      res.status(200).json({
-        success: true,
-        message:
-          "If an account exists with this email, a verification link has been sent.",
-      });
+      return sendGenericResendVerificationResponse(res);
     } catch (error) {
       console.error("Resend verification error:", error);
       res.status(500).json({

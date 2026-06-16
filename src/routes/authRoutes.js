@@ -3,7 +3,11 @@ const router = express.Router();
 
 const authController = require("../controllers/authController");
 const auth = require("../middlewares/auth");
-const { authLimiter, registerLimiter } = require("../middlewares/rateLimiter");
+const {
+  authLimiter,
+  registerLimiter,
+  usernameAvailabilityLimiter,
+} = require("../middlewares/rateLimiter");
 const { upload } = require("../middlewares/uploadMiddleware");
 
 // Register a new user (with optional avatar upload)
@@ -17,8 +21,11 @@ router.post(
 // Login existing user
 router.post("/login", authLimiter, authController.login);
 
-router.post("/check-email", authLimiter, authController.checkEmail);
-router.post("/check-username", authLimiter, authController.checkUsername);
+router.post(
+  "/check-username",
+  usernameAvailabilityLimiter,
+  authController.checkUsername,
+);
 
 // Email verification routes (query-param based: /verify-email?token=...)
 router.get("/verify-email", authController.verifyEmail);

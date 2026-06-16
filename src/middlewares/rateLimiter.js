@@ -28,6 +28,12 @@ const registerLimiter = createRateLimiter({
   message: "Too many registration attempts. Please try again later.",
 });
 
+const usernameAvailabilityLimiter = createRateLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  message: "Too many username checks. Please try again later.",
+});
+
 const contactLimiter = createRateLimiter({
   windowMs: 60 * 60 * 1000,
   max: 5,
@@ -37,5 +43,6 @@ const contactLimiter = createRateLimiter({
 module.exports = {
   authLimiter,
   registerLimiter,
+  usernameAvailabilityLimiter,
   contactLimiter,
 };
