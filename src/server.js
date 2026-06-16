@@ -7,6 +7,7 @@ const app = require("./app");
 const http = require("http");
 const socketIo = require("socket.io");
 const { verifyToken } = require("./utils/jwtUtils");
+const { getTokenFromCookieHeader } = require("./utils/authCookie");
 const db = require("./config/database");
 const userModel = require("./models/userModel");
 const PORT = process.env.PORT || 5001;
@@ -126,7 +127,11 @@ app.set("io", io);
 
 // Socket.IO middleware for authentication
 io.use((socket, next) => {
-  const token = socket.handshake.auth.token;
+  // Prefer the httpOnly session cookie sent with the handshake; fall back to
+  // an explicit auth token (backward compatibility / non-browser clients).
+  const token =
+    getTokenFromCookieHeader(socket.handshake.headers.cookie) ||
+    socket.handshake.auth.token;
 
   if (!token) {
     return next(new Error("Authentication error: Token missing"));

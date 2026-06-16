@@ -2,6 +2,7 @@ const Joi = require("joi");
 const crypto = require("crypto");
 const userModel = require("../models/userModel");
 const { generateToken } = require("../utils/jwtUtils");
+const { setAuthCookie, clearAuthCookie } = require("../utils/authCookie");
 const emailService = require("../services/emailService");
 const db = require("../config/database");
 const { resolveLocationData } = require("../utils/geocodingUtil");
@@ -548,11 +549,14 @@ const authController = {
 
       const token = generateToken(user);
 
+      // Deliver the session token as an httpOnly cookie instead of in the
+      // response body, so it is never readable by frontend JavaScript.
+      setAuthCookie(res, token);
+
       res.status(200).json({
         success: true,
         message: "Login successful",
         data: {
-          token,
           user: {
             id: user.id,
             username: user.username,
@@ -578,6 +582,18 @@ const authController = {
         ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
     }
+  },
+
+  /**
+   * Log out: clear the session cookie. Stateless JWTs are not server-side
+   * revocable, so logout simply removes the cookie from the browser.
+   */
+  async logout(req, res) {
+    clearAuthCookie(res);
+    res.status(200).json({
+      success: true,
+      message: "Logged out successfully",
+    });
   },
 
   /**

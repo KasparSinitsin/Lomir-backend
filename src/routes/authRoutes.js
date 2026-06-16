@@ -21,6 +21,9 @@ router.post(
 // Login existing user
 router.post("/login", authLimiter, authController.login);
 
+// Log out (clears the session cookie)
+router.post("/logout", authController.logout);
+
 router.post(
   "/check-username",
   usernameAvailabilityLimiter,

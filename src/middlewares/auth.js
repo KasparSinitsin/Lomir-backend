@@ -1,4 +1,17 @@
 const { verifyToken } = require('../utils/jwtUtils');
+const { AUTH_COOKIE_NAME } = require('../utils/authCookie');
+
+/**
+ * Extract the session token, preferring the httpOnly cookie and falling back
+ * to the Authorization header (for API clients / backward compatibility).
+ */
+const getTokenFromRequest = (req) => {
+  const cookieToken = req.cookies && req.cookies[AUTH_COOKIE_NAME];
+  if (cookieToken) return cookieToken;
+
+  const authHeader = req.headers['authorization'];
+  return authHeader && authHeader.split(' ')[1]; // Format: "Bearer TOKEN"
+};
 
 /**
  * Middleware to authenticate JWT token
@@ -7,15 +20,9 @@ const authenticateToken = (req, res, next) => {
   if (process.env.NODE_ENV !== 'production') {
     console.log(`Request to ${req.method} ${req.path}`);
   }
-  
-  // Get the token from the Authorization header
-  const authHeader = req.headers['authorization'];
-  if (process.env.NODE_ENV !== 'production') {
-    console.log("Authorization header:", authHeader ? "Present" : "Missing");
-  }
-  
-  const token = authHeader && authHeader.split(' ')[1]; // Format: "Bearer TOKEN"
-  
+
+  const token = getTokenFromRequest(req);
+
   if (!token) {
     if (process.env.NODE_ENV !== 'production') {
       console.log("No token provided in request");
@@ -54,15 +61,9 @@ const optionalAuthenticateToken = (req, res, next) => {
   if (process.env.NODE_ENV !== 'production') {
     console.log(`Request to ${req.method} ${req.path} (optional auth)`);
   }
-  
-  // Get the token from the Authorization header
-  const authHeader = req.headers['authorization'];
-  if (process.env.NODE_ENV !== 'production') {
-    console.log("Authorization header:", authHeader ? "Present" : "Missing");
-  }
-  
-  const token = authHeader && authHeader.split(' ')[1]; // Format: "Bearer TOKEN"
-  
+
+  const token = getTokenFromRequest(req);
+
   if (!token) {
     if (process.env.NODE_ENV !== 'production') {
       console.log("No token provided, continuing as unauthenticated user");
