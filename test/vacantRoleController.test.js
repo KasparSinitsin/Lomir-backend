@@ -168,6 +168,15 @@ test("updateVacantRoleStatus persists filled_by and returns filled_by_user when 
       return { rows: [{ role: "owner" }] };
     }
 
+    if (
+      sql.includes("SELECT id, role_name") &&
+      sql.includes("filled_by = $2") &&
+      sql.includes("status = 'filled'") &&
+      sql.includes("id <> $3")
+    ) {
+      return { rows: [] };
+    }
+
     if (sql.includes("UPDATE team_vacant_roles")) {
       return {
         rows: [
