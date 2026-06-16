@@ -37,7 +37,7 @@ Contact the project owner for a demo login, or register a new account with a val
 - **Badge System** — 30 badges across 5 categories; award badges to teammates with reasons and context
 - **Notifications** — In-app notifications for invitations, applications, badge awards, messages, @mentions, and role lifecycle events; each notification deep-links to the exact message that triggered it; stale notifications are cleaned up automatically on member removal, role deletion, and team deletion
 - **Account Deletion** — Full transactional account deletion with impact preview, automatic team ownership transfer, role reopening, and "Former Lomir User" handling for preserved references
-- **Contact Form** — Public `/api/contact` endpoint with Joi validation, Turnstile CAPTCHA, in-memory file attachments (up to 5), and SMTP forwarding; unexpected body fields are stripped defensively so multipart attachment fields cannot break validation; rate-limited to 5 submissions/hr
+- **Contact Form & Reports** — Public `/api/contact` endpoint with Joi validation, Turnstile CAPTCHA, in-memory file attachments (up to 3 files, 5 MB each, 10 MB total), and SMTP forwarding. Abuse/content reports are persisted in `contact_reports` with a reference ID before email forwarding, so reports are not lost if SMTP delivery fails; unexpected body fields are stripped defensively so multipart attachment fields cannot break validation; rate-limited to 5 submissions/hr
 - **Geocoding** — Location enrichment via Nominatim: resolves a full location object (postal code, city, district, state, country, coordinates) from partial input. Built-in postal-code-to-district lookup for Berlin and Frankfurt (200+ mappings) used as a fast offline fallback before the API call. Works with country alone — does not require both postal code and city.
 - **Security** — Helmet security headers, request body size cap (1 MB), rate limiting on auth and contact endpoints, CORS allowlist, password policy enforcement, Socket.IO conversation/message authorization, production error message scrubbing
 
@@ -158,6 +158,14 @@ node --test test/searchController.test.js
 
 That suite covers pagination, sorting, proximity handling, synthetic/demo-data filtering, match-score enrichment, and team/member exclusion behavior for the active search endpoints.
 
+For contact/report work, run the focused contact suite:
+
+```bash
+node --test test/contactController.test.js
+```
+
+That suite covers abuse report persistence, reference ID responses, email-forwarding status updates, persistence failure handling, and the ordinary contact-message path.
+
 ---
 
 ## Project Structure
@@ -184,7 +192,7 @@ Lomir-backend/
 │   │   ├── searchController.js
 │   │   ├── badgeController.js
 │   │   ├── contactController.js       # Contact form: Joi validation with unknown-field stripping,
-│   │   │                              #   Turnstile CAPTCHA, SMTP forwarding
+│   │   │                              #   Turnstile CAPTCHA, report persistence, SMTP forwarding
 │   │   ├── messageController.js
 │   │   ├── notificationController.js
 │   │   └── matchingController.js
@@ -195,7 +203,7 @@ Lomir-backend/
 │   │   ├── teamRoutes.js
 │   │   ├── searchRoutes.js
 │   │   ├── badgeRoutes.js
-│   │   ├── contactRoutes.js    # Contact form route with multer (up to 5 attachments)
+│   │   ├── contactRoutes.js    # Contact form route with multer (up to 3 attachments)
 │   │   ├── messageRoutes.js
 │   │   ├── notificationRoutes.js
 │   │   ├── matchingRoutes.js
@@ -207,6 +215,8 @@ Lomir-backend/
 │   │   ├── auth.js             # JWT authentication middleware
 │   │   ├── rateLimiter.js      # Rate limiting for auth endpoints
 │   │   └── uploadMiddleware.js # Multer wrapper for file/image uploads
+│   ├── models/
+│   │   └── contactReportModel.js # Persistent abuse/content report records and email status updates
 │   ├── services/
 │   │   └── emailService.js     # Nodemailer SMTP transactional email; Resend restore notes kept in comments
 │   ├── utils/
@@ -228,6 +238,7 @@ Lomir-backend/
 │   │   └── cleanupUnverifiedAccounts.js # Runs every 6 hours; deletes expired unverified accounts
 │   └── database/
 │       └── migrations/
+│           └── create_contact_reports.js # Stores report submissions with reference IDs and mail status
 ├── scripts/                    # SQL seed, migration, and utility scripts
 │   ├── migrate-cloudinary-to-imagekit.js   # One-time migration (already run): converted Cloudinary URLs to ImageKit URLs in the database
 │   ├── add-location-district-columns.sql  # Migration: adds district column to teams/users/roles
@@ -235,6 +246,7 @@ Lomir-backend/
 │   └── backfill-location-data.js         # One-off script to backfill district/state from geocoding
 ├── test/                       # Controller unit tests
 │   ├── invitationController.test.js
+│   ├── contactController.test.js
 │   ├── searchController.test.js
 │   ├── teamController.applyToJoinTeam.test.js
 │   ├── userController.deleteUser.test.js
@@ -273,7 +285,7 @@ All routes are prefixed with `/api`.
 | `/api/imagekit` | Auth params for client-side ImageKit uploads |
 | `/api/tags` | Tag catalog (structured by category) |
 | `/api/geocoding` | Postal code → city/district/country/coordinates lookup |
-| `/api/contact` | Public contact form submission with optional file attachments forwarded by SMTP |
+| `/api/contact` | Public contact form submission with optional file attachments forwarded by SMTP; `Report content or abuse` submissions are persisted first and return a `referenceId` |
 
 ---
 
