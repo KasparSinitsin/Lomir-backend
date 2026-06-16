@@ -40,9 +40,18 @@ const contactLimiter = createRateLimiter({
   message: "Too many messages. Please try again later.",
 });
 
+// Public postal-code lookup. Generous enough for typing-driven autofill, but
+// caps abuse of the endpoint and its upstream Nominatim (OSM) usage.
+const geocodingLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  message: "Too many location lookups. Please try again later.",
+});
+
 module.exports = {
   authLimiter,
   registerLimiter,
   usernameAvailabilityLimiter,
   contactLimiter,
+  geocodingLimiter,
 };
