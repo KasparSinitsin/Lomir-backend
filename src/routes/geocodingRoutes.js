@@ -1,7 +1,38 @@
 const express = require("express");
 const axios = require("axios");
 const { deriveLocationFromPostalCode } = require("../utils/locationDerivation");
+const { geocodingLimiter } = require("../middlewares/rateLimiter");
 const router = express.Router();
+
+// In-memory cache for postal-code lookups. Reduces duplicate outbound calls to
+// the Nominatim (OSM) service for repeated postal codes, which both respects
+// their usage policy and limits how often user-entered locations leave the
+// server. Entries expire after the TTL; the map is bounded to cap memory use.
+const GEOCODE_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const GEOCODE_CACHE_MAX_ENTRIES = 1000;
+const geocodeCache = new Map();
+
+function getCachedLocation(key) {
+  const entry = geocodeCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    geocodeCache.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function setCachedLocation(key, value) {
+  // Evict the oldest entry once the cache is full (Map preserves insertion order).
+  if (geocodeCache.size >= GEOCODE_CACHE_MAX_ENTRIES) {
+    const oldestKey = geocodeCache.keys().next().value;
+    geocodeCache.delete(oldestKey);
+  }
+  geocodeCache.set(key, {
+    value,
+    expiresAt: Date.now() + GEOCODE_CACHE_TTL_MS,
+  });
+}
 
 // Helper function to detect country from postal code
 function detectCountryCode(postalCode) {
@@ -62,7 +93,7 @@ const postalCodeMapping = {
   "110 00": { city: "Prague", country: "Czech Republic" },
 };
 
-router.get("/postal-code/:code", async (req, res) => {
+router.get("/postal-code/:code", geocodingLimiter, async (req, res) => {
   try {
     const { code } = req.params;
     const requestedCountry = req.query.country || null;
@@ -72,6 +103,15 @@ router.get("/postal-code/:code", async (req, res) => {
       console.log(
         `Geocoding request for postal code: ${code}, detected country: ${detectedCountry}`
       );
+    }
+
+    const cacheKey = `${code}|${detectedCountry}`;
+    const cachedLocation = getCachedLocation(cacheKey);
+    if (cachedLocation) {
+      if (process.env.NODE_ENV !== "production") {
+        console.log(`Cache hit for ${cacheKey}`);
+      }
+      return res.json(cachedLocation);
     }
 
     const derivedLocation = deriveLocationFromPostalCode(code, detectedCountry);
@@ -110,10 +150,12 @@ router.get("/postal-code/:code", async (req, res) => {
         longitude: null,
       };
 
+      setCachedLocation(cacheKey, locationInfo);
       return res.json(locationInfo);
     }
 
     // If not in mapping, try Nominatim with proper country code
+    let nominatimErrored = false;
     try {
       if (process.env.NODE_ENV !== "production") {
         console.log(
@@ -168,9 +210,11 @@ router.get("/postal-code/:code", async (req, res) => {
         if (process.env.NODE_ENV !== "production") {
           console.log(`Nominatim success for ${code}:`, locationInfo.displayName);
         }
+        setCachedLocation(cacheKey, locationInfo);
         return res.json(locationInfo);
       }
     } catch (nominatimError) {
+      nominatimErrored = true;
       if (process.env.NODE_ENV !== "production") {
         console.log(`Nominatim failed for ${code}:`, nominatimError.message);
       }
@@ -180,14 +224,20 @@ router.get("/postal-code/:code", async (req, res) => {
     if (process.env.NODE_ENV !== "production") {
       console.log(`No geocoding results found for postal code: ${code}`);
     }
-    res.json({
+    const fallbackLocation = {
       city: null,
       state: null,
       country: null,
       displayName: code, // Just show the postal code
       latitude: null,
       longitude: null,
-    });
+    };
+    // Cache a definitive "no result" (Nominatim returned nothing), but never a
+    // transient failure (timeout/error), so lookups can succeed once it recovers.
+    if (!nominatimErrored) {
+      setCachedLocation(cacheKey, fallbackLocation);
+    }
+    res.json(fallbackLocation);
   } catch (error) {
     console.error("Geocoding service error:", error.message);
 
