@@ -173,6 +173,7 @@ function buildRespondInvitationPoolQueryStub({ roleId = 9 } = {}) {
 function buildRespondInvitationClientStub({
   memberCount = "2",
   roleUpdateRows = [{ id: 9, role_name: "Backend Developer" }],
+  existingFilledRoleRows = [],
   isInternalMember = false,
 } = {}) {
   const calls = [];
@@ -191,6 +192,15 @@ function buildRespondInvitationClientStub({
 
       if (sql.includes("COUNT(*) as count FROM team_members")) {
         return { rows: [{ count: memberCount }] };
+      }
+
+      if (
+        sql.includes("SELECT id, role_name") &&
+        sql.includes("filled_by = $2") &&
+        sql.includes("status = 'filled'") &&
+        sql.includes("id <> $3")
+      ) {
+        return { rows: existingFilledRoleRows };
       }
 
       if (sql.includes("INSERT INTO team_members")) {
@@ -776,6 +786,10 @@ test("getTeamsWhereUserCanInvite includes teams where the invitee is already a m
           teamavatar_url: "https://example.com/alpha.png",
           max_members: 3,
           current_members_count: "3",
+          city: "Berlin",
+          country: "Germany",
+          is_remote: false,
+          user_role: "owner",
           is_invitee_member: true,
         },
         {
@@ -784,6 +798,10 @@ test("getTeamsWhereUserCanInvite includes teams where the invitee is already a m
           teamavatar_url: "https://example.com/beta.png",
           max_members: 4,
           current_members_count: "2",
+          city: null,
+          country: null,
+          is_remote: true,
+          user_role: "admin",
           is_invitee_member: false,
         },
       ],
@@ -808,6 +826,10 @@ test("getTeamsWhereUserCanInvite includes teams where the invitee is already a m
       max_members: 3,
       current_members_count: 3,
       available_spots: 0,
+      city: "Berlin",
+      country: "Germany",
+      is_remote: false,
+      user_role: "owner",
       is_invitee_member: true,
     },
     {
@@ -817,6 +839,10 @@ test("getTeamsWhereUserCanInvite includes teams where the invitee is already a m
       max_members: 4,
       current_members_count: 2,
       available_spots: 2,
+      city: null,
+      country: null,
+      is_remote: true,
+      user_role: "admin",
       is_invitee_member: false,
     },
   ]);
