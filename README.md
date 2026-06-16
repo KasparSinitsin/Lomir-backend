@@ -26,7 +26,7 @@ Contact the project owner for a demo login, or register a new account with a val
 
 ## Features
 
-- **Authentication** — JWT-based registration, login, email verification, and password reset. Transactional auth emails are sent through Nodemailer SMTP. Registration protected by Cloudflare Turnstile CAPTCHA (feature-flagged for local dev). Registration requires explicit acceptance of Terms of Service, acknowledgement of the Privacy Policy, and confirmation of minimum age (16+); the version of each legal document is stamped on the user row at sign-up.
+- **Authentication** — JWT-based registration, login, email verification, and password reset. The session JWT is delivered as an `httpOnly`, `sameSite` cookie (never in the response body or readable by frontend JavaScript); auth middleware and the Socket.IO handshake read it from the cookie, with the `Authorization: Bearer` header kept as a fallback for API clients. Transactional auth emails are sent through Nodemailer SMTP. Registration protected by Cloudflare Turnstile CAPTCHA (feature-flagged for local dev). Registration requires explicit acceptance of Terms of Service, acknowledgement of the Privacy Policy, and confirmation of minimum age (16+); the version of each legal document is stamped on the user row at sign-up.
 - **User Profiles** — CRUD with avatar uploads (ImageKit), interest tags, badge portfolios, and user-controlled public/private visibility. Verified accounts remain private by default until the user opts in to public visibility.
 - **User Blocking** — Authenticated users can manage a private blocklist. Block relationships hide profiles and user-search results where requester context is available, suppress team application visibility, disable direct messaging, and exclude blocked users from team chat realtime events where needed.
 - **Teams** — Create, join, manage members, assign roles, and archive teams
@@ -39,7 +39,7 @@ Contact the project owner for a demo login, or register a new account with a val
 - **Account Deletion** — Full transactional account deletion with impact preview, automatic team ownership transfer, role reopening, and "Former Lomir User" handling for preserved references
 - **Contact Form & Reports** — Public `/api/contact` endpoint with Joi validation, Turnstile CAPTCHA, in-memory file attachments (up to 3 files, 5 MB each, 10 MB total), and SMTP forwarding. Abuse/content reports are persisted in `contact_reports` with a reference ID before email forwarding, so reports are not lost if SMTP delivery fails; unexpected body fields are stripped defensively so multipart attachment fields cannot break validation; rate-limited to 5 submissions/hr
 - **Geocoding** — Location enrichment via Nominatim: resolves a full location object (postal code, city, district, state, country, coordinates) from partial input. Built-in postal-code-to-district lookup for Berlin and Frankfurt (200+ mappings) used as a fast offline fallback before the API call. Works with country alone — does not require both postal code and city.
-- **Security** — Helmet security headers, request body size cap (1 MB), rate limiting on auth and contact endpoints, CORS allowlist, password policy enforcement, Socket.IO conversation/message authorization, production error message scrubbing
+- **Security** — `httpOnly` cookie sessions (JWT not exposed to JavaScript), Helmet security headers, request body size cap (1 MB), rate limiting on auth, contact, and geocoding endpoints, credentialed CORS allowlist (applied before body parsing), password policy enforcement, Socket.IO conversation/message authorization, production error message scrubbing
 
 ---
 
@@ -212,7 +212,7 @@ Lomir-backend/
 │   │   └── api/
 │   │       └── tags.js
 │   ├── middlewares/
-│   │   ├── auth.js             # JWT authentication middleware
+│   │   ├── auth.js             # Reads the session JWT from the httpOnly cookie (Bearer header fallback)
 │   │   ├── rateLimiter.js      # Rate limiting for auth endpoints
 │   │   └── uploadMiddleware.js # Multer wrapper for file/image uploads
 │   ├── models/
@@ -225,6 +225,7 @@ Lomir-backend/
 │   │   ├── fileValidation.js
 │   │   ├── fileCleanup.js      # File expiry check + ImageKit deletion helpers (used by scheduler)
 │   │   ├── jwtUtils.js
+│   │   ├── authCookie.js       # httpOnly session-cookie set/clear options + handshake cookie parsing
 │   │   ├── locationDerivation.js # Offline postal-code → city/district/state lookup (Berlin, Frankfurt)
 │   │   ├── matchingScorer.js   # Shared scoring utilities
 │   │   ├── searchQueryBuilder.js # Shared search distance/filter/sort SQL builders
@@ -272,7 +273,7 @@ All routes are prefixed with `/api`.
 
 | Prefix | Description |
 |---|---|
-| `/api/auth` | Register (requires `acceptedTerms`, `acceptedPrivacy`, `confirmedAge16`), login, email verification, password reset; `POST /auth/check-username` for rate-limited username availability checks |
+| `/api/auth` | Register (requires `acceptedTerms`, `acceptedPrivacy`, `confirmedAge16`), login (sets the httpOnly session cookie), `POST /auth/logout` (clears it), email verification, password reset; `POST /auth/check-username` for rate-limited username availability checks |
 | `/api/users` | User CRUD, tags, badges, avatar, self-only blocklist endpoints, account deletion with preview |
 | `/api/teams` | Team CRUD, members, applications, invitations, badge awards; `DELETE /invitations/:id/role` cancels only the role portion of a pending invitation |
 | `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management. Supports `?ids=1,2,3` for bulk filtering (bypasses the default status filter so polling can detect roles that transitioned to filled/closed). Role responses include `is_public` on the `creator` and `filled_by` user sub-objects. |
@@ -326,7 +327,7 @@ Blocklist routes are self-only: `:id` must match the authenticated user. When ei
 
 ## Real-Time Events (Socket.IO)
 
-The server uses Socket.IO for real-time features. Clients authenticate via JWT token in the handshake.
+The server uses Socket.IO for real-time features. Clients authenticate from the httpOnly session cookie sent with the handshake (the browser sends it automatically via `withCredentials`); an explicit handshake auth token is still accepted as a fallback.
 
 **Key events:**
 
@@ -418,7 +419,7 @@ Full transactional account deletion following the spec in `docs/USER_DELETION_SP
 | Error message scrubbing | Internal error details (`error.message`, stack traces) only included in responses when `NODE_ENV === "development"` |
 | Logging | All debug `console.log` gated behind `NODE_ENV !== "production"`; errors and warnings always logged |
 | SQL injection | Parameterized queries throughout |
-| Auth | JWT on all protected routes, bcrypt with 10 salt rounds |
+| Auth | JWT on all protected routes, carried in an `httpOnly` `sameSite` cookie so it is not exposed to frontend JavaScript (XSS-resistant); bcrypt with 10 salt rounds |
 | Legal consent | Registration requires `acceptedTerms`, `acceptedPrivacy`, and `confirmedAge16` (all must be `true`). The version of each document (`accepted_terms_version`, `accepted_privacy_version`, `confirmed_age_16_version`) and the acceptance timestamp are stored on the user row for audit purposes. |
 | User data exposure | Public user listings return only public profiles (`is_public = TRUE`) with an explicit column allowlist; auth-aware profile/search reads also exclude users in a block relationship with the requester where supported; newly verified users remain private until they opt in; no `SELECT *` on user rows |
 
