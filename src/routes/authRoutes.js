@@ -49,11 +49,17 @@ router.post("/reset-password", authLimiter, authController.resetPassword);
 // Change password (authenticated)
 router.put(
   "/change-password",
+  authLimiter,
   auth.authenticateToken,
   authController.changePassword,
 );
 
 // Change email (authenticated)
-router.put("/change-email", auth.authenticateToken, authController.changeEmail);
+router.put(
+  "/change-email",
+  authLimiter,
+  auth.authenticateToken,
+  authController.changeEmail,
+);
 
 module.exports = router;
