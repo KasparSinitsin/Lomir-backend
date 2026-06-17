@@ -245,40 +245,6 @@ const authController = {
         );
       }
 
-      // ── INTERIM BYPASS (disabled — email verification now active via Nodemailer/Gmail SMTP) ──
-      // Restore this block if email delivery becomes unavailable and registration needs to work without verification.
-      // if (process.env.SKIP_EMAIL_VERIFICATION === "true") {
-      //   await db.query(`UPDATE users SET email_verified = TRUE WHERE id = $1`, [
-      //     user.id,
-      //   ]);
-      //
-      //   const token = generateToken(user);
-      //
-      //   return res.status(201).json({
-      //     success: true,
-      //     message: "Registration successful!",
-      //     data: {
-      //       token,
-      //       user: {
-      //         id: user.id,
-      //         username: user.username,
-      //         email: user.email,
-      //         first_name: user.first_name,
-      //         last_name: user.last_name,
-      //         bio: user.bio,
-      //         postal_code: user.postal_code,
-      //         city: user.city,
-      //         country: user.country,
-      //         avatar_url: user.avatar_url,
-      //         is_public: user.is_public,
-      //         is_synthetic: user.is_synthetic,
-      //         created_at: user.created_at,
-      //       },
-      //     },
-      //   });
-      // }
-      // ── END INTERIM BYPASS ──
-
       // Generate verification token
       const verificationToken = crypto.randomBytes(32).toString("hex");
       const tokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
@@ -538,9 +504,8 @@ const authController = {
         });
       }
 
-      // Original — enforce email verification for all users
+      // Enforce email verification before issuing a session.
       if (!user.email_verified) {
-        // ── INTERIM (disabled): if (!user.email_verified && process.env.SKIP_EMAIL_VERIFICATION !== "true") {
         return res.status(403).json({
           success: false,
           message: "Please verify your email before logging in. Check your inbox for the verification link — it expires 24 hours after registration.",

@@ -117,9 +117,6 @@ SMTP_PASS=<smtp-app-password>
 CLIENT_URL=http://localhost:5173
 FRONTEND_URL=http://localhost:5173
 
-# Skip email verification for local development if needed
-SKIP_EMAIL_VERIFICATION=false
-
 # Cloudflare Turnstile (optional for local dev — if unset, CAPTCHA is skipped)
 # TURNSTILE_SECRET_KEY=<turnstile-secret-key>
 ```
