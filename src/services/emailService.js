@@ -254,6 +254,79 @@ const emailService = {
   },
 
   /**
+   * Notify a user that their account password was just changed.
+   * Sent after the change succeeds so a compromised user can react quickly.
+   */
+  async sendPasswordChangedEmail(email, username) {
+    const forgotPasswordUrl = `${process.env.FRONTEND_URL}/forgot-password`;
+    const loginUrl = `${process.env.FRONTEND_URL}/login`;
+    const safeUsername = escapeHtml(username || "there");
+
+    try {
+      const emailResult = await sendEmail({
+        to: email,
+        subject: "Your Lomir password was changed",
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h2 style="color: #6366f1; margin-bottom: 24px;">Your password was changed</h2>
+
+            <p style="font-size: 16px; color: #333; line-height: 1.6;">
+              Hi ${safeUsername}, this is a confirmation that the password for your Lomir account
+              was just changed.
+            </p>
+
+            <p style="font-size: 16px; color: #333; line-height: 1.6;">
+              If you made this change, you can safely ignore this email.
+            </p>
+
+            <div style="text-align: center; margin: 32px 0;">
+              <a href="${loginUrl}"
+                 style="display: inline-block; background-color: #6366f1; color: white;
+                        padding: 14px 28px; text-decoration: none; border-radius: 8px;
+                        font-weight: bold; font-size: 16px;">
+                Login to Lomir with new Password
+              </a>
+            </div>
+
+            <p style="font-size: 14px; color: #666; line-height: 1.6;">
+              <strong>If you did not change your password</strong>, your account may be compromised.
+              Please reset your password immediately using the button below:
+            </p>
+
+            <div style="text-align: center; margin: 24px 0;">
+              <a href="${forgotPasswordUrl}"
+                 style="display: inline-block; background-color: transparent; color: #6366f1;
+                        padding: 11px 24px; text-decoration: none; border-radius: 8px;
+                        border: 1px solid #6366f1; font-weight: bold; font-size: 14px;">
+                Reset Password
+              </a>
+            </div>
+
+            <hr style="border: none; border-top: 1px solid #eee; margin: 32px 0;" />
+
+            <p style="font-size: 12px; color: #999;">
+              If the button doesn't work, copy and paste this link into your browser:<br/>
+              <a href="${forgotPasswordUrl}" style="color: #6366f1;">${forgotPasswordUrl}</a>
+            </p>
+          </div>
+        `,
+      });
+
+      if (!emailResult.success) {
+        return emailResult;
+      }
+
+      if (process.env.NODE_ENV !== "production") {
+        console.log("Password changed notification sent:", emailResult.messageId);
+      }
+      return { success: true, messageId: emailResult.messageId };
+    } catch (error) {
+      console.error("Email send error:", error);
+      return { success: false };
+    }
+  },
+
+  /**
    * Send contact form submission to Lomir inbox
    */
   async sendContactFormEmail(name, email, topic, message, attachments) {

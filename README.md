@@ -39,7 +39,7 @@ Contact the project owner for a demo login, or register a new account with a val
 - **Account Deletion** — Full transactional account deletion with impact preview, automatic team ownership transfer, role reopening, and "Former Lomir User" handling for preserved references
 - **Contact Form & Reports** — Public `/api/contact` endpoint with Joi validation, Turnstile CAPTCHA, in-memory file attachments (up to 3 files, 5 MB each, 10 MB total), and SMTP forwarding. Abuse/content reports are persisted in `contact_reports` with a reference ID before email forwarding, so reports are not lost if SMTP delivery fails; unexpected body fields are stripped defensively so multipart attachment fields cannot break validation; rate-limited to 5 submissions/hr
 - **Geocoding** — Location enrichment via Nominatim: resolves a full location object (postal code, city, district, state, country, coordinates) from partial input. Built-in postal-code-to-district lookup for Berlin and Frankfurt (200+ mappings) used as a fast offline fallback before the API call. Works with country alone — does not require both postal code and city.
-- **Security** — `httpOnly` cookie sessions (JWT not exposed to JavaScript), Helmet security headers, request body size cap (1 MB), rate limiting on auth, contact, and geocoding endpoints, credentialed CORS allowlist (applied before body parsing), password policy enforcement, Socket.IO conversation/message authorization, production error message scrubbing
+- **Security** — `httpOnly` cookie sessions (JWT not exposed to JavaScript), CSRF origin/referer validation on all state-changing requests, Helmet security headers, request body size cap (1 MB), rate limiting on auth, contact, and geocoding endpoints, credentialed CORS allowlist (applied before body parsing), password policy enforcement, Socket.IO conversation/message authorization, production error message scrubbing
 
 ---
 
@@ -213,9 +213,13 @@ Lomir-backend/
 │   │       └── tags.js
 │   ├── middlewares/
 │   │   ├── auth.js             # Reads the session JWT from the httpOnly cookie (Bearer header fallback)
-│   │   ├── rateLimiter.js      # Rate limiting for auth endpoints
+│   │   ├── csrfProtection.js   # Origin/Referer validation on state-changing requests
+│   │   ├── rateLimiter.js      # Rate limiting for auth, contact, and geocoding endpoints
 │   │   └── uploadMiddleware.js # Multer wrapper for file/image uploads
 │   ├── models/
+│   │   ├── userModel.js         # User row queries + legal-consent persistence
+│   │   ├── teamModel.js
+│   │   ├── tagModel.js
 │   │   └── contactReportModel.js # Persistent abuse/content report records and email status updates
 │   ├── services/
 │   │   └── emailService.js     # Nodemailer SMTP transactional email; Resend restore notes kept in comments
@@ -226,6 +230,10 @@ Lomir-backend/
 │   │   ├── fileCleanup.js      # File expiry check + ImageKit deletion helpers (used by scheduler)
 │   │   ├── jwtUtils.js
 │   │   ├── authCookie.js       # httpOnly session-cookie set/clear options + handshake cookie parsing
+│   │   ├── allowedOrigins.js   # Shared CORS/CSRF origin allowlist + Referer parsing
+│   │   ├── errorResponse.js    # Consistent error payloads with production message scrubbing
+│   │   ├── tokenCleanup.js     # Clears expired password-reset and email-change tokens
+│   │   ├── contactAttachments.js # Contact-form attachment count/size validation
 │   │   ├── locationDerivation.js # Offline postal-code → city/district/state lookup (Berlin, Frankfurt)
 │   │   ├── matchingScorer.js   # Shared scoring utilities
 │   │   ├── searchQueryBuilder.js # Shared search distance/filter/sort SQL builders
@@ -245,14 +253,20 @@ Lomir-backend/
 │   ├── add-location-district-columns.sql  # Migration: adds district column to teams/users/roles
 │   ├── add-legal-consent-columns.sql      # Standalone SQL for the legal consent migration (see migrations/add_legal_consent_to_users.js)
 │   └── backfill-location-data.js         # One-off script to backfill district/state from geocoding
-├── test/                       # Controller unit tests
+├── test/                       # Controller and utility unit tests
+│   ├── authController.login.test.js
+│   ├── authController.emailChange.test.js
+│   ├── csrfProtection.test.js
+│   ├── errorResponse.test.js
 │   ├── invitationController.test.js
 │   ├── contactController.test.js
+│   ├── locationDerivation.test.js
 │   ├── searchController.test.js
 │   ├── teamController.applyToJoinTeam.test.js
+│   ├── teamController.applications.test.js
 │   ├── userController.deleteUser.test.js
 │   ├── userController.deletionPreview.test.js
-│   ├── teamController.applications.test.js
+│   ├── userController.emailUpdate.test.js
 │   ├── userModel.legalConsent.test.js
 │   └── vacantRoleController.test.js
 ├── docs/
@@ -382,6 +396,8 @@ Registration, team creation/update, and user profile update all call `resolveLoc
 
 The `district` field is stored in the `users`, `teams`, and `vacant_roles` tables. Existing rows can be backfilled with `scripts/backfill-location-data.js`; the required schema migration is `scripts/add-location-district-columns.sql`.
 
+The public `GET /api/geocoding/postal-code/:code` endpoint is rate-limited (60 req/15 min) and backed by a bounded in-memory cache (24-hour TTL, max 1000 entries). Caching repeated postal-code lookups reduces outbound calls to Nominatim — respecting their usage policy and limiting how often user-entered locations leave the server. Definitive "no result" responses are cached, but transient Nominatim failures (timeouts/errors) are not, so lookups recover automatically.
+
 ---
 
 ## Scheduled Jobs
@@ -410,8 +426,9 @@ Full transactional account deletion following the spec in `docs/USER_DELETION_SP
 | Measure | Details |
 |---|---|
 | Security headers | Helmet middleware sets standard HTTP security headers on every response |
+| CSRF protection | Global `csrfProtection` middleware validates the `Origin`/`Referer` of every state-changing request (non-`GET`/`HEAD`/`OPTIONS`) against the CORS allowlist; cookie-authenticated requests without an origin are rejected. Non-browser API clients using `Authorization: Bearer` are unaffected |
 | Request body cap | `express.json` and `express.urlencoded` limited to 1 MB |
-| Rate limiting | 8 req/15 min on login/password flows; 10 req/hr on registration; 5 req/hr on contact form |
+| Rate limiting | 8 req/15 min on login/password flows; 10 req/hr on registration; 20 req/hr on username availability; 5 req/hr on contact form; 60 req/15 min on geocoding |
 | CAPTCHA | Cloudflare Turnstile on registration and contact form (feature-flagged; skipped when `TURNSTILE_SECRET_KEY` is unset) |
 | CORS | Allowlist: exact match for production URL + regex for Vercel preview deploys |
 | Password policy | Min 8 chars, at least one letter and one number (registration, reset, change) |

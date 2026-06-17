@@ -808,7 +808,7 @@ const authController = {
       }
 
       const result = await db.query(
-        "SELECT id, password_hash FROM users WHERE id = $1",
+        "SELECT id, username, email, password_hash FROM users WHERE id = $1",
         [userId],
       );
 
@@ -818,9 +818,11 @@ const authController = {
           .json({ success: false, message: "User not found" });
       }
 
+      const user = result.rows[0];
+
       const isValid = await userModel.verifyPassword(
         currentPassword,
-        result.rows[0].password_hash,
+        user.password_hash,
       );
 
       if (!isValid) {
@@ -830,12 +832,47 @@ const authController = {
         });
       }
 
+      const isSameAsCurrent = await userModel.verifyPassword(
+        newPassword,
+        user.password_hash,
+      );
+
+      if (isSameAsCurrent) {
+        return res.status(400).json({
+          success: false,
+          message: "New password must be different from your current password",
+        });
+      }
+
       const hashedPassword = await userModel.hashPassword(newPassword);
 
+      // password_changed_at invalidates every token issued before this moment
+      // (see auth middleware), logging out all existing sessions/devices.
       await db.query(
-        "UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2",
+        "UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW() WHERE id = $2",
         [hashedPassword, userId],
       );
+
+      // Clear the session cookie on the device that made the change so it is
+      // sent straight to the login form with a fresh session.
+      clearAuthCookie(res);
+
+      // Notify the user so a compromised account can be recovered quickly.
+      // A failed notification must not fail the password change itself.
+      try {
+        const notifyResult = await emailService.sendPasswordChangedEmail(
+          user.email,
+          user.username,
+        );
+        if (!notifyResult.success) {
+          console.error("Failed to send password changed notification email");
+        }
+      } catch (notifyError) {
+        console.error(
+          "Failed to send password changed notification email:",
+          notifyError,
+        );
+      }
 
       res
         .status(200)
