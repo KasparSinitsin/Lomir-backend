@@ -37,7 +37,7 @@ Contact the project owner for a demo login, or register a new account with a val
 - **Badge System** — 30 badges across 5 categories; award badges to teammates with reasons and context
 - **Notifications** — In-app notifications for invitations, applications, badge awards, messages, @mentions, and role lifecycle events; each notification deep-links to the exact message that triggered it; stale notifications are cleaned up automatically on member removal, role deletion, and team deletion
 - **Account Deletion** — Full transactional account deletion with impact preview, automatic team ownership transfer, role reopening, and "Former Lomir User" handling for preserved references
-- **Contact Form & Reports** — Public `/api/contact` endpoint with Joi validation, Turnstile CAPTCHA, in-memory file attachments (up to 3 files, 5 MB each, 10 MB total), and SMTP forwarding. Abuse/content reports are persisted in `contact_reports` with a reference ID before email forwarding, so reports are not lost if SMTP delivery fails; unexpected body fields are stripped defensively so multipart attachment fields cannot break validation; rate-limited to 5 submissions/hr
+- **Contact Form & Reports** — Public `/api/contact` endpoint with Joi validation, Turnstile CAPTCHA, in-memory file attachments (up to 3 files, 5 MB each, 10 MB total), and SMTP forwarding. Abuse/content reports are persisted in `contact_reports` with a reference ID before email forwarding, so reports are not lost if SMTP delivery fails; reporters also receive an automated acknowledgement-of-receipt email with their reference ID (sent only for `Report content or abuse` submissions, best-effort so a failed receipt never fails the request); unexpected body fields are stripped defensively so multipart attachment fields cannot break validation; rate-limited to 5 submissions/hr
 - **Geocoding** — Location enrichment via Nominatim: resolves a full location object (postal code, city, district, state, country, coordinates) from partial input. Built-in postal-code-to-district lookup for Berlin and Frankfurt (200+ mappings) used as a fast offline fallback before the API call. Works with country alone — does not require both postal code and city.
 - **Security** — `httpOnly` cookie sessions (JWT not exposed to JavaScript), CSRF origin/referer validation on all state-changing requests, Helmet security headers, request body size cap (1 MB), rate limiting on auth, contact, and geocoding endpoints, credentialed CORS allowlist (applied before body parsing), password policy enforcement, Socket.IO conversation/message authorization, production error message scrubbing
 
@@ -161,7 +161,7 @@ For contact/report work, run the focused contact suite:
 node --test test/contactController.test.js
 ```
 
-That suite covers abuse report persistence, reference ID responses, email-forwarding status updates, persistence failure handling, and the ordinary contact-message path.
+That suite covers abuse report persistence, reference ID responses, email-forwarding status updates, the reporter acknowledgement-of-receipt email (sent for reports, skipped for ordinary messages, and best-effort on failure), persistence failure handling, and the ordinary contact-message path.
 
 ---
 
@@ -219,7 +219,7 @@ Lomir-backend/
 │   │   ├── tagModel.js
 │   │   └── contactReportModel.js # Persistent abuse/content report records and email status updates
 │   ├── services/
-│   │   └── emailService.js     # Nodemailer SMTP transactional email; Resend restore notes kept in comments
+│   │   └── emailService.js     # Nodemailer SMTP transactional email (verification, password reset/changed, email-change, contact forwarding, report receipt)
 │   ├── utils/
 │   │   ├── booleanSearchParser.js
 │   │   ├── imagekitUtils.js
@@ -297,7 +297,7 @@ All routes are prefixed with `/api`.
 | `/api/imagekit` | Auth params for client-side ImageKit uploads |
 | `/api/tags` | Tag catalog (structured by category) |
 | `/api/geocoding` | Postal code → city/district/country/coordinates lookup |
-| `/api/contact` | Public contact form submission with optional file attachments forwarded by SMTP; `Report content or abuse` submissions are persisted first and return a `referenceId` |
+| `/api/contact` | Public contact form submission with optional file attachments forwarded by SMTP; `Report content or abuse` submissions are persisted first, return a `referenceId`, and trigger an automated acknowledgement-of-receipt email to the reporter |
 
 ---
 

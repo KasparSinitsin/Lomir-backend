@@ -308,6 +308,62 @@ const emailService = {
   },
 
   /**
+   * Acknowledge receipt of an abuse / illegal-content report to the reporter
+   */
+  async sendReportReceiptEmail(name, email, referenceCode) {
+    const safeName = escapeHtml(name || "there");
+    const safeReference = escapeHtml(referenceCode);
+
+    try {
+      const emailResult = await sendEmail({
+        to: email,
+        subject: `We received your Lomir report (${cleanHeaderValue(referenceCode)})`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h2 style="color: #6366f1; margin-bottom: 24px;">We received your report</h2>
+
+            <p style="font-size: 16px; color: #333; line-height: 1.6;">
+              Hi ${safeName}, thank you for reporting content or abuse on Lomir. This is an
+              automated confirmation that we have received your report and will review it.
+            </p>
+
+            <div style="background-color: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin: 24px 0;">
+              <p style="font-size: 14px; color: #333; line-height: 1.6; margin: 0;">
+                <strong>Reference ID:</strong> ${safeReference}
+              </p>
+            </div>
+
+            <p style="font-size: 16px; color: #333; line-height: 1.6;">
+              You do not need to do anything further. Please keep this reference ID in case you
+              want to refer to your report later. If you have more details to add, simply reply
+              to this email.
+            </p>
+
+            <hr style="border: none; border-top: 1px solid #eee; margin: 32px 0;" />
+
+            <p style="font-size: 12px; color: #999;">
+              This is an automated message confirming receipt. We review reports in line with our
+              Terms of Service and will take action where appropriate.
+            </p>
+          </div>
+        `,
+      });
+
+      if (!emailResult.success) {
+        return emailResult;
+      }
+
+      if (process.env.NODE_ENV !== "production") {
+        console.log("Report receipt email sent:", emailResult.messageId);
+      }
+      return { success: true, messageId: emailResult.messageId };
+    } catch (error) {
+      console.error("Email send error:", error);
+      return { success: false };
+    }
+  },
+
+  /**
    * Send contact form submission to Lomir inbox
    */
   async sendContactFormEmail(name, email, topic, message, attachments) {
