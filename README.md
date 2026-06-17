@@ -458,3 +458,9 @@ Full transactional account deletion following the spec in `docs/USER_DELETION_SP
 - **Frontend repo:** [Lomir-frontend](https://github.com/KasparSinitsin/Lomir-frontend)
 - **Deletion spec:** [`docs/USER_DELETION_SPEC.md`](docs/USER_DELETION_SPEC.md)
 - **Email verification restore guide:** [`docs/RESTORE_EMAIL_VERIFICATION_GUIDE.md`](docs/RESTORE_EMAIL_VERIFICATION_GUIDE.md)
+
+---
+
+## License
+
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0). See the [LICENSE](LICENSE) file for the full text.

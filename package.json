@@ -1,6 +1,7 @@
 {
   "name": "lomir-backend",
   "version": "1.0.0",
+  "private": true,
   "main": "index.js",
   "scripts": {
     "start": "NODE_ENV=production node src/server.js",
@@ -15,7 +16,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "AGPL-3.0-or-later",
   "bugs": {
     "url": "https://github.com/KasparSinitsin/Lomir-backend/issues"
   },
