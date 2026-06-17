@@ -117,9 +117,6 @@ SMTP_PASS=<smtp-app-password>
 CLIENT_URL=http://localhost:5173
 FRONTEND_URL=http://localhost:5173
 
-# Skip email verification for local development if needed
-SKIP_EMAIL_VERIFICATION=false
-
 # Cloudflare Turnstile (optional for local dev — if unset, CAPTCHA is skipped)
 # TURNSTILE_SECRET_KEY=<turnstile-secret-key>
 ```
@@ -271,7 +268,7 @@ Lomir-backend/
 │   └── vacantRoleController.test.js
 ├── docs/
 │   ├── USER_DELETION_SPEC.md              # Full account deletion specification
-│   ├── RESTORE_EMAIL_VERIFICATION_GUIDE.md # Steps to re-enable email verification
+│   ├── RESTORE_EMAIL_VERIFICATION_GUIDE.md # Email delivery (Nodemailer/SMTP) & verification flow
 │   ├── team-service-boundaries.md         # Proposed service extraction boundaries
 │   └── postman/                           # Postman collection exports for API testing
 ├── .env                        # Environment variables (not committed)
