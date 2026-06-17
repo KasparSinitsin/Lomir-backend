@@ -46,6 +46,19 @@ const updateReportEmailStatus = async (report, statusUpdate) => {
   }
 };
 
+// Acknowledge receipt to the reporter. Best-effort: the report is already
+// persisted and its reference ID shown on screen, so a failed receipt email
+// must never fail the request.
+const sendReportReceipt = async (report, { name, email }) => {
+  if (!report) return;
+
+  try {
+    await emailService.sendReportReceiptEmail(name, email, report.reference_code);
+  } catch (receiptError) {
+    console.error("Failed to send report receipt email:", receiptError);
+  }
+};
+
 const contactController = {
   async submitContactForm(req, res) {
     try {
@@ -148,6 +161,8 @@ const contactController = {
           emailError: emailError.message,
         });
       }
+
+      await sendReportReceipt(report, { name, email });
 
       if (report) {
         return res

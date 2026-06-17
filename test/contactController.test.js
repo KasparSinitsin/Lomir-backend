@@ -10,6 +10,7 @@ const REPORT_TOPIC = "Report content or abuse";
 const originalCreateReport = contactReportModel.createReport;
 const originalUpdateEmailStatus = contactReportModel.updateEmailStatus;
 const originalSendContactFormEmail = emailService.sendContactFormEmail;
+const originalSendReportReceiptEmail = emailService.sendReportReceiptEmail;
 const originalTurnstileSecret = process.env.TURNSTILE_SECRET_KEY;
 const originalConsoleError = console.error;
 
@@ -50,6 +51,7 @@ test.afterEach(() => {
   contactReportModel.createReport = originalCreateReport;
   contactReportModel.updateEmailStatus = originalUpdateEmailStatus;
   emailService.sendContactFormEmail = originalSendContactFormEmail;
+  emailService.sendReportReceiptEmail = originalSendReportReceiptEmail;
   console.error = originalConsoleError;
 
   if (originalTurnstileSecret === undefined) {
@@ -97,6 +99,12 @@ test("submitContactForm persists abuse reports and returns a reference id", asyn
     return { success: true, messageId: "mail-123" };
   };
 
+  const receiptCalls = [];
+  emailService.sendReportReceiptEmail = async (name, email, referenceCode) => {
+    receiptCalls.push({ name, email, referenceCode });
+    return { success: true, messageId: "receipt-123" };
+  };
+
   const res = createResponse();
 
   await contactController.submitContactForm(createContactRequest(), res);
@@ -105,6 +113,13 @@ test("submitContactForm persists abuse reports and returns a reference id", asyn
   assert.equal(res.body.success, true);
   assert.equal(res.body.data.referenceId, "RPT-20260616-ABCD1234");
   assert.match(res.body.message, /RPT-20260616-ABCD1234/);
+  assert.deepEqual(receiptCalls, [
+    {
+      name: "Jane Reporter",
+      email: "jane@example.com",
+      referenceCode: "RPT-20260616-ABCD1234",
+    },
+  ]);
   assert.deepEqual(statusUpdates, [
     {
       reportId: 12,
@@ -184,6 +199,9 @@ test("submitContactForm leaves ordinary contact messages mail-only", async () =>
     throw new Error("updateEmailStatus should not be called");
   };
   emailService.sendContactFormEmail = async () => ({ success: true });
+  emailService.sendReportReceiptEmail = async () => {
+    throw new Error("sendReportReceiptEmail should not be called");
+  };
 
   const res = createResponse();
 
@@ -202,4 +220,33 @@ test("submitContactForm leaves ordinary contact messages mail-only", async () =>
   assert.equal(res.body.success, true);
   assert.equal(reportCalled, false);
   assert.equal(res.body.data, undefined);
+});
+
+test("submitContactForm still confirms the report when the receipt email fails", async () => {
+  delete process.env.TURNSTILE_SECRET_KEY;
+  console.error = () => {};
+
+  contactReportModel.createReport = async () => ({
+    id: 14,
+    reference_code: "RPT-20260616-RCPT0001",
+  });
+  contactReportModel.updateEmailStatus = async (reportId, statusUpdate) => ({
+    id: reportId,
+    ...statusUpdate,
+  });
+  emailService.sendContactFormEmail = async () => ({
+    success: true,
+    messageId: "mail-456",
+  });
+  emailService.sendReportReceiptEmail = async () => {
+    throw new Error("receipt mailbox unavailable");
+  };
+
+  const res = createResponse();
+
+  await contactController.submitContactForm(createContactRequest(), res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.success, true);
+  assert.equal(res.body.data.referenceId, "RPT-20260616-RCPT0001");
 });
