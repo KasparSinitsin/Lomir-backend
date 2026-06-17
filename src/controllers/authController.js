@@ -72,6 +72,7 @@ const GENERIC_REGISTRATION_VERIFICATION_MESSAGE =
   "If this email address can be used for registration, a verification link will be sent.";
 const GENERIC_RESEND_VERIFICATION_MESSAGE =
   "If an account exists with this email and still needs verification, a verification link will be sent.";
+const EMAIL_CHANGE_TOKEN_EXPIRES_MS = 24 * 60 * 60 * 1000;
 
 const sendGenericRegistrationVerificationResponse = (res) =>
   res.status(201).json({
@@ -561,6 +562,7 @@ const authController = {
             id: user.id,
             username: user.username,
             email: user.email,
+            pendingEmail: user.pending_email,
             first_name: user.first_name,
             last_name: user.last_name,
             bio: user.bio,
@@ -849,7 +851,8 @@ const authController = {
   },
 
   /**
-   * Change email (authenticated user, requires current password)
+   * Start an email change (authenticated user, requires current password).
+   * The account email is changed only after the new address confirms the link.
    */
   async changeEmail(req, res) {
     try {
@@ -872,7 +875,7 @@ const authController = {
       }
 
       const result = await db.query(
-        "SELECT id, password_hash, email FROM users WHERE id = $1",
+        "SELECT id, username, password_hash, email FROM users WHERE id = $1",
         [userId],
       );
 
@@ -894,32 +897,189 @@ const authController = {
         });
       }
 
-      // Check if email is already taken
+      if (newEmail.toLowerCase() === result.rows[0].email.toLowerCase()) {
+        return res.status(400).json({
+          success: false,
+          message: "New email must be different from your current email",
+        });
+      }
+
+      // Check if the email is already active or currently reserved by another
+      // user's still-valid email-change request.
       const emailCheck = await db.query(
-        "SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND id != $2",
+        `SELECT id
+         FROM users
+         WHERE (
+           LOWER(email) = LOWER($1)
+           OR (
+             pending_email IS NOT NULL
+             AND LOWER(pending_email) = LOWER($1)
+             AND email_change_token_expires > NOW()
+           )
+         )
+         AND id != $2
+         LIMIT 1`,
         [newEmail, userId],
       );
 
       if (emailCheck.rows.length > 0) {
         return res.status(409).json({
           success: false,
-          message: "This email address is already in use",
+          message: "This email address is already in use or pending verification",
         });
       }
 
+      const verificationToken = crypto.randomBytes(32).toString("hex");
+      const tokenExpires = new Date(Date.now() + EMAIL_CHANGE_TOKEN_EXPIRES_MS);
+
       await db.query(
-        "UPDATE users SET email = $1, updated_at = NOW() WHERE id = $2",
-        [newEmail, userId],
+        `UPDATE users
+         SET pending_email = $1,
+             email_change_token = $2,
+             email_change_token_expires = $3,
+             updated_at = NOW()
+         WHERE id = $4`,
+        [newEmail, verificationToken, tokenExpires, userId],
       );
 
-      res
-        .status(200)
-        .json({ success: true, message: "Email changed successfully" });
+      const emailResult = await emailService.sendEmailChangeVerificationEmail(
+        newEmail,
+        verificationToken,
+        result.rows[0].username,
+      );
+
+      if (!emailResult.success) {
+        console.error("Failed to send email change verification email");
+
+        try {
+          await db.query(
+            `UPDATE users
+             SET pending_email = NULL,
+                 email_change_token = NULL,
+                 email_change_token_expires = NULL,
+                 updated_at = NOW()
+             WHERE id = $1 AND email_change_token = $2`,
+            [userId, verificationToken],
+          );
+        } catch (cleanupError) {
+          console.error("Failed to clear pending email change:", cleanupError);
+        }
+
+        return res.status(502).json({
+          success: false,
+          message: "Could not send verification email. Please try again later.",
+        });
+      }
+
+      res.status(200).json({
+        success: true,
+        message:
+          "Verification email sent to the new address. Please confirm it to finish changing your email.",
+        data: {
+          pendingEmail: newEmail,
+        },
+      });
     } catch (error) {
       console.error("Change email error:", error);
       res.status(500).json({
         success: false,
         message: "Error changing email",
+        ...(process.env.NODE_ENV === "development" && { error: error.message }),
+      });
+    }
+  },
+
+  /**
+   * Verify and complete a pending email change.
+   */
+  async verifyEmailChange(req, res) {
+    try {
+      const { token } = req.query;
+
+      if (!token) {
+        return res.status(400).json({
+          success: false,
+          message: "Verification token is required",
+        });
+      }
+
+      const pendingResult = await db.query(
+        `SELECT id, username, email, pending_email
+         FROM users
+         WHERE email_change_token = $1
+           AND email_change_token_expires > NOW()
+           AND pending_email IS NOT NULL`,
+        [token],
+      );
+
+      if (pendingResult.rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid or expired email change token",
+        });
+      }
+
+      const user = pendingResult.rows[0];
+
+      const emailCheck = await db.query(
+        `SELECT id
+         FROM users
+         WHERE LOWER(email) = LOWER($1)
+           AND id != $2
+         LIMIT 1`,
+        [user.pending_email, user.id],
+      );
+
+      if (emailCheck.rows.length > 0) {
+        await db.query(
+          `UPDATE users
+           SET pending_email = NULL,
+               email_change_token = NULL,
+               email_change_token_expires = NULL,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [user.id],
+        );
+
+        return res.status(409).json({
+          success: false,
+          message: "This email address is already in use",
+        });
+      }
+
+      const updateResult = await db.query(
+        `UPDATE users
+         SET email = pending_email,
+             pending_email = NULL,
+             email_change_token = NULL,
+             email_change_token_expires = NULL,
+             email_verified = TRUE,
+             updated_at = NOW()
+         WHERE id = $1
+         RETURNING id, username, email`,
+        [user.id],
+      );
+
+      res.status(200).json({
+        success: true,
+        message: "Email address verified and changed successfully",
+        data: {
+          user: updateResult.rows[0],
+        },
+      });
+    } catch (error) {
+      console.error("Verify email change error:", error);
+
+      if (error.code === "23505") {
+        return res.status(409).json({
+          success: false,
+          message: "This email address is already in use",
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        message: "Error verifying email change",
         ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
     }

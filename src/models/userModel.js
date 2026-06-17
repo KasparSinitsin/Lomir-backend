@@ -60,6 +60,7 @@ const CURRENT_USER_FIELDS = `
   id,
   username,
   email,
+  pending_email,
   first_name,
   last_name,
   bio,
