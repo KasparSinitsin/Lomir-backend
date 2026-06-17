@@ -1,5 +1,3 @@
-// Resend transport — commented out, restore when custom domain is verified (see docs/RESTORE_EMAIL_VERIFICATION_GUIDE.md)
-// const { Resend } = require("resend");
 const nodemailer = require("nodemailer");
 
 const useSmtp = Boolean(
@@ -17,9 +15,7 @@ const smtpTransporter = useSmtp
     })
   : null;
 
-// const FROM_EMAIL = "onboarding@resend.dev";
 const SMTP_FROM = `Lomir <${process.env.SMTP_USER}>`;
-// const getResendClient = () => new Resend(process.env.RESEND_API_KEY);
 
 const sendEmail = async ({ to, subject, html, replyTo }) => {
   if (!smtpTransporter) {
@@ -37,21 +33,6 @@ const sendEmail = async ({ to, subject, html, replyTo }) => {
   });
 
   return { success: true, messageId: info?.messageId };
-
-  // Resend fallback — preserve for future restoration when a custom domain is verified.
-  // const { data, error } = await getResendClient().emails.send({
-  //   from: `Lomir <${FROM_EMAIL}>`,
-  //   to,
-  //   subject,
-  //   html,
-  // });
-  //
-  // if (error) {
-  //   console.error("Resend error:", error);
-  //   return { success: false };
-  // }
-  //
-  // return { success: true, messageId: data?.id };
 };
 
 const escapeHtml = (value = "") =>

@@ -271,7 +271,7 @@ Lomir-backend/
 │   └── vacantRoleController.test.js
 ├── docs/
 │   ├── USER_DELETION_SPEC.md              # Full account deletion specification
-│   ├── RESTORE_EMAIL_VERIFICATION_GUIDE.md # Steps to re-enable email verification
+│   ├── RESTORE_EMAIL_VERIFICATION_GUIDE.md # Email delivery (Nodemailer/SMTP) & verification flow
 │   ├── team-service-boundaries.md         # Proposed service extraction boundaries
 │   └── postman/                           # Postman collection exports for API testing
 ├── .env                        # Environment variables (not committed)

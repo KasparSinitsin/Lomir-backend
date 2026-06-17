@@ -1,190 +1,104 @@
-# Email Registration — Interim Solution & Restoration Guide
+# Email Delivery & Verification — Current Setup
 
-Documentation of the interim registration strategy and step-by-step instructions for restoring full email verification.
+How Lomir sends transactional email (account verification, email-change
+confirmation, password reset, password-changed notification, contact form)
+and how the email verification flow works.
 
----
-
-## Background
-
-Lomir uses [Resend](https://resend.com) for transactional emails (account verification, password reset). Resend's free tier provides 100 emails/day and 3,000/month, which is sufficient for testing. However, without a verified custom domain, Resend only delivers emails from the sandbox sender (`onboarding@resend.dev`) to the **account holder's email address**. This means new users cannot receive verification emails during the current testing phase.
-
-To unblock user registration while the app is deployed on free-tier infrastructure (Render + Vercel) without a custom domain, we introduced a **feature-flag bypass** that skips email verification entirely.
+> **Status:** Email verification is **active**. New accounts must confirm their
+> email before they can log in. There is no bypass flag in effect.
 
 ---
 
-## How the Interim Solution Works
+## Transport: Nodemailer over Gmail/Google SMTP
 
-A single environment variable controls whether email verification is enforced:
+All outgoing email is sent through **Nodemailer** using **Gmail/Google SMTP**.
+There is no third-party email-API provider in the dependency tree.
 
-```env
-SKIP_EMAIL_VERIFICATION=true
-```
+The transport is configured in `src/services/emailService.js` and is enabled
+only when the SMTP environment variables are present:
 
-When this flag is set to `true`:
+| Variable | Purpose |
+|----------|---------|
+| `SMTP_HOST` | SMTP server host (e.g. `smtp.gmail.com`) |
+| `SMTP_PORT` | SMTP port (defaults to `587`, STARTTLS) |
+| `SMTP_USER` | SMTP username / sending mailbox; also used as the `From` address |
+| `SMTP_PASS` | SMTP password / app password |
+| `FRONTEND_URL` | Base URL used to build links inside emails |
 
-1. **Registration** — the user is created, tags are saved, and the account is immediately set to `email_verified = TRUE`. A JWT token is returned in the response, logging the user in directly. No verification token is generated and no email is sent.
-2. **Login** — the `email_verified` check is relaxed. Users who registered before the flag was set (and never verified) can still log in.
-3. **Frontend** — no changes were needed. `AuthContext.jsx` already handled both paths: when the backend returns `requiresVerification: true` it shows the "check your email" screen, and when it returns a `token` + `user` directly it logs the user in.
+If `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS` are not all set, `sendEmail`
+throws and no mail is sent — callers log the failure and degrade gracefully
+(e.g. registration still creates the account; the user can request a new
+verification email).
 
-All existing verification code remains in place and untouched — it is simply bypassed by an early `return` in the `register` method.
-
----
-
-## Files Modified
-
-| File | Change |
-|------|--------|
-| `src/controllers/authController.js` → `register` | Added conditional block (marked with `INTERIM` comments) that auto-verifies the user and returns a JWT when the flag is set |
-| `src/controllers/authController.js` → `login` | Added `&& process.env.SKIP_EMAIL_VERIFICATION !== "true"` to the `email_verified` check |
-
-No frontend files were modified.
-
----
-
-## Where the Flag Is Set
-
-| Environment | Location | Value |
-|-------------|----------|-------|
-| **Local development** | `Lomir-backend/.env` | `SKIP_EMAIL_VERIFICATION=true` |
-| **Production (Render)** | Render dashboard → Backend service → Environment Variables | `SKIP_EMAIL_VERIFICATION=true` |
-
----
-
-## Restoring Full Email Verification
-
-Follow these steps when you are ready to enforce email verification for all new users.
-
-### Prerequisites
-
-Before you begin, make sure both of these are in place:
-
-1. **A custom domain** (e.g. `lomir.app`) is configured and pointing at your deployment
-2. **The domain is verified in Resend** — this requires adding DNS records (SPF, DKIM, and optionally DMARC) in your domain registrar. Resend's dashboard will show green checkmarks once the records propagate.
-
-### Step 1 — Update the sender address
-
-**File:** `src/services/emailService.js`
+The `From` address is derived from the sending mailbox:
 
 ```js
-// Before (sandbox — only delivers to account holder)
-const FROM_EMAIL = "onboarding@resend.dev";
-
-// After (verified domain — delivers to all recipients)
-const FROM_EMAIL = "noreply@lomir.app";  // replace with your actual domain
+const SMTP_FROM = `Lomir <${process.env.SMTP_USER}>`;
 ```
 
-### Step 2 — Verify the frontend URL
+---
 
-Make sure `FRONTEND_URL` points to your production frontend in **both** your local `.env` and Render environment variables. This URL is used to build the verification link in emails:
+## Verification flow
 
-```env
-FRONTEND_URL=https://lomir.app
-```
+1. **Registration** (`authController.register`) — the account is created with
+   `email_verified = FALSE`, a 32-byte verification token (24-hour expiry) is
+   stored, and a verification email is sent. The response is intentionally
+   generic and contains no session token.
+2. **Verification** (`GET /api/auth/verify-email?token=...`) — a valid,
+   unexpired token sets `email_verified = TRUE` and clears the token.
+3. **Login** (`authController.login`) — unverified accounts are rejected with a
+   `requiresVerification` flag so the frontend can show the resend screen.
+4. **Resend** (`POST /api/auth/resend-verification`) — issues a fresh token and
+   email. The response is generic to avoid account enumeration.
 
-The link template in `emailService.js` uses it like this:
+The same Nodemailer transport also backs:
+
+- **Email change** (`PUT /api/auth/change-email` → `GET /verify-email-change`)
+- **Password reset** (`POST /api/auth/forgot-password` → `reset-password`)
+- **Password-changed notification** (sent after `PUT /api/auth/change-password`)
+- **Contact form / abuse reports** (`contactController`)
+
+Email links are built from `FRONTEND_URL`, e.g.:
 
 ```
 ${process.env.FRONTEND_URL}/verify-email?token=${token}
 ```
 
-### Step 3 — Remove the feature flag
-
-**On Render:** Dashboard → Backend service → Environment Variables → delete `SKIP_EMAIL_VERIFICATION` (or set it to `false`).
-
-**In local `.env`:** Remove the line or set it to `false`:
-
-```env
-# SKIP_EMAIL_VERIFICATION=true
-```
-
-Render will redeploy automatically after the env var change. Restart your local backend (`npm run dev`) to pick up the change.
-
-### Step 4 — Test the full flow
-
-1. Register a new account with a real email address
-2. Confirm you receive the verification email from your custom domain sender
-3. Click the verification link — you should land on `/verify-email` and see the success screen
-4. Log in with the new credentials
-
-Also test the edge cases:
-
-- Trying to log in before verifying (should be blocked with "Please verify your email")
-- Resending the verification email
-- Expired verification tokens (24-hour window)
-- Password reset emails (these also use Resend)
+Make sure `FRONTEND_URL` points to the correct frontend in both your local
+`.env` and the Render environment (production), or links in emails will be wrong.
 
 ---
 
-## What Happens to Existing Users
+## Testing the full flow
 
-Users who registered **during the interim period** are already marked `email_verified = TRUE` in the database. They are unaffected and can continue logging in normally after the flag is removed.
+1. Register a new account with a real email address.
+2. Confirm the verification email arrives from the configured mailbox.
+3. Click the link — you should land on `/verify-email` and see the success screen.
+4. Log in with the new credentials.
 
-Users who register **after the flag is removed** will go through the full verification flow.
+Edge cases worth checking:
+
+- Logging in before verifying (blocked with "Please verify your email").
+- Resending the verification email.
+- Expired verification tokens (24-hour window).
+- Email change confirmation and password reset emails.
 
 ---
 
-## Optional: Remove the Interim Code
+## History
 
-Once full verification is confirmed working, you can optionally clean up the interim code. This is not required — the code is harmless when the flag is absent — but keeps the codebase tidy.
+Earlier versions of Lomir used the third-party [Resend](https://resend.com)
+email API, with a `SKIP_EMAIL_VERIFICATION` feature flag that bypassed
+verification while no custom domain was available. Both the Resend transport
+and that bypass have been retired: delivery now runs entirely through
+Nodemailer/Gmail SMTP and verification is always enforced. The `resend`
+dependency has been removed from `package.json`.
 
-### In `src/controllers/authController.js` — `register` method
-
-Delete the block between the `INTERIM` comments:
-
-```js
-      // ── INTERIM: skip email verification when flag is set ──
-      if (process.env.SKIP_EMAIL_VERIFICATION === "true") {
-        await db.query(
-          `UPDATE users SET email_verified = TRUE WHERE id = $1`,
-          [user.id],
-        );
-
-        const token = generateToken(user);
-
-        return res.status(201).json({
-          success: true,
-          message: "Registration successful!",
-          data: {
-            token,
-            user: {
-              id: user.id,
-              username: user.username,
-              email: user.email,
-              first_name: user.first_name,
-              last_name: user.last_name,
-              bio: user.bio,
-              postal_code: user.postal_code,
-              city: user.city,
-              country: user.country,
-              avatar_url: user.avatar_url,
-              is_public: user.is_public,
-              created_at: user.created_at,
-            },
-          },
-        });
-      }
-      // ── END INTERIM ──
-```
-
-### In `src/controllers/authController.js` — `login` method
-
-Revert:
-
-```js
-      // Current (interim)
-      if (!user.email_verified && process.env.SKIP_EMAIL_VERIFICATION !== "true") {
-```
-
-Back to:
-
-```js
-      // Original
-      if (!user.email_verified) {
-```
-
-### Environment variables
-
-Delete `SKIP_EMAIL_VERIFICATION` from Render and local `.env` if you haven't already.
+> If a third-party email provider is ever reintroduced, update the
+> [Privacy Policy](https://github.com/KasparSinitsin/Lomir-frontend) processor
+> list (the "Service Providers and Recipients" / hosting-and-email section in
+> `LegalPlaceholderPage.jsx`) so the new processor is disclosed before it
+> handles any real user email.
 
 ---
 
@@ -192,4 +106,3 @@ Delete `SKIP_EMAIL_VERIFICATION` from Render and local `.env` if you haven't alr
 
 - [Deployment Guide](../../LOMIR_DEPLOYMENT_GUIDE.md) — environment variables and deploy workflow
 - [Local Setup Guide](../../LOMIR_LOCAL_SETUP_GUIDE.md) — local `.env` configuration
-- Resend documentation: [https://resend.com/docs](https://resend.com/docs)
