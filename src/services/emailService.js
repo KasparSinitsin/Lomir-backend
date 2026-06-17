@@ -193,6 +193,67 @@ const emailService = {
   },
 
   /**
+   * Send verification email before changing an existing account email address
+   */
+  async sendEmailChangeVerificationEmail(email, token, username) {
+    const verificationUrl = `${process.env.FRONTEND_URL}/verify-email-change?token=${token}`;
+    const safeUsername = escapeHtml(username || "there");
+
+    try {
+      const emailResult = await sendEmail({
+        to: email,
+        subject: "Confirm your new Lomir email address",
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h2 style="color: #6366f1; margin-bottom: 24px;">Confirm your new email address</h2>
+
+            <p style="font-size: 16px; color: #333; line-height: 1.6;">
+              Hi ${safeUsername}, we received a request to use this email address for your Lomir account.
+              Please confirm the change by clicking the button below:
+            </p>
+
+            <div style="text-align: center; margin: 32px 0;">
+              <a href="${verificationUrl}"
+                 style="display: inline-block; background-color: #6366f1; color: white;
+                        padding: 14px 28px; text-decoration: none; border-radius: 8px;
+                        font-weight: bold; font-size: 16px;">
+                Confirm Email Change
+              </a>
+            </div>
+
+            <p style="font-size: 14px; color: #666; line-height: 1.6;">
+              This link will expire in <strong>24 hours</strong>. Your current email address will stay active
+              until this new address is confirmed.
+            </p>
+            <p style="font-size: 14px; color: #666; line-height: 1.6;">
+              If you did not request this change, you can ignore this email.
+            </p>
+
+            <hr style="border: none; border-top: 1px solid #eee; margin: 32px 0;" />
+
+            <p style="font-size: 12px; color: #999;">
+              If the button doesn't work, copy and paste this link into your browser:<br/>
+              <a href="${verificationUrl}" style="color: #6366f1;">${verificationUrl}</a>
+            </p>
+          </div>
+        `,
+      });
+
+      if (!emailResult.success) {
+        return emailResult;
+      }
+
+      if (process.env.NODE_ENV !== "production") {
+        console.log("Email change verification email sent:", emailResult.messageId);
+      }
+      return { success: true, messageId: emailResult.messageId };
+    } catch (error) {
+      console.error("Email send error:", error);
+      return { success: false };
+    }
+  },
+
+  /**
    * Send contact form submission to Lomir inbox
    */
   async sendContactFormEmail(name, email, topic, message, attachments) {

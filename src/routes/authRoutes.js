@@ -32,6 +32,7 @@ router.post(
 
 // Email verification routes (query-param based: /verify-email?token=...)
 router.get("/verify-email", authController.verifyEmail);
+router.get("/verify-email-change", authController.verifyEmailChange);
 router.post(
   "/resend-verification",
   authLimiter,

@@ -422,6 +422,13 @@ const updateUser = async (req, res) => {
       console.log("updateUser called for ID:", userId);
     }
 
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "email")) {
+      return res.status(400).json({
+        success: false,
+        message: "Use the account email change flow to change your email address",
+      });
+    }
+
     // First, get the current user data to access the old avatar URL and location
     const currentUserResult = await pool.query(
       "SELECT avatar_url, avatar_file_id, postal_code, city, country, state, district, latitude, longitude FROM users WHERE id = $1",
@@ -444,7 +451,6 @@ const updateUser = async (req, res) => {
       first_name,
       last_name,
       username,
-      email,
       bio,
       postal_code,
       city,
@@ -492,25 +498,6 @@ const updateUser = async (req, res) => {
       queryParams.push(username);
       paramPosition++;
     }
-    if (email !== undefined) {
-      // Check if email is already taken by another user
-      const emailCheck = await pool.query(
-        "SELECT id FROM users WHERE email = $1 AND id != $2",
-        [email, userId],
-      );
-
-      if (emailCheck.rows.length > 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Email already in use by another account",
-        });
-      }
-
-      updateFields.push(`email = $${paramPosition}`);
-      queryParams.push(email);
-      paramPosition++;
-    }
-
     if (bio !== undefined) {
       updateFields.push(`bio = $${paramPosition}`);
       queryParams.push(bio);

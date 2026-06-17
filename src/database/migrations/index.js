@@ -9,6 +9,7 @@ const addReplyToId = require("./add_reply_to_id");
 const addLegalConsentToUsers = require("./add_legal_consent_to_users");
 const createUserBlocks = require("./create_user_blocks");
 const createContactReports = require("./create_contact_reports");
+const addEmailChangeFieldsToUsers = require("./add_email_change_fields_to_users");
 
 const runMigrations = async () => {
   try {
@@ -21,6 +22,7 @@ const runMigrations = async () => {
     await addLegalConsentToUsers();
     await createUserBlocks();
     await createContactReports();
+    await addEmailChangeFieldsToUsers();
 
     console.log("All migrations completed successfully!");
   } catch (error) {
