@@ -117,7 +117,7 @@ SMTP_PASS=<smtp-app-password>
 CLIENT_URL=http://localhost:5173
 FRONTEND_URL=http://localhost:5173
 
-# Cloudflare Turnstile (optional for local dev — if unset, CAPTCHA is skipped)
+# Cloudflare Turnstile (configured in the deployed environment; the CAPTCHA widget stays inactive locally until a key is set)
 # TURNSTILE_SECRET_KEY=<turnstile-secret-key>
 ```
 
@@ -422,11 +422,11 @@ Full transactional account deletion following the spec in `docs/USER_DELETION_SP
 
 | Measure | Details |
 |---|---|
-| Security headers | Helmet middleware sets standard HTTP security headers on every response |
+| Security headers | Helmet middleware sets standard HTTP security headers (including HSTS) on every response |
 | CSRF protection | Global `csrfProtection` middleware validates the `Origin`/`Referer` of every state-changing request (non-`GET`/`HEAD`/`OPTIONS`) against the CORS allowlist; cookie-authenticated requests without an origin are rejected. Non-browser API clients using `Authorization: Bearer` are unaffected |
 | Request body cap | `express.json` and `express.urlencoded` limited to 1 MB |
 | Rate limiting | 8 req/15 min on login/password flows; 10 req/hr on registration; 20 req/hr on username availability; 5 req/hr on contact form; 60 req/15 min on geocoding |
-| CAPTCHA | Cloudflare Turnstile on registration and contact form (feature-flagged; skipped when `TURNSTILE_SECRET_KEY` is unset) |
+| CAPTCHA | Cloudflare Turnstile on registration and the contact form |
 | CORS | Allowlist: exact match for production URL + regex for Vercel preview deploys |
 | Password policy | Min 8 chars, at least one letter and one number (registration, reset, change) |
 | Socket.IO authorization | `conversation:join` validates team membership or existing DM before admitting the socket; direct conversations are denied when either user has blocked the other; `message:new` (team type) verifies the sender is a current team member before inserting |
@@ -446,7 +446,7 @@ Full transactional account deletion following the spec in `docs/USER_DELETION_SP
 - **Database connection issues** — Verify `DATABASE_URL` is correct and you have internet access
 - **SMTP transport is not configured** — Set `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS`; `SMTP_PORT` defaults to `587`
 - **Port already in use** — `lsof -i :5001` to find the process, `kill -9 <PID>` to free the port
-- **CAPTCHA not loading locally** — This is expected. If `TURNSTILE_SECRET_KEY` is unset, registration skips CAPTCHA.
+- **CAPTCHA not loading locally** — Expected when no Turnstile key is configured; the CAPTCHA check runs in the deployed environment.
 
 ---
 
