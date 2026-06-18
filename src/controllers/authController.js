@@ -141,7 +141,9 @@ const authController = {
       const { error, value } = registerSchema.validate(userData);
 
       if (error) {
-        console.warn("Validation error details:", error.details);
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("Validation error details:", error.details);
+        }
         return res.status(400).json({
           success: false,
           message: "Invalid input data",

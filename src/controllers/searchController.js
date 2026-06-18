@@ -159,7 +159,9 @@ function normalizeJsonArray(value) {
     try {
       return JSON.parse(value);
     } catch (error) {
-      console.warn("Error parsing JSON array:", value, error);
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("Error parsing JSON array:", value, error.message);
+      }
       return [];
     }
   }

@@ -2,6 +2,11 @@ const cron = require("node-cron");
 const db = require("../config/database");
 
 const BUFFER_HOURS = 1;
+const debugLog = (...args) => {
+  if (process.env.NODE_ENV !== "production") {
+    console.log(...args);
+  }
+};
 
 const cleanupUnverifiedAccounts = () => {
   cron.schedule("0 */6 * * *", async () => {
@@ -26,19 +31,19 @@ const cleanupUnverifiedAccounts = () => {
 
       const count = result.rowCount || 0;
       if (count > 0) {
-        console.log(
+        debugLog(
           `[Cleanup] Deleted ${count} unverified account(s):`,
-          result.rows.map((r) => ({ id: r.id, email: r.email, created: r.created_at })),
+          result.rows.map((r) => ({ id: r.id, created: r.created_at })),
         );
-      } else if (process.env.NODE_ENV !== "production") {
-        console.log("[Cleanup] No expired unverified accounts to delete.");
+      } else {
+        debugLog("[Cleanup] No expired unverified accounts to delete.");
       }
     } catch (error) {
       console.error("[Cleanup] Error cleaning up unverified accounts:", error);
     }
   });
 
-  console.log("[Cleanup] Unverified account cleanup job scheduled (every 6 hours).");
+  debugLog("[Cleanup] Unverified account cleanup job scheduled (every 6 hours).");
 };
 
 module.exports = cleanupUnverifiedAccounts;
