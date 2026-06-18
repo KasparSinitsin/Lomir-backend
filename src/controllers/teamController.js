@@ -215,7 +215,9 @@ const createTeam = async (req, res) => {
 
     const { error, value } = teamCreationSchema.validate(req.body);
     if (error) {
-      console.error("--> Validation error:", error.details);
+      if (process.env.NODE_ENV !== "production") {
+        console.warn("--> Validation error:", error.details);
+      }
       await client.query("ROLLBACK"); // Rollback on validation error
       return res.status(400).json({
         success: false,
