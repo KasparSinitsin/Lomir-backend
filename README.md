@@ -267,9 +267,6 @@ Lomir-backend/
 │   ├── userModel.legalConsent.test.js
 │   └── vacantRoleController.test.js
 ├── docs/
-│   ├── USER_DELETION_SPEC.md              # Full account deletion specification
-│   ├── RESTORE_EMAIL_VERIFICATION_GUIDE.md # Email delivery (Nodemailer/SMTP) & verification flow
-│   ├── team-service-boundaries.md         # Proposed service extraction boundaries
 │   └── postman/                           # Postman collection exports for API testing
 ├── .env                        # Environment variables (not committed)
 ├── package.json
@@ -408,7 +405,7 @@ The public `GET /api/geocoding/postal-code/:code` endpoint is rate-limited (60 r
 
 ## Account Deletion
 
-Full transactional account deletion following the spec in `docs/USER_DELETION_SPEC.md`. Key highlights:
+Full transactional account deletion. Key highlights:
 
 - **Impact preview** — `POST /api/users/:id/deletion-preview` returns a password-verified summary of what will happen (teams transferred, teams deleted, roles reopened, counts)
 - **Single transaction** — All cleanup runs in one database transaction with 6 phases (context gathering → message cleanup → team ownership → role/reference cleanup → user row deletion → post-transaction Socket.IO events)
@@ -453,8 +450,6 @@ Full transactional account deletion following the spec in `docs/USER_DELETION_SP
 ## Related
 
 - **Frontend repo:** [Lomir-frontend](https://github.com/KasparSinitsin/Lomir-frontend)
-- **Deletion spec:** [`docs/USER_DELETION_SPEC.md`](docs/USER_DELETION_SPEC.md)
-- **Email verification restore guide:** [`docs/RESTORE_EMAIL_VERIFICATION_GUIDE.md`](docs/RESTORE_EMAIL_VERIFICATION_GUIDE.md)
 
 ---
 
