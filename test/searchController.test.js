@@ -53,14 +53,16 @@ function createUser(id, username) {
     first_name: username,
     last_name: "User",
     bio: `${username} bio`,
-    postal_code: null,
-    city: null,
+    postal_code: id === 11 ? "12555" : id === 12 ? "12557" : null,
+    city: id === 11 ? "Berlin" : null,
     country: "DE",
-    state: null,
+    state: id === 11 ? "Berlin" : null,
     avatar_url: null,
     is_public: true,
     created_at: new Date("2026-01-01T00:00:00.000Z").toISOString(),
     updated_at: new Date("2026-01-02T00:00:00.000Z").toISOString(),
+    latitude: id === 11 ? "52.445" : null,
+    longitude: id === 11 ? "13.581" : null,
     tags: [],
     badges: [],
   };
@@ -764,7 +766,7 @@ test("globalSearch ignores excludeOwnTeams for unauthenticated requests", async 
   assert.equal(hasTeamExclusion(calls), false);
 });
 
-test("search team results include normalized map location fields", async () => {
+test("search team results include public location and approximate map coordinates", async () => {
   const { query } = buildQueryStub();
   db.pool.query = query;
 
@@ -789,9 +791,50 @@ test("search team results include normalized map location fields", async () => {
   assert.equal(team.city, "Mainz");
   assert.equal(team.state, "Rhineland-Palatinate");
   assert.equal(team.country, "DE");
-  assert.equal(team.latitude, 49.999);
-  assert.equal(team.longitude, 8.271);
+  assert.equal(team.latitude, 50);
+  assert.equal(team.longitude, 8.3);
+  assert.equal(team.approximate_latitude, 50);
+  assert.equal(team.approximate_longitude, 8.3);
   assert.equal(team.is_remote, false);
+});
+
+test("search user results include public location and approximate map coordinates", async () => {
+  const { query } = buildQueryStub();
+  db.pool.query = query;
+
+  const req = {
+    query: {
+      query: "de",
+      page: "1",
+      limit: "10",
+      searchType: "users",
+    },
+    user: null,
+  };
+  const res = createResponse();
+
+  await searchController.globalSearch(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.users.length, 2);
+
+  const user = res.body.data.users[0];
+  assert.equal(user.postal_code, "12555");
+  assert.equal(user.city, "Berlin");
+  assert.equal(user.state, "Berlin");
+  assert.equal(user.country, "DE");
+  assert.equal(user.latitude, 52.4);
+  assert.equal(user.longitude, 13.6);
+  assert.equal(user.approximate_latitude, 52.4);
+  assert.equal(user.approximate_longitude, 13.6);
+  assert.equal(user.is_public, true);
+
+  const derivedUser = res.body.data.users[1];
+  assert.equal(derivedUser.postal_code, "12557");
+  assert.equal(derivedUser.city, "Berlin");
+  assert.equal(derivedUser.state, "Berlin");
+  assert.equal(derivedUser.country, "DE");
+  assert.equal(derivedUser.district, "Köpenick");
 });
 
 test("getAllUsersAndTeams with includeDemoData=false excludes synthetic rows", async () => {

@@ -2,11 +2,17 @@ const Joi = require("joi");
 const crypto = require("crypto");
 const userModel = require("../models/userModel");
 const { generateToken } = require("../utils/jwtUtils");
+const { setAuthCookie, clearAuthCookie } = require("../utils/authCookie");
 const emailService = require("../services/emailService");
 const db = require("../config/database");
-const { geocodeAddress } = require("../utils/geocodingUtil");
+const { resolveLocationData } = require("../utils/geocodingUtil");
 const { verifyTurnstileToken } = require("../utils/turnstileVerify");
 const { uploadToImageKit } = require("../middlewares/uploadMiddleware");
+const {
+  CURRENT_AGE_CONFIRMATION_VERSION,
+  CURRENT_PRIVACY_VERSION,
+  CURRENT_TERMS_VERSION,
+} = require("../config/legalDocuments");
 
 // Validation schema for registration
 const registerSchema = Joi.object({
@@ -26,8 +32,22 @@ const registerSchema = Joi.object({
   bio: Joi.string().allow("", null),
   postal_code: Joi.string().allow("", null),
   city: Joi.string().allow("", null),
+  state: Joi.string().allow("", null),
+  district: Joi.string().allow("", null),
   country: Joi.string().allow("", null),
   avatar_url: Joi.string().uri().allow(null),
+  acceptedTerms: Joi.boolean().truthy("true").valid(true).required().messages({
+    "any.only": "Terms of Service must be accepted",
+    "any.required": "Terms of Service must be accepted",
+  }),
+  acceptedPrivacy: Joi.boolean().truthy("true").valid(true).required().messages({
+    "any.only": "Privacy Policy must be acknowledged",
+    "any.required": "Privacy Policy must be acknowledged",
+  }),
+  confirmedAge16: Joi.boolean().truthy("true").valid(true).required().messages({
+    "any.only": "You must confirm that you are at least 16 years old",
+    "any.required": "You must confirm that you are at least 16 years old",
+  }),
   turnstile_token: Joi.string().optional(),
   tags: Joi.array()
     .items(
@@ -42,6 +62,32 @@ const loginSchema = Joi.object({
   email: Joi.string().email().required(),
   password: Joi.string().min(6).required(),
 });
+
+const usernameAvailabilitySchema = Joi.object({
+  username: Joi.string().alphanum().min(3).max(30).required(),
+});
+
+const INVALID_LOGIN_MESSAGE = "Invalid email or password";
+const GENERIC_REGISTRATION_VERIFICATION_MESSAGE =
+  "If this email address can be used for registration, a verification link will be sent.";
+const GENERIC_RESEND_VERIFICATION_MESSAGE =
+  "If an account exists with this email and still needs verification, a verification link will be sent.";
+const EMAIL_CHANGE_TOKEN_EXPIRES_MS = 24 * 60 * 60 * 1000;
+
+const sendGenericRegistrationVerificationResponse = (res) =>
+  res.status(201).json({
+    success: true,
+    message: GENERIC_REGISTRATION_VERIFICATION_MESSAGE,
+    data: {
+      requiresVerification: true,
+    },
+  });
+
+const sendGenericResendVerificationResponse = (res) =>
+  res.status(200).json({
+    success: true,
+    message: GENERIC_RESEND_VERIFICATION_MESSAGE,
+  });
 
 const authController = {
   /**
@@ -75,13 +121,29 @@ const authController = {
         ...req.body,
         tags: tags || [],
         avatar_url: avatarUrl,
+        acceptedTerms: req.body.acceptedTerms ?? req.body.accepted_terms,
+        acceptedPrivacy: req.body.acceptedPrivacy ?? req.body.accepted_privacy,
+        confirmedAge16:
+          req.body.confirmedAge16 ??
+          req.body.confirmed_age_16 ??
+          req.body.confirmed_age16 ??
+          req.body.confirmedMinimumAge ??
+          req.body.confirmed_minimum_age,
       };
+      delete userData.accepted_terms;
+      delete userData.accepted_privacy;
+      delete userData.confirmed_age_16;
+      delete userData.confirmed_age16;
+      delete userData.confirmedMinimumAge;
+      delete userData.confirmed_minimum_age;
 
       // Validate the payload
       const { error, value } = registerSchema.validate(userData);
 
       if (error) {
-        console.warn("Validation error details:", error.details);
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("Validation error details:", error.details);
+        }
         return res.status(400).json({
           success: false,
           message: "Invalid input data",
@@ -123,10 +185,7 @@ const authController = {
       ]);
 
       if (existingUserByEmail) {
-        return res.status(400).json({
-          success: false,
-          message: "User with this email already exists",
-        });
+        return sendGenericRegistrationVerificationResponse(res);
       }
 
       if (existingUserByUsername) {
@@ -136,29 +195,38 @@ const authController = {
         });
       }
 
-      // Geocode the address if location data is provided
-      let coordinates = null;
-      if (value.postal_code || value.city) {
+      // Geocode and enrich the location if any location data is provided.
+      if (value.country) {
         if (process.env.NODE_ENV !== "production") {
-          console.log("Attempting to geocode address for new user...");
+          console.log("Attempting to resolve location for new user...");
         }
-        coordinates = await geocodeAddress({
+        const resolvedLocation = await resolveLocationData({
           postal_code: value.postal_code,
           city: value.city,
+          state: value.state,
+          district: value.district,
           country: value.country,
         });
 
-        if (coordinates) {
+        if (resolvedLocation) {
           if (process.env.NODE_ENV !== "production") {
             console.log(
-              `Geocoded coordinates for new user: lat=${coordinates.latitude}, lng=${coordinates.longitude}`,
+              `Resolved location for new user: lat=${resolvedLocation.latitude}, lng=${resolvedLocation.longitude}`,
             );
           }
-          value.latitude = coordinates.latitude;
-          value.longitude = coordinates.longitude;
-          value.state = coordinates.state;
+          value.postal_code = resolvedLocation.postal_code;
+          value.city = resolvedLocation.city;
+          value.state = resolvedLocation.state;
+          value.district = resolvedLocation.district;
+          value.country = resolvedLocation.country;
+          value.latitude = resolvedLocation.latitude;
+          value.longitude = resolvedLocation.longitude;
         }
       }
+
+      value.accepted_terms_version = CURRENT_TERMS_VERSION;
+      value.accepted_privacy_version = CURRENT_PRIVACY_VERSION;
+      value.confirmed_age_16_version = CURRENT_AGE_CONFIRMATION_VERSION;
 
       // Create the user (email_verified defaults to FALSE)
       const user = await userModel.createUser(value);
@@ -178,39 +246,6 @@ const authController = {
           [user.id, tagIds],
         );
       }
-
-      // ── INTERIM: skip email verification when flag is set ──
-      if (process.env.SKIP_EMAIL_VERIFICATION === "true") {
-        await db.query(`UPDATE users SET email_verified = TRUE WHERE id = $1`, [
-          user.id,
-        ]);
-
-        const token = generateToken(user);
-
-        return res.status(201).json({
-          success: true,
-          message: "Registration successful!",
-          data: {
-            token,
-            user: {
-              id: user.id,
-              username: user.username,
-              email: user.email,
-              first_name: user.first_name,
-              last_name: user.last_name,
-              bio: user.bio,
-              postal_code: user.postal_code,
-              city: user.city,
-              country: user.country,
-              avatar_url: user.avatar_url,
-              is_public: user.is_public,
-              is_synthetic: user.is_synthetic,
-              created_at: user.created_at,
-            },
-          },
-        });
-      }
-      // ── END INTERIM ──
 
       // Generate verification token
       const verificationToken = crypto.randomBytes(32).toString("hex");
@@ -232,25 +267,12 @@ const authController = {
       );
 
       if (!emailResult.success) {
-        console.error("Failed to send verification email:", emailResult.error);
+        console.error("Failed to send verification email");
         // Still return success - user was created, they can request a new email
       }
 
-      // Return success WITHOUT a JWT token (user must verify email first)
-      res.status(201).json({
-        success: true,
-        message:
-          "Registration successful! Please check your email to verify your account.",
-        data: {
-          requiresVerification: true,
-          user: {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-            is_synthetic: user.is_synthetic,
-          },
-        },
-      });
+      // Return success WITHOUT a JWT token (user must verify email first).
+      return sendGenericRegistrationVerificationResponse(res);
     } catch (error) {
       console.error("Registration error:", error);
 
@@ -266,10 +288,7 @@ const authController = {
         }
 
         if (constraint === "users_email_unique_ci") {
-          return res.status(400).json({
-            success: false,
-            message: "User with this email already exists",
-          });
+          return sendGenericRegistrationVerificationResponse(res);
         }
 
         return res.status(400).json({
@@ -283,6 +302,38 @@ const authController = {
         success: false,
         message: "Error registering user",
         ...(process.env.NODE_ENV === "development" && { error: error.message }),
+      });
+    }
+  },
+
+  async checkUsername(req, res) {
+    try {
+      const { error, value } = usernameAvailabilitySchema.validate(req.body);
+
+      if (error) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid username format",
+        });
+      }
+
+      const result = await db.query(
+        `SELECT id FROM users WHERE LOWER(username) = LOWER($1)`,
+        [value.username],
+      );
+
+      const available = result.rows.length === 0;
+
+      res.status(200).json({
+        success: true,
+        available,
+        ...(available ? {} : { message: "This username is already taken." }),
+      });
+    } catch (error) {
+      console.error("Check username error:", error);
+      res.status(500).json({
+        success: false,
+        message: "Error checking username availability",
       });
     }
   },
@@ -327,12 +378,13 @@ const authController = {
         });
       }
 
-      // Mark email as verified and clear the token
+      // Mark email as verified and clear the token. Profile visibility stays
+      // private until the user changes it in settings.
       await db.query(
-        `UPDATE users 
-         SET email_verified = TRUE, 
-             verification_token = NULL, 
-             verification_token_expires = NULL 
+        `UPDATE users
+         SET email_verified = TRUE,
+             verification_token = NULL,
+             verification_token_expires = NULL
          WHERE id = $1`,
         [user.id],
       );
@@ -374,22 +426,14 @@ const authController = {
       );
 
       if (result.rows.length === 0) {
-        // Don't reveal if email exists or not
-        return res.status(200).json({
-          success: true,
-          message:
-            "If an account exists with this email, a verification link has been sent.",
-        });
+        return sendGenericResendVerificationResponse(res);
       }
 
       const user = result.rows[0];
 
       // Check if already verified
       if (user.email_verified) {
-        return res.status(400).json({
-          success: false,
-          message: "Email is already verified. You can log in.",
-        });
+        return sendGenericResendVerificationResponse(res);
       }
 
       // Generate new verification token
@@ -412,21 +456,10 @@ const authController = {
       );
 
       if (!emailResult.success) {
-        console.error(
-          "Failed to resend verification email:",
-          emailResult.error,
-        );
-        return res.status(500).json({
-          success: false,
-          message: "Failed to send verification email. Please try again later.",
-        });
+        console.error("Failed to resend verification email");
       }
 
-      res.status(200).json({
-        success: true,
-        message:
-          "If an account exists with this email, a verification link has been sent.",
-      });
+      return sendGenericResendVerificationResponse(res);
     } catch (error) {
       console.error("Resend verification error:", error);
       res.status(500).json({
@@ -457,22 +490,7 @@ const authController = {
       if (!user) {
         return res.status(401).json({
           success: false,
-          message: "Invalid email",
-        });
-      }
-
-      // // Check if email is verified
-      // if (!user.email_verified) {
-
-      // Check if email is verified (skip when verification is disabled)
-      if (
-        !user.email_verified &&
-        process.env.SKIP_EMAIL_VERIFICATION !== "true"
-      ) {
-        return res.status(403).json({
-          success: false,
-          message: "Please verify your email before logging in",
-          requiresVerification: true,
+          message: INVALID_LOGIN_MESSAGE,
         });
       }
 
@@ -484,21 +502,34 @@ const authController = {
       if (!isValidPassword) {
         return res.status(401).json({
           success: false,
-          message: "Invalid password",
+          message: INVALID_LOGIN_MESSAGE,
+        });
+      }
+
+      // Enforce email verification before issuing a session.
+      if (!user.email_verified) {
+        return res.status(403).json({
+          success: false,
+          message: "Please verify your email before logging in. Check your inbox for the verification link — it expires 24 hours after registration.",
+          requiresVerification: true,
         });
       }
 
       const token = generateToken(user);
 
+      // Deliver the session token as an httpOnly cookie instead of in the
+      // response body, so it is never readable by frontend JavaScript.
+      setAuthCookie(res, token);
+
       res.status(200).json({
         success: true,
         message: "Login successful",
         data: {
-          token,
           user: {
             id: user.id,
             username: user.username,
             email: user.email,
+            pendingEmail: user.pending_email,
             first_name: user.first_name,
             last_name: user.last_name,
             bio: user.bio,
@@ -520,6 +551,18 @@ const authController = {
         ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
     }
+  },
+
+  /**
+   * Log out: clear the session cookie. Stateless JWTs are not server-side
+   * revocable, so logout simply removes the cookie from the browser.
+   */
+  async logout(req, res) {
+    clearAuthCookie(res);
+    res.status(200).json({
+      success: true,
+      message: "Logged out successfully",
+    });
   },
 
   /**
@@ -616,10 +659,7 @@ const authController = {
       );
 
       if (!emailResult.success) {
-        console.error(
-          "Failed to send password reset email:",
-          emailResult.error,
-        );
+        console.error("Failed to send password reset email");
       }
 
       res.status(200).json({
@@ -735,7 +775,7 @@ const authController = {
       }
 
       const result = await db.query(
-        "SELECT id, password_hash FROM users WHERE id = $1",
+        "SELECT id, username, email, password_hash FROM users WHERE id = $1",
         [userId],
       );
 
@@ -745,9 +785,11 @@ const authController = {
           .json({ success: false, message: "User not found" });
       }
 
+      const user = result.rows[0];
+
       const isValid = await userModel.verifyPassword(
         currentPassword,
-        result.rows[0].password_hash,
+        user.password_hash,
       );
 
       if (!isValid) {
@@ -757,12 +799,47 @@ const authController = {
         });
       }
 
+      const isSameAsCurrent = await userModel.verifyPassword(
+        newPassword,
+        user.password_hash,
+      );
+
+      if (isSameAsCurrent) {
+        return res.status(400).json({
+          success: false,
+          message: "New password must be different from your current password",
+        });
+      }
+
       const hashedPassword = await userModel.hashPassword(newPassword);
 
+      // password_changed_at invalidates every token issued before this moment
+      // (see auth middleware), logging out all existing sessions/devices.
       await db.query(
-        "UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2",
+        "UPDATE users SET password_hash = $1, password_changed_at = NOW(), updated_at = NOW() WHERE id = $2",
         [hashedPassword, userId],
       );
+
+      // Clear the session cookie on the device that made the change so it is
+      // sent straight to the login form with a fresh session.
+      clearAuthCookie(res);
+
+      // Notify the user so a compromised account can be recovered quickly.
+      // A failed notification must not fail the password change itself.
+      try {
+        const notifyResult = await emailService.sendPasswordChangedEmail(
+          user.email,
+          user.username,
+        );
+        if (!notifyResult.success) {
+          console.error("Failed to send password changed notification email");
+        }
+      } catch (notifyError) {
+        console.error(
+          "Failed to send password changed notification email:",
+          notifyError,
+        );
+      }
 
       res
         .status(200)
@@ -778,7 +855,8 @@ const authController = {
   },
 
   /**
-   * Change email (authenticated user, requires current password)
+   * Start an email change (authenticated user, requires current password).
+   * The account email is changed only after the new address confirms the link.
    */
   async changeEmail(req, res) {
     try {
@@ -801,7 +879,7 @@ const authController = {
       }
 
       const result = await db.query(
-        "SELECT id, password_hash, email FROM users WHERE id = $1",
+        "SELECT id, username, password_hash, email FROM users WHERE id = $1",
         [userId],
       );
 
@@ -823,32 +901,189 @@ const authController = {
         });
       }
 
-      // Check if email is already taken
+      if (newEmail.toLowerCase() === result.rows[0].email.toLowerCase()) {
+        return res.status(400).json({
+          success: false,
+          message: "New email must be different from your current email",
+        });
+      }
+
+      // Check if the email is already active or currently reserved by another
+      // user's still-valid email-change request.
       const emailCheck = await db.query(
-        "SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND id != $2",
+        `SELECT id
+         FROM users
+         WHERE (
+           LOWER(email) = LOWER($1)
+           OR (
+             pending_email IS NOT NULL
+             AND LOWER(pending_email) = LOWER($1)
+             AND email_change_token_expires > NOW()
+           )
+         )
+         AND id != $2
+         LIMIT 1`,
         [newEmail, userId],
       );
 
       if (emailCheck.rows.length > 0) {
         return res.status(409).json({
           success: false,
-          message: "This email address is already in use",
+          message: "This email address is already in use or pending verification",
         });
       }
 
+      const verificationToken = crypto.randomBytes(32).toString("hex");
+      const tokenExpires = new Date(Date.now() + EMAIL_CHANGE_TOKEN_EXPIRES_MS);
+
       await db.query(
-        "UPDATE users SET email = $1, updated_at = NOW() WHERE id = $2",
-        [newEmail, userId],
+        `UPDATE users
+         SET pending_email = $1,
+             email_change_token = $2,
+             email_change_token_expires = $3,
+             updated_at = NOW()
+         WHERE id = $4`,
+        [newEmail, verificationToken, tokenExpires, userId],
       );
 
-      res
-        .status(200)
-        .json({ success: true, message: "Email changed successfully" });
+      const emailResult = await emailService.sendEmailChangeVerificationEmail(
+        newEmail,
+        verificationToken,
+        result.rows[0].username,
+      );
+
+      if (!emailResult.success) {
+        console.error("Failed to send email change verification email");
+
+        try {
+          await db.query(
+            `UPDATE users
+             SET pending_email = NULL,
+                 email_change_token = NULL,
+                 email_change_token_expires = NULL,
+                 updated_at = NOW()
+             WHERE id = $1 AND email_change_token = $2`,
+            [userId, verificationToken],
+          );
+        } catch (cleanupError) {
+          console.error("Failed to clear pending email change:", cleanupError);
+        }
+
+        return res.status(502).json({
+          success: false,
+          message: "Could not send verification email. Please try again later.",
+        });
+      }
+
+      res.status(200).json({
+        success: true,
+        message:
+          "Verification email sent to the new address. Please confirm it to finish changing your email.",
+        data: {
+          pendingEmail: newEmail,
+        },
+      });
     } catch (error) {
       console.error("Change email error:", error);
       res.status(500).json({
         success: false,
         message: "Error changing email",
+        ...(process.env.NODE_ENV === "development" && { error: error.message }),
+      });
+    }
+  },
+
+  /**
+   * Verify and complete a pending email change.
+   */
+  async verifyEmailChange(req, res) {
+    try {
+      const { token } = req.query;
+
+      if (!token) {
+        return res.status(400).json({
+          success: false,
+          message: "Verification token is required",
+        });
+      }
+
+      const pendingResult = await db.query(
+        `SELECT id, username, email, pending_email
+         FROM users
+         WHERE email_change_token = $1
+           AND email_change_token_expires > NOW()
+           AND pending_email IS NOT NULL`,
+        [token],
+      );
+
+      if (pendingResult.rows.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid or expired email change token",
+        });
+      }
+
+      const user = pendingResult.rows[0];
+
+      const emailCheck = await db.query(
+        `SELECT id
+         FROM users
+         WHERE LOWER(email) = LOWER($1)
+           AND id != $2
+         LIMIT 1`,
+        [user.pending_email, user.id],
+      );
+
+      if (emailCheck.rows.length > 0) {
+        await db.query(
+          `UPDATE users
+           SET pending_email = NULL,
+               email_change_token = NULL,
+               email_change_token_expires = NULL,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [user.id],
+        );
+
+        return res.status(409).json({
+          success: false,
+          message: "This email address is already in use",
+        });
+      }
+
+      const updateResult = await db.query(
+        `UPDATE users
+         SET email = pending_email,
+             pending_email = NULL,
+             email_change_token = NULL,
+             email_change_token_expires = NULL,
+             email_verified = TRUE,
+             updated_at = NOW()
+         WHERE id = $1
+         RETURNING id, username, email`,
+        [user.id],
+      );
+
+      res.status(200).json({
+        success: true,
+        message: "Email address verified and changed successfully",
+        data: {
+          user: updateResult.rows[0],
+        },
+      });
+    } catch (error) {
+      console.error("Verify email change error:", error);
+
+      if (error.code === "23505") {
+        return res.status(409).json({
+          success: false,
+          message: "This email address is already in use",
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        message: "Error verifying email change",
         ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
     }

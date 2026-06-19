@@ -5,6 +5,7 @@
  */
 
 const axios = require("axios");
+const { deriveLocationFromPostalCode } = require("./locationDerivation");
 
 // Country code to country name mapping for Nominatim
 const COUNTRY_CODES = {
@@ -67,6 +68,178 @@ function extractState(address) {
   );
 }
 
+function normalizeLocationValue(value) {
+  if (value === undefined || value === null) return null;
+  const normalized = String(value).trim();
+  return normalized === "" ? null : normalized;
+}
+
+function extractCity(address) {
+  if (!address) return null;
+
+  return (
+    address.city ||
+    address.town ||
+    address.village ||
+    address.hamlet ||
+    address.municipality ||
+    address.locality ||
+    null
+  );
+}
+
+function extractDistrict(address) {
+  if (!address) return null;
+
+  return (
+    address.city_district ||
+    address.suburb ||
+    address.quarter ||
+    address.neighbourhood ||
+    address.borough ||
+    address.district ||
+    null
+  );
+}
+
+function getCountryName(country) {
+  const normalizedCountry = normalizeLocationValue(country);
+  if (!normalizedCountry) return null;
+  const upperCountry = normalizedCountry.toUpperCase();
+  return COUNTRY_CODES[upperCountry] || normalizedCountry;
+}
+
+function mergeAddressDetails(baseLocation, address = {}) {
+  return {
+    ...baseLocation,
+    city: baseLocation.city || extractCity(address),
+    state: baseLocation.state || extractState(address),
+    district: baseLocation.district || extractDistrict(address),
+    country: baseLocation.country || address.country_code?.toUpperCase() || address.country,
+  };
+}
+
+function buildSearchQuery({ postal_code, city, district, country }) {
+  const countryName = getCountryName(country);
+  const queryParts = [];
+
+  if (postal_code) queryParts.push(postal_code);
+  if (district && district !== city) queryParts.push(district);
+  if (city) queryParts.push(city);
+  if (countryName) queryParts.push(countryName);
+
+  return queryParts.join(", ");
+}
+
+async function fetchFirstNominatimResult(params) {
+  const response = await axios.get(
+    "https://nominatim.openstreetmap.org/search",
+    {
+      params: {
+        format: "json",
+        limit: 1,
+        addressdetails: 1,
+        ...params,
+      },
+      headers: {
+        "User-Agent": "Lomir-App/1.0 (team-building-app)",
+      },
+      timeout: 10000,
+    },
+  );
+
+  return response.data && response.data.length > 0 ? response.data[0] : null;
+}
+
+async function resolveLocationData(locationData = {}) {
+  const postal_code = normalizeLocationValue(locationData.postal_code);
+  const city = normalizeLocationValue(locationData.city);
+  const state = normalizeLocationValue(locationData.state);
+  const district = normalizeLocationValue(locationData.district);
+  const country = normalizeLocationValue(locationData.country);
+
+  if (!country) {
+    if (process.env.NODE_ENV !== "production") {
+      console.log("Geocoding skipped: No country provided");
+    }
+    return null;
+  }
+
+  const derivedLocation = deriveLocationFromPostalCode(postal_code, country);
+  const resolved = {
+    postal_code,
+    city: city || derivedLocation.city || null,
+    state: state || derivedLocation.state || null,
+    district: district || derivedLocation.district || null,
+    country,
+    latitude: null,
+    longitude: null,
+  };
+
+  const countryName = getCountryName(country);
+
+  try {
+    const searchQuery = buildSearchQuery(resolved);
+
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`Geocoding location: "${searchQuery || countryName}"`);
+    }
+
+    const attempts = [];
+
+    if (postal_code || resolved.city || resolved.district) {
+      attempts.push({ q: searchQuery });
+    }
+
+    if (postal_code) {
+      attempts.push({
+        postalcode: postal_code,
+        country: countryName,
+      });
+    }
+
+    if (resolved.city) {
+      attempts.push({
+        city: resolved.city,
+        country: countryName,
+      });
+    }
+
+    attempts.push({ q: countryName });
+
+    let result = null;
+    for (const params of attempts) {
+      result = await fetchFirstNominatimResult(params);
+      if (result) break;
+    }
+
+    if (!result) {
+      if (process.env.NODE_ENV !== "production") {
+        console.log(`Geocoding failed: No results found for "${searchQuery}"`);
+      }
+      return resolved;
+    }
+
+    const latitude = parseFloat(result.lat);
+    const longitude = parseFloat(result.lon);
+
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      return resolved;
+    }
+
+    const enriched = mergeAddressDetails(resolved, result.address);
+
+    return {
+      ...enriched,
+      latitude,
+      longitude,
+    };
+  } catch (error) {
+    console.error("Geocoding error:", error.message);
+    return resolved;
+  }
+}
+
 /**
  * Geocode an address using OpenStreetMap Nominatim
  * @param {Object} locationData - Location data object
@@ -75,172 +248,19 @@ function extractState(address) {
  * @param {string} locationData.country - Country code (e.g., 'DE', 'US')
  * @returns {Promise<{latitude: number, longitude: number, state: string|null} | null>}
  */
-async function geocodeAddress({ postal_code, city, country }) {
-  // Need at least postal_code and country, or city and country
-  if (!country) {
-    if (process.env.NODE_ENV !== "production") {
-      console.log("Geocoding skipped: No country provided");
-    }
+async function geocodeAddress(locationData) {
+  const resolvedLocation = await resolveLocationData(locationData);
+
+  if (
+    resolvedLocation?.latitude === null ||
+    resolvedLocation?.latitude === undefined ||
+    resolvedLocation?.longitude === null ||
+    resolvedLocation?.longitude === undefined
+  ) {
     return null;
   }
 
-  if (!postal_code && !city) {
-    if (process.env.NODE_ENV !== "production") {
-      console.log("Geocoding skipped: No postal_code or city provided");
-    }
-    return null;
-  }
-
-  try {
-    // Build the search query
-    const countryName = COUNTRY_CODES[country] || country;
-
-    // Build query parts
-    const queryParts = [];
-    if (postal_code) queryParts.push(postal_code);
-    if (city) queryParts.push(city);
-    queryParts.push(countryName);
-
-    const searchQuery = queryParts.join(", ");
-
-    if (process.env.NODE_ENV !== "production") {
-      console.log(`Geocoding address: "${searchQuery}"`);
-    }
-
-    // Call Nominatim API
-    const response = await axios.get(
-      "https://nominatim.openstreetmap.org/search",
-      {
-        params: {
-          q: searchQuery,
-          format: "json",
-          limit: 1,
-          addressdetails: 1, // Important: this returns the state info
-        },
-        headers: {
-          "User-Agent": "Lomir-App/1.0 (team-building-app)",
-        },
-        timeout: 10000, // 10 second timeout
-      },
-    );
-
-    if (response.data && response.data.length > 0) {
-      const result = response.data[0];
-      const latitude = parseFloat(result.lat);
-      const longitude = parseFloat(result.lon);
-      const state = extractState(result.address);
-
-      if (process.env.NODE_ENV !== "production") {
-        console.log(
-          `Geocoding success: "${searchQuery}" -> lat: ${latitude}, lng: ${longitude}, state: ${state}`,
-        );
-      }
-
-      return {
-        latitude,
-        longitude,
-        state,
-      };
-    }
-
-    // If first attempt failed and we have both postal_code and city, try with just postal_code + country
-    if (postal_code && city) {
-      if (process.env.NODE_ENV !== "production") {
-        console.log(
-          `Geocoding retry with postal_code + country only: "${postal_code}, ${countryName}"`,
-        );
-      }
-
-      const retryResponse = await axios.get(
-        "https://nominatim.openstreetmap.org/search",
-        {
-          params: {
-            postalcode: postal_code,
-            country: countryName,
-            format: "json",
-            limit: 1,
-            addressdetails: 1,
-          },
-          headers: {
-            "User-Agent": "Lomir-App/1.0 (team-building-app)",
-          },
-          timeout: 10000,
-        },
-      );
-
-      if (retryResponse.data && retryResponse.data.length > 0) {
-        const result = retryResponse.data[0];
-        const latitude = parseFloat(result.lat);
-        const longitude = parseFloat(result.lon);
-        const state = extractState(result.address);
-
-        if (process.env.NODE_ENV !== "production") {
-          console.log(
-            `Geocoding retry success: lat: ${latitude}, lng: ${longitude}, state: ${state}`,
-          );
-        }
-
-        return {
-          latitude,
-          longitude,
-          state,
-        };
-      }
-    }
-
-    // If still no result and we have city, try city + country
-    if (city) {
-      if (process.env.NODE_ENV !== "production") {
-        console.log(
-          `Geocoding retry with city + country only: "${city}, ${countryName}"`,
-        );
-      }
-
-      const cityResponse = await axios.get(
-        "https://nominatim.openstreetmap.org/search",
-        {
-          params: {
-            city: city,
-            country: countryName,
-            format: "json",
-            limit: 1,
-            addressdetails: 1,
-          },
-          headers: {
-            "User-Agent": "Lomir-App/1.0 (team-building-app)",
-          },
-          timeout: 10000,
-        },
-      );
-
-      if (cityResponse.data && cityResponse.data.length > 0) {
-        const result = cityResponse.data[0];
-        const latitude = parseFloat(result.lat);
-        const longitude = parseFloat(result.lon);
-        const state = extractState(result.address);
-
-        if (process.env.NODE_ENV !== "production") {
-          console.log(
-            `Geocoding city retry success: lat: ${latitude}, lng: ${longitude}, state: ${state}`,
-          );
-        }
-
-        return {
-          latitude,
-          longitude,
-          state,
-        };
-      }
-    }
-
-    if (process.env.NODE_ENV !== "production") {
-      console.log(`Geocoding failed: No results found for "${searchQuery}"`);
-    }
-    return null;
-  } catch (error) {
-    console.error("Geocoding error:", error.message);
-    return null;
-  }
+  return resolvedLocation;
 }
 
 /**
@@ -253,20 +273,27 @@ function hasLocationChanged(newData, existingData) {
   const newPostalCode = newData.postal_code || "";
   const newCity = newData.city || "";
   const newCountry = newData.country || "";
+  const newState = newData.state || "";
+  const newDistrict = newData.district || "";
 
   const existingPostalCode = existingData.postal_code || "";
   const existingCity = existingData.city || "";
   const existingCountry = existingData.country || "";
+  const existingState = existingData.state || "";
+  const existingDistrict = existingData.district || "";
 
   return (
     newPostalCode !== existingPostalCode ||
     newCity.toLowerCase() !== existingCity.toLowerCase() ||
-    newCountry !== existingCountry
+    newCountry !== existingCountry ||
+    newState.toLowerCase() !== existingState.toLowerCase() ||
+    newDistrict.toLowerCase() !== existingDistrict.toLowerCase()
   );
 }
 
 module.exports = {
   geocodeAddress,
   hasLocationChanged,
+  resolveLocationData,
   COUNTRY_CODES,
 };

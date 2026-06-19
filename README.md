@@ -20,14 +20,15 @@ Built with Node.js, Express, PostgreSQL (Neon), and Socket.IO.
 
 ### Test Credentials
 
-Contact the project owner for a demo login, or register a new account with a valid email address (email verification is required).
+Contact the project owner for a demo login, or register a new account with a valid email address. Email verification is required, and new profiles stay private until the user changes visibility in settings.
 
 ---
 
 ## Features
 
-- **Authentication** — JWT-based registration, login, email verification, and password reset. Registration protected by Cloudflare Turnstile CAPTCHA (feature-flagged for local dev).
-- **User Profiles** — CRUD with avatar uploads (ImageKit), interest tags, and badge portfolios
+- **Authentication** — JWT-based registration, login, email verification, password reset, and verified email change. The session JWT is delivered as an `httpOnly`, `sameSite` cookie (never in the response body or readable by frontend JavaScript); auth middleware and the Socket.IO handshake read it from the cookie, with the `Authorization: Bearer` header kept as a fallback for API clients. Transactional auth emails are sent through Nodemailer SMTP. Registration protected by Cloudflare Turnstile CAPTCHA (feature-flagged for local dev). Registration requires explicit acceptance of Terms of Service, acknowledgement of the Privacy Policy, and confirmation of minimum age (16+); the version of each legal document is stamped on the user row at sign-up. Changing an account email is double-opt-in: the current-password-protected request stores the new address as `pending_email` with a 24-hour token and sends a verification link to it, and the account email only switches over once the new address confirms — the old address stays active until then. Expired email-change tokens are cleared by the same cleanup pass as password-reset tokens.
+- **User Profiles** — CRUD with avatar uploads (ImageKit), interest tags, badge portfolios, and user-controlled public/private visibility. Verified accounts remain private by default until the user opts in to public visibility.
+- **User Blocking** — Authenticated users can manage a private blocklist. Block relationships hide profiles and user-search results where requester context is available, suppress team application visibility, disable direct messaging, and exclude blocked users from team chat realtime events where needed.
 - **Teams** — Create, join, manage members, assign roles, and archive teams
 - **Vacant Roles** — Post open positions on teams with desired tags, badges, and location preferences
 - **Matching Engine** — Score users against roles (and vice versa) using weighted tag/badge/distance criteria
@@ -36,8 +37,9 @@ Contact the project owner for a demo login, or register a new account with a val
 - **Badge System** — 30 badges across 5 categories; award badges to teammates with reasons and context
 - **Notifications** — In-app notifications for invitations, applications, badge awards, messages, @mentions, and role lifecycle events; each notification deep-links to the exact message that triggered it; stale notifications are cleaned up automatically on member removal, role deletion, and team deletion
 - **Account Deletion** — Full transactional account deletion with impact preview, automatic team ownership transfer, role reopening, and "Former Lomir User" handling for preserved references
-- **Geocoding** — Postal code lookup via Nominatim with built-in fallback mapping
-- **Security** — Rate limiting on auth endpoints, CORS allowlist, password policy enforcement, production log scrubbing
+- **Contact Form & Reports** — Public `/api/contact` endpoint with Joi validation, Turnstile CAPTCHA, in-memory file attachments (up to 3 files, 5 MB each, 10 MB total), and SMTP forwarding. Abuse/content reports are persisted in `contact_reports` with a reference ID before email forwarding, so reports are not lost if SMTP delivery fails; reporters also receive an automated acknowledgement-of-receipt email with their reference ID (sent only for `Report content or abuse` submissions, best-effort so a failed receipt never fails the request); unexpected body fields are stripped defensively so multipart attachment fields cannot break validation; rate-limited to 5 submissions/hr
+- **Geocoding** — Location enrichment via Nominatim: resolves a full location object (postal code, city, district, state, country, coordinates) from partial input. Built-in postal-code-to-district lookup for Berlin and Frankfurt (200+ mappings) used as a fast offline fallback before the API call. Works with country alone — does not require both postal code and city.
+- **Security** — `httpOnly` cookie sessions (JWT not exposed to JavaScript), CSRF origin/referer validation on all state-changing requests, Helmet security headers, request body size cap (1 MB), rate limiting on auth, contact, and geocoding endpoints, credentialed CORS allowlist (applied before body parsing), password policy enforcement, Socket.IO conversation/message authorization, production error message scrubbing
 
 ---
 
@@ -52,10 +54,11 @@ Contact the project owner for a demo login, or register a new account with a val
 | Auth | JSON Web Tokens (jsonwebtoken, bcrypt) |
 | Validation | Joi |
 | File Uploads | ImageKit + Multer |
-| Email | Resend |
+| Email | Nodemailer SMTP |
 | Scheduling | node-cron |
 | CAPTCHA | Cloudflare Turnstile |
 | Rate Limiting | express-rate-limit |
+| Security Headers | Helmet |
 
 ---
 
@@ -104,16 +107,17 @@ IMAGEKIT_PUBLIC_KEY=<your-public-key>
 IMAGEKIT_PRIVATE_KEY=<your-private-key>
 IMAGEKIT_URL_ENDPOINT=https://ik.imagekit.io/<your-id>
 
-# Resend (email service)
-RESEND_API_KEY=<resend-api-key>
+# SMTP email (Gmail SMTP in the current deployment)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=<smtp-email-address>
+SMTP_PASS=<smtp-app-password>
 
 # Frontend URL (for CORS and email links)
 CLIENT_URL=http://localhost:5173
+FRONTEND_URL=http://localhost:5173
 
-# Skip email verification (set to "true" while no custom domain is configured)
-SKIP_EMAIL_VERIFICATION=true
-
-# Cloudflare Turnstile (optional for local dev — if unset, CAPTCHA is skipped)
+# Cloudflare Turnstile (configured in the deployed environment; the CAPTCHA widget stays inactive locally until a key is set)
 # TURNSTILE_SECRET_KEY=<turnstile-secret-key>
 ```
 
@@ -151,6 +155,14 @@ node --test test/searchController.test.js
 
 That suite covers pagination, sorting, proximity handling, synthetic/demo-data filtering, match-score enrichment, and team/member exclusion behavior for the active search endpoints.
 
+For contact/report work, run the focused contact suite:
+
+```bash
+node --test test/contactController.test.js
+```
+
+That suite covers abuse report persistence, reference ID responses, email-forwarding status updates, the reporter acknowledgement-of-receipt email (sent for reports, skipped for ordinary messages, and best-effort on failure), persistence failure handling, and the ordinary contact-message path.
+
 ---
 
 ## Project Structure
@@ -162,7 +174,8 @@ Lomir-backend/
 │   ├── server.js               # HTTP server + Socket.IO setup
 │   ├── config/
 │   │   ├── database.js         # PostgreSQL connection pool (Neon)
-│   │   └── imagekit.js         # ImageKit client configuration
+│   │   ├── imagekit.js         # ImageKit client configuration
+│   │   └── legalDocuments.js   # Current version constants for Terms, Privacy Policy, and age confirmation
 │   ├── controllers/
 │   │   ├── authController.js
 │   │   ├── userController.js
@@ -175,6 +188,8 @@ Lomir-backend/
 │   │   ├── vacantRoleController.js
 │   │   ├── searchController.js
 │   │   ├── badgeController.js
+│   │   ├── contactController.js       # Contact form: Joi validation with unknown-field stripping,
+│   │   │                              #   Turnstile CAPTCHA, report persistence, SMTP forwarding
 │   │   ├── messageController.js
 │   │   ├── notificationController.js
 │   │   └── matchingController.js
@@ -185,6 +200,7 @@ Lomir-backend/
 │   │   ├── teamRoutes.js
 │   │   ├── searchRoutes.js
 │   │   ├── badgeRoutes.js
+│   │   ├── contactRoutes.js    # Contact form route with multer (up to 3 attachments)
 │   │   ├── messageRoutes.js
 │   │   ├── notificationRoutes.js
 │   │   ├── matchingRoutes.js
@@ -193,41 +209,66 @@ Lomir-backend/
 │   │   └── api/
 │   │       └── tags.js
 │   ├── middlewares/
-│   │   ├── auth.js             # JWT authentication middleware
-│   │   ├── rateLimiter.js      # Rate limiting for auth endpoints
+│   │   ├── auth.js             # Reads the session JWT from the httpOnly cookie (Bearer header fallback)
+│   │   ├── csrfProtection.js   # Origin/Referer validation on state-changing requests
+│   │   ├── rateLimiter.js      # Rate limiting for auth, contact, and geocoding endpoints
 │   │   └── uploadMiddleware.js # Multer wrapper for file/image uploads
+│   ├── models/
+│   │   ├── userModel.js         # User row queries + legal-consent persistence
+│   │   ├── teamModel.js
+│   │   ├── tagModel.js
+│   │   └── contactReportModel.js # Persistent abuse/content report records and email status updates
 │   ├── services/
-│   │   └── emailService.js     # Resend transactional email
+│   │   └── emailService.js     # Nodemailer SMTP transactional email (verification, password reset/changed, email-change, contact forwarding, report receipt)
 │   ├── utils/
 │   │   ├── booleanSearchParser.js
 │   │   ├── imagekitUtils.js
 │   │   ├── fileValidation.js
 │   │   ├── fileCleanup.js      # File expiry check + ImageKit deletion helpers (used by scheduler)
 │   │   ├── jwtUtils.js
+│   │   ├── authCookie.js       # httpOnly session-cookie set/clear options + handshake cookie parsing
+│   │   ├── allowedOrigins.js   # Shared CORS/CSRF origin allowlist + Referer parsing
+│   │   ├── errorResponse.js    # Consistent error payloads with production message scrubbing
+│   │   ├── tokenCleanup.js     # Clears expired password-reset and email-change tokens
+│   │   ├── contactAttachments.js # Contact-form attachment count/size validation
+│   │   ├── locationDerivation.js # Offline postal-code → city/district/state lookup (Berlin, Frankfurt)
 │   │   ├── matchingScorer.js   # Shared scoring utilities
 │   │   ├── searchQueryBuilder.js # Shared search distance/filter/sort SQL builders
 │   │   ├── socketMessageEmitter.js
 │   │   ├── turnstileVerify.js  # Cloudflare Turnstile CAPTCHA verification
-│   │   ├── vacantRoleSerializer.js
+│   │   ├── vacantRoleSerializer.js    # Serializes vacant role rows; builds creator and filled_by user sub-objects (id, name, avatar_url, is_public)
 │   │   ├── badgeVisibilityUtils.js # Helpers for badge award visibility (hidden/shown state)
-│   │   └── geocodingUtil.js
+│   │   └── geocodingUtil.js    # resolveLocationData (full enrichment) + geocodeAddress (coords only)
 │   ├── jobs/
-│   │   └── fileCleanupScheduler.js # node-cron job that calls fileCleanup utilities on a schedule
+│   │   ├── fileCleanupScheduler.js # node-cron job that calls fileCleanup utilities on a schedule
+│   │   └── cleanupUnverifiedAccounts.js # Runs every 6 hours; deletes expired unverified accounts
 │   └── database/
 │       └── migrations/
+│           └── create_contact_reports.js # Stores report submissions with reference IDs and mail status
 ├── scripts/                    # SQL seed, migration, and utility scripts
-│   └── migrate-cloudinary-to-imagekit.js
-├── test/                       # Controller unit tests
+│   ├── migrate-cloudinary-to-imagekit.js   # One-time migration (already run): converted Cloudinary URLs to ImageKit URLs in the database
+│   ├── add-location-district-columns.sql  # Migration: adds district column to teams/users/roles
+│   ├── add-legal-consent-columns.sql      # Standalone SQL for the legal consent migration (see migrations/add_legal_consent_to_users.js)
+│   └── backfill-location-data.js         # One-off script to backfill district/state from geocoding
+├── test/                       # Controller and utility unit tests
+│   ├── authController.login.test.js
+│   ├── authController.emailChange.test.js
+│   ├── csrfProtection.test.js
+│   ├── errorResponse.test.js
 │   ├── invitationController.test.js
+│   ├── contactController.test.js
+│   ├── locationDerivation.test.js
 │   ├── searchController.test.js
 │   ├── teamController.applyToJoinTeam.test.js
+│   ├── teamController.applications.test.js
 │   ├── userController.deleteUser.test.js
 │   ├── userController.deletionPreview.test.js
-│   ├── teamController.applications.test.js
+│   ├── userController.emailUpdate.test.js
+│   ├── userModel.legalConsent.test.js
 │   └── vacantRoleController.test.js
 ├── docs/
 │   ├── USER_DELETION_SPEC.md              # Full account deletion specification
-│   ├── RESTORE_EMAIL_VERIFICATION_GUIDE.md # Steps to re-enable email verification
+│   ├── RESTORE_EMAIL_VERIFICATION_GUIDE.md # Email delivery (Nodemailer/SMTP) & verification flow
 │   ├── team-service-boundaries.md         # Proposed service extraction boundaries
 │   └── postman/                           # Postman collection exports for API testing
 ├── .env                        # Environment variables (not committed)
@@ -243,10 +284,10 @@ All routes are prefixed with `/api`.
 
 | Prefix | Description |
 |---|---|
-| `/api/auth` | Register, login, email verification, password reset |
-| `/api/users` | User CRUD, tags, badges, avatar, account deletion with preview |
+| `/api/auth` | Register (requires `acceptedTerms`, `acceptedPrivacy`, `confirmedAge16`), login (sets the httpOnly session cookie), `POST /auth/logout` (clears it), email verification, password reset, verified email change (`PUT /auth/change-email` to request, `GET /auth/verify-email-change?token=...` to confirm); `POST /auth/check-username` for rate-limited username availability checks |
+| `/api/users` | User CRUD, tags, badges, avatar, self-only blocklist endpoints, account deletion with preview |
 | `/api/teams` | Team CRUD, members, applications, invitations, badge awards; `DELETE /invitations/:id/role` cancels only the role portion of a pending invitation |
-| `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management. Supports `?ids=1,2,3` for bulk filtering (bypasses the default status filter so polling can detect roles that transitioned to filled/closed) |
+| `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management. Supports `?ids=1,2,3` for bulk filtering (bypasses the default status filter so polling can detect roles that transitioned to filled/closed). Role responses include `is_public` on the `creator` and `filled_by` user sub-objects. |
 | `/api/search/global` | Keyword/boolean search across teams, users, and roles with tag/badge/location/role filtering |
 | `/api/search/all` | Initial search-page data without a required keyword, using the same filtering/sorting core |
 | `/api/matching` | Role ↔ user matching scores and candidate lists |
@@ -255,7 +296,8 @@ All routes are prefixed with `/api`.
 | `/api/notifications` | User notifications (includes `referenceType`, `typeTeamCounts` in unread count response) |
 | `/api/imagekit` | Auth params for client-side ImageKit uploads |
 | `/api/tags` | Tag catalog (structured by category) |
-| `/api/geocoding` | Postal code → city/country/coordinates lookup |
+| `/api/geocoding` | Postal code → city/district/country/coordinates lookup |
+| `/api/contact` | Public contact form submission with optional file attachments forwarded by SMTP; `Report content or abuse` submissions are persisted first, return a `referenceId`, and trigger an automated acknowledgement-of-receipt email to the reporter |
 
 ---
 
@@ -275,13 +317,28 @@ Supported search controls include:
 - `sortDir`: `asc`, `desc`, or `remote`
 - `tagIds`, `badgeIds`, `maxDistance`, `openRolesOnly`, `excludeOwnTeams`, `excludeTeamId`, `includeDemoData`
 
+Authenticated user searches automatically exclude users who are in a block relationship with the requester, in either direction.
+
 The team search response intentionally returns `teamavatarUrl` from the SQL alias `teamavatar_url as "teamavatarUrl"` for API compatibility with the frontend.
+
+---
+
+## User Blocking
+
+Blocking is stored in the `user_blocks` table and is treated as a mutual visibility boundary throughout the backend:
+
+- `GET /api/users/:id/blocks` — list users the authenticated user has blocked
+- `POST /api/users/:id/blocks` — block another user using `blockedId` or `blocked_id`
+- `DELETE /api/users/:id/blocks/:blockedId` — unblock a user
+- `GET /api/users/:id/block-relationships` — return every user ID in a block relationship with the authenticated user, in either direction
+
+Blocklist routes are self-only: `:id` must match the authenticated user. When either user has blocked the other, profiles are returned as not found, user search excludes the match, direct messages are blocked, unread/conversation counts skip blocked senders, and team-chat broadcasts such as messages, typing indicators, and read receipts exclude blocked user rooms where relevant.
 
 ---
 
 ## Real-Time Events (Socket.IO)
 
-The server uses Socket.IO for real-time features. Clients authenticate via JWT token in the handshake.
+The server uses Socket.IO for real-time features. Clients authenticate from the httpOnly session cookie sent with the handshake (the browser sends it automatically via `withCredentials`); an explicit handshake auth token is still accepted as a fallback.
 
 **Key events:**
 
@@ -292,6 +349,7 @@ The server uses Socket.IO for real-time features. Clients authenticate via JWT t
 | `message:read` | Client → Server | Mark messages as read |
 | `message:status` | Server → Client | Read receipt notification |
 | `typing:start` / `typing:stop` | Bidirectional | Typing indicators |
+| `blocks:updated` | Server → Client | Tells both affected users to re-sync block state after a block or unblock |
 | `users:online` | Server → Client | Updated list of online user IDs |
 | `team:member_left` | Server → Client | Member removal (e.g. account deletion) |
 | `team:member_kicked` | Server → Client | Emitted to the removed member to kick them from the team chat |
@@ -317,6 +375,37 @@ The shared scoring logic lives in `src/utils/matchingScorer.js` and is used by b
 
 ---
 
+## Geocoding and Location Enrichment
+
+Location data for users, teams, and vacant roles is resolved through `src/utils/geocodingUtil.js` via `resolveLocationData()`. Given any combination of postal code, city, district, state, and country, it returns a fully enriched location object:
+
+```json
+{ "postal_code": "10117", "city": "Berlin", "district": "Mitte", "state": "Berlin", "country": "DE", "latitude": 52.516, "longitude": 13.388 }
+```
+
+**Resolution order:**
+
+1. **Offline fallback** (`src/utils/locationDerivation.js`) — A built-in lookup table maps 200+ Berlin postal codes and select Frankfurt codes to their district, city, and state without any external call. Applied first as a fast pre-fill.
+2. **Nominatim API** — If geocoding proceeds, up to three queries are attempted in order (full combined query → postal code + country → city + country), stopping at the first result.
+3. **Country-only fallback** — If no specific result is found, the resolved object is returned without coordinates (coordinates are `null`, other known fields are preserved).
+
+Registration, team creation/update, and user profile update all call `resolveLocationData()` and write back the full enriched object — so location fields (including `district` and `state`) are normalized on save, not just at query time.
+
+The `district` field is stored in the `users`, `teams`, and `vacant_roles` tables. Existing rows can be backfilled with `scripts/backfill-location-data.js`; the required schema migration is `scripts/add-location-district-columns.sql`.
+
+The public `GET /api/geocoding/postal-code/:code` endpoint is rate-limited (60 req/15 min) and backed by a bounded in-memory cache (24-hour TTL, max 1000 entries). Caching repeated postal-code lookups reduces outbound calls to Nominatim — respecting their usage policy and limiting how often user-entered locations leave the server. Definitive "no result" responses are cached, but transient Nominatim failures (timeouts/errors) are not, so lookups recover automatically.
+
+---
+
+## Scheduled Jobs
+
+| Job | Schedule | Description |
+|---|---|---|
+| File cleanup | Configurable (see `fileCleanupScheduler.js`) | Expires and deletes orphaned ImageKit files |
+| Unverified account cleanup | Every 6 hours | Deletes accounts where email verification expired more than 1 hour ago |
+
+---
+
 ## Account Deletion
 
 Full transactional account deletion following the spec in `docs/USER_DELETION_SPEC.md`. Key highlights:
@@ -333,13 +422,20 @@ Full transactional account deletion following the spec in `docs/USER_DELETION_SP
 
 | Measure | Details |
 |---|---|
-| Rate limiting | 8 req/15 min on login/password flows, 10 req/hr on registration |
-| CAPTCHA | Cloudflare Turnstile on registration (feature-flagged) |
+| Security headers | Helmet middleware sets standard HTTP security headers (including HSTS) on every response |
+| CSRF protection | Global `csrfProtection` middleware validates the `Origin`/`Referer` of every state-changing request (non-`GET`/`HEAD`/`OPTIONS`) against the CORS allowlist; cookie-authenticated requests without an origin are rejected. Non-browser API clients using `Authorization: Bearer` are unaffected |
+| Request body cap | `express.json` and `express.urlencoded` limited to 1 MB |
+| Rate limiting | 8 req/15 min on login/password flows; 10 req/hr on registration; 20 req/hr on username availability; 5 req/hr on contact form; 60 req/15 min on geocoding |
+| CAPTCHA | Cloudflare Turnstile on registration and the contact form |
 | CORS | Allowlist: exact match for production URL + regex for Vercel preview deploys |
 | Password policy | Min 8 chars, at least one letter and one number (registration, reset, change) |
-| Logging | All debug `console.log` gated behind `NODE_ENV`; errors and warnings always logged |
+| Socket.IO authorization | `conversation:join` validates team membership or existing DM before admitting the socket; direct conversations are denied when either user has blocked the other; `message:new` (team type) verifies the sender is a current team member before inserting |
+| Error message scrubbing | Internal error details (`error.message`, stack traces) only included in responses when `NODE_ENV === "development"` |
+| Logging | All debug `console.log` gated behind `NODE_ENV !== "production"`; errors and warnings always logged |
 | SQL injection | Parameterized queries throughout |
-| Auth | JWT on all protected routes, bcrypt with 10 salt rounds |
+| Auth | JWT on all protected routes, carried in an `httpOnly` `sameSite` cookie so it is not exposed to frontend JavaScript (XSS-resistant); bcrypt with 10 salt rounds |
+| Legal consent | Registration requires `acceptedTerms`, `acceptedPrivacy`, and `confirmedAge16` (all must be `true`). The version of each document (`accepted_terms_version`, `accepted_privacy_version`, `confirmed_age_16_version`) and the acceptance timestamp are stored on the user row for audit purposes. |
+| User data exposure | Public user listings return only public profiles (`is_public = TRUE`) with an explicit column allowlist; auth-aware profile/search reads also exclude users in a block relationship with the requester where supported; newly verified users remain private until they opt in; no `SELECT *` on user rows |
 
 ---
 
@@ -348,8 +444,9 @@ Full transactional account deletion following the spec in `docs/USER_DELETION_SP
 - **`npm install` fails on bcrypt** — Install native build tools (see Prerequisites), then `rm -rf node_modules package-lock.json && npm install`
 - **CORS errors** — Make sure `CLIENT_URL` in `.env` matches your frontend origin (`http://localhost:5173`)
 - **Database connection issues** — Verify `DATABASE_URL` is correct and you have internet access
+- **SMTP transport is not configured** — Set `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS`; `SMTP_PORT` defaults to `587`
 - **Port already in use** — `lsof -i :5001` to find the process, `kill -9 <PID>` to free the port
-- **CAPTCHA not loading locally** — This is expected. If `TURNSTILE_SECRET_KEY` is unset, registration skips CAPTCHA.
+- **CAPTCHA not loading locally** — Expected when no Turnstile key is configured; the CAPTCHA check runs in the deployed environment.
 
 ---
 
@@ -357,3 +454,10 @@ Full transactional account deletion following the spec in `docs/USER_DELETION_SP
 
 - **Frontend repo:** [Lomir-frontend](https://github.com/KasparSinitsin/Lomir-frontend)
 - **Deletion spec:** [`docs/USER_DELETION_SPEC.md`](docs/USER_DELETION_SPEC.md)
+- **Email verification restore guide:** [`docs/RESTORE_EMAIL_VERIFICATION_GUIDE.md`](docs/RESTORE_EMAIL_VERIFICATION_GUIDE.md)
+
+---
+
+## License
+
+This project is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0). See the [LICENSE](LICENSE) file for the full text.

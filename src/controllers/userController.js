@@ -2,11 +2,34 @@ const db = require("../config/database");
 const { pool } = db;
 const bcrypt = require("bcrypt");
 const {
-  geocodeAddress,
   hasLocationChanged,
+  resolveLocationData,
 } = require("../utils/geocodingUtil");
 const { deleteImageKitFile } = require("../utils/imagekitUtils");
 const { ensureBadgeVisibilityColumns } = require("../utils/badgeVisibilityUtils");
+const userModel = require("../models/userModel");
+
+const PUBLIC_USER_FIELDS = `
+  u.id, u.username, u.first_name, u.last_name, u.bio,
+  u.avatar_url, u.postal_code, u.city, u.state, u.district, u.country, u.is_public,
+  u.is_synthetic, u.created_at
+`;
+
+const SAFE_PUBLIC_USER_KEYS = [
+  'id', 'username', 'first_name', 'last_name', 'bio',
+  'avatar_url', 'postal_code', 'city', 'state', 'district', 'country', 'is_public',
+  'is_synthetic', 'created_at', 'tags',
+];
+
+const DELETED_USER_DISPLAY_NAME = "Former Lomir User";
+
+const sanitizePublicUser = (row) => {
+  const safe = {};
+  for (const key of SAFE_PUBLIC_USER_KEYS) {
+    if (row[key] !== undefined) safe[key] = row[key];
+  }
+  return safe;
+};
 
 const buildUserDisplayName = (user) => {
   const fullName = [user.first_name, user.last_name].filter(Boolean).join(" ");
@@ -118,14 +141,35 @@ const getSuccessorCandidatesByTeam = async (queryable, teamIds, excludedUserId) 
 /**
  * @description Get all users
  * @route GET /api/users
- * @access Private
+ * @access Public
  */
 const getUsers = async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM users");
+    const viewerId = req.user?.id ?? null;
+    // Hide anyone in a block relationship with the viewer (mutual). When the
+    // request is unauthenticated, viewerId is null and the filter is a no-op.
+    const blockFilter = viewerId
+      ? `AND NOT EXISTS (
+           SELECT 1 FROM user_blocks ub
+           WHERE (ub.blocker_id = u.id AND ub.blocked_id = $1)
+              OR (ub.blocked_id = u.id AND ub.blocker_id = $1)
+         )`
+      : "";
+    const result = await pool.query(
+      `
+      SELECT ${PUBLIC_USER_FIELDS}
+      FROM users u
+      WHERE u.is_public = TRUE
+      ${blockFilter}
+      ORDER BY u.created_at DESC
+      LIMIT 50
+    `,
+      viewerId ? [viewerId] : [],
+    );
+
     res.status(200).json({
       success: true,
-      data: result.rows,
+      data: result.rows.map(sanitizePublicUser),
     });
   } catch (error) {
     console.error("Error fetching users:", error);
@@ -140,11 +184,13 @@ const getUsers = async (req, res) => {
 /**
  * @description Get a single user by ID
  * @route GET /api/users/:id
- * @access Private
+ * @access Public (with optional auth for owner-only fields)
  */
 const getUserById = async (req, res) => {
   try {
     const userId = req.params.id;
+    const isOwner = req.user && Number(req.user.id) === Number(userId);
+
     if (process.env.NODE_ENV !== "production") {
       console.log(`Fetching user with ID: ${userId}`);
     }
@@ -165,6 +211,7 @@ const getUserById = async (req, res) => {
     u.city,
     u.country,
     u.state,
+    u.district,
     u.latitude,
     u.longitude,
     u.avatar_url,
@@ -272,7 +319,7 @@ const getUserById = async (req, res) => {
   FROM users u
   WHERE u.id = $1
 `,
-      [userId, Number(req.user?.id) === Number(userId)],
+      [userId, isOwner],
     );
 
     if (result.rows.length === 0) {
@@ -286,11 +333,64 @@ const getUserById = async (req, res) => {
 
     const user = result.rows[0];
 
-    // Send successful response with user data including tags as string
+    // Blocked users are mutually hidden: if either party has blocked the other,
+    // present the profile as "not found" (same shape the frontend already uses
+    // for missing/private-non-shared profiles).
+    if (!isOwner && req.user) {
+      const blocked = await userModel.isBlockedBetween(req.user.id, userId);
+      if (blocked) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+    }
+
+    if (!isOwner && !user.is_public) {
+      // Teammates may see the full sanitized profile even if it is private
+      let sharesTeam = false;
+      if (req.user) {
+        const teamCheck = await pool.query(
+          `SELECT 1 FROM team_members tm1
+           JOIN team_members tm2 ON tm1.team_id = tm2.team_id
+           WHERE tm1.user_id = $1 AND tm2.user_id = $2
+           LIMIT 1`,
+          [req.user.id, userId],
+        );
+        sharesTeam = teamCheck.rows.length > 0;
+      }
+
+      if (!sharesTeam) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+    }
+
+    if (!isOwner) {
+      const publicData = sanitizePublicUser(user);
+      if (user.hide_badges) {
+        publicData.badges = [];
+        publicData.total_badge_credits = 0;
+      } else {
+        if (user.badges !== undefined) publicData.badges = user.badges;
+        if (user.total_badge_credits !== undefined) publicData.total_badge_credits = user.total_badge_credits;
+      }
+      if (user.hide_badges !== undefined) publicData.hide_badges = user.hide_badges;
+      if (user.updated_at !== undefined) publicData.updated_at = user.updated_at;
+
+      return res.status(200).json({
+        success: true,
+        message: "User retrieved successfully",
+        data: publicData,
+      });
+    }
+
+    // Owner view: include email and hidden award metadata needed for settings
     res.status(200).json({
       success: true,
       message: "User retrieved successfully",
-      // Data is already snake_case from DB, frontend interceptor handles conversion
       data: user,
     });
   } catch (error) {
@@ -310,14 +410,28 @@ const getUserById = async (req, res) => {
  */
 const updateUser = async (req, res) => {
   try {
+    if (Number(req.user.id) !== Number(req.params.id)) {
+      return res.status(403).json({
+        success: false,
+        message: "You can only update your own profile",
+      });
+    }
+
     const userId = req.params.id;
     if (process.env.NODE_ENV !== "production") {
       console.log("updateUser called for ID:", userId);
     }
 
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "email")) {
+      return res.status(400).json({
+        success: false,
+        message: "Use the account email change flow to change your email address",
+      });
+    }
+
     // First, get the current user data to access the old avatar URL and location
     const currentUserResult = await pool.query(
-      "SELECT avatar_url, avatar_file_id, postal_code, city, country, state, latitude, longitude FROM users WHERE id = $1",
+      "SELECT avatar_url, avatar_file_id, postal_code, city, country, state, district, latitude, longitude FROM users WHERE id = $1",
       [userId],
     );
 
@@ -337,10 +451,11 @@ const updateUser = async (req, res) => {
       first_name,
       last_name,
       username,
-      email,
       bio,
       postal_code,
       city,
+      state,
+      district,
       country,
       avatar_url,
       avatar_file_id,
@@ -383,25 +498,6 @@ const updateUser = async (req, res) => {
       queryParams.push(username);
       paramPosition++;
     }
-    if (email !== undefined) {
-      // Check if email is already taken by another user
-      const emailCheck = await pool.query(
-        "SELECT id FROM users WHERE email = $1 AND id != $2",
-        [email, userId],
-      );
-
-      if (emailCheck.rows.length > 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Email already in use by another account",
-        });
-      }
-
-      updateFields.push(`email = $${paramPosition}`);
-      queryParams.push(email);
-      paramPosition++;
-    }
-
     if (bio !== undefined) {
       updateFields.push(`bio = $${paramPosition}`);
       queryParams.push(bio);
@@ -409,17 +505,27 @@ const updateUser = async (req, res) => {
     }
     if (postal_code !== undefined) {
       updateFields.push(`postal_code = $${paramPosition}`);
-      queryParams.push(postal_code);
+      queryParams.push(postal_code || null);
       paramPosition++;
     }
     if (city !== undefined) {
       updateFields.push(`city = $${paramPosition}`);
-      queryParams.push(city);
+      queryParams.push(city || null);
+      paramPosition++;
+    }
+    if (state !== undefined) {
+      updateFields.push(`state = $${paramPosition}`);
+      queryParams.push(state || null);
+      paramPosition++;
+    }
+    if (district !== undefined) {
+      updateFields.push(`district = $${paramPosition}`);
+      queryParams.push(district || null);
       paramPosition++;
     }
     if (country !== undefined) {
       updateFields.push(`country = $${paramPosition}`);
-      queryParams.push(country);
+      queryParams.push(country || null);
       paramPosition++;
     }
 
@@ -458,6 +564,8 @@ const updateUser = async (req, res) => {
       postal_code:
         postal_code !== undefined ? postal_code : currentUser.postal_code,
       city: city !== undefined ? city : currentUser.city,
+      state: state !== undefined ? state : currentUser.state,
+      district: district !== undefined ? district : currentUser.district,
       country: country !== undefined ? country : currentUser.country,
     };
 
@@ -467,24 +575,36 @@ const updateUser = async (req, res) => {
       if (process.env.NODE_ENV !== "production") {
         console.log("Location data changed, triggering geocoding...");
       }
-      const coordinates = await geocodeAddress(newLocationData);
+      const resolvedLocation = await resolveLocationData(newLocationData);
 
-      if (coordinates) {
+      if (resolvedLocation) {
         if (process.env.NODE_ENV !== "production") {
           console.log(
-            `Geocoded new coordinates: lat=${coordinates.latitude}, lng=${coordinates.longitude}`,
+            `Resolved new location: lat=${resolvedLocation.latitude}, lng=${resolvedLocation.longitude}`,
           );
         }
+        const locationFieldsToPersist = {
+          postal_code: resolvedLocation.postal_code,
+          city: resolvedLocation.city,
+          state: resolvedLocation.state,
+          district: resolvedLocation.district,
+          country: resolvedLocation.country,
+        };
+
+        for (const [field, fieldValue] of Object.entries(locationFieldsToPersist)) {
+          if (!updateFields.some((entry) => entry.startsWith(`${field} = `))) {
+            updateFields.push(`${field} = $${paramPosition}`);
+            queryParams.push(fieldValue);
+            paramPosition++;
+          }
+        }
+
         updateFields.push(`latitude = $${paramPosition}`);
-        queryParams.push(coordinates.latitude);
+        queryParams.push(resolvedLocation.latitude);
         paramPosition++;
 
         updateFields.push(`longitude = $${paramPosition}`);
-        queryParams.push(coordinates.longitude);
-        paramPosition++;
-
-        updateFields.push(`state = $${paramPosition}`);
-        queryParams.push(coordinates.state);
+        queryParams.push(resolvedLocation.longitude);
         paramPosition++;
       } else {
         if (process.env.NODE_ENV !== "production") {
@@ -502,6 +622,10 @@ const updateUser = async (req, res) => {
         paramPosition++;
 
         updateFields.push(`state = $${paramPosition}`);
+        queryParams.push(null);
+        paramPosition++;
+
+        updateFields.push(`district = $${paramPosition}`);
         queryParams.push(null);
         paramPosition++;
       }
@@ -527,7 +651,7 @@ const updateUser = async (req, res) => {
       UPDATE users 
       SET ${updateFields.join(", ")} 
       WHERE id = $${paramPosition}
-      RETURNING id, username, email, first_name, last_name, bio, postal_code, city, country, state, latitude, longitude, avatar_url, is_public, is_synthetic, created_at, updated_at
+      RETURNING id, username, email, first_name, last_name, bio, postal_code, city, country, state, district, latitude, longitude, avatar_url, is_public, is_synthetic, created_at, updated_at
     `;
 
     const result = await pool.query(query, queryParams);
@@ -855,7 +979,11 @@ const deleteUser = async (req, res) => {
       await client.query(
         `INSERT INTO messages (sender_id, team_id, content, sent_at)
          VALUES ($1, $2, $3, NOW())`,
-        [null, membership.teamId, `🚪 ${userDisplayName} has left Lomir.`],
+        [
+          null,
+          membership.teamId,
+          `🚪 ${DELETED_USER_DISPLAY_NAME} has left Lomir.`,
+        ],
       );
     }
 
@@ -1053,7 +1181,7 @@ const deleteUser = async (req, res) => {
         [
           null,
           team.teamId,
-          `👑 OWNERSHIP_TEAM: ${userDisplayName} | ${successor.name}`,
+          `👑 OWNERSHIP_TEAM: ${DELETED_USER_DISPLAY_NAME} | ${successor.name}`,
         ],
       );
 
@@ -1483,6 +1611,38 @@ const getUserTags = async (req, res) => {
     const userId = req.params.id;
     const canViewHiddenAwards = Number(req.user?.id) === Number(userId);
 
+    const userVisibility = await pool.query(
+      `SELECT id, is_public, COALESCE(hide_badges, FALSE) AS hide_badges
+       FROM users
+       WHERE id = $1`,
+      [userId],
+    );
+
+    if (userVisibility.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const userRow = userVisibility.rows[0];
+    const userIsPublic =
+      userRow.is_public === true || userRow.is_public === "true";
+
+    if (!canViewHiddenAwards && !userIsPublic) {
+      let sharesTeam = false;
+      if (req.user) {
+        const teamCheck = await pool.query(
+          `SELECT 1 FROM team_members tm1
+           JOIN team_members tm2 ON tm1.team_id = tm2.team_id
+           WHERE tm1.user_id = $1 AND tm2.user_id = $2
+           LIMIT 1`,
+          [req.user.id, userId],
+        );
+        sharesTeam = teamCheck.rows.length > 0;
+      }
+      if (!sharesTeam) {
+        return res.status(404).json({ success: false, message: "User not found" });
+      }
+    }
+
     await ensureBadgeVisibilityColumns();
 
     const result = await pool.query(
@@ -1514,6 +1674,7 @@ const getUserTags = async (req, res) => {
               AND ba2.awarded_to_user_id = ut.user_id
               AND (
                 $2::BOOLEAN = TRUE
+                OR COALESCE(u.hide_badges, FALSE) = TRUE
                 OR NOT (ba2.id = ANY(COALESCE(u.hidden_award_ids, '{}'::INTEGER[])))
               )
             GROUP BY b2.category
@@ -1525,6 +1686,7 @@ const getUserTags = async (req, res) => {
           AND ba.awarded_to_user_id = ut.user_id
           AND (
             $2::BOOLEAN = TRUE
+            OR COALESCE(u.hide_badges, FALSE) = TRUE
             OR NOT (ba.id = ANY(COALESCE(u.hidden_award_ids, '{}'::INTEGER[])))
           )
       ) tag_award_stats ON TRUE
@@ -1535,7 +1697,15 @@ const getUserTags = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: result.rows,
+      data: userRow.hide_badges && !canViewHiddenAwards
+        ? result.rows.map((row) => ({
+            ...row,
+            badge_credits: 0,
+            dominant_badge_category: null,
+            linked_badge_count: 0,
+            awarder_count: 0,
+          }))
+        : result.rows,
     });
   } catch (error) {
     console.error("Error fetching user tags:", error);
@@ -1755,6 +1925,42 @@ const getUserBadges = async (req, res) => {
     const userId = req.params.id;
     const canViewHiddenAwards = Number(req.user?.id) === Number(userId);
 
+    const userVisibility = await pool.query(
+      `SELECT id, is_public, COALESCE(hide_badges, FALSE) AS hide_badges
+       FROM users
+       WHERE id = $1`,
+      [userId],
+    );
+
+    if (userVisibility.rows.length === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const userRow = userVisibility.rows[0];
+    const userIsPublic =
+      userRow.is_public === true || userRow.is_public === "true";
+
+    if (!canViewHiddenAwards && !userIsPublic) {
+      let sharesTeam = false;
+      if (req.user) {
+        const teamCheck = await pool.query(
+          `SELECT 1 FROM team_members tm1
+           JOIN team_members tm2 ON tm1.team_id = tm2.team_id
+           WHERE tm1.user_id = $1 AND tm2.user_id = $2
+           LIMIT 1`,
+          [req.user.id, userId],
+        );
+        sharesTeam = teamCheck.rows.length > 0;
+      }
+      if (!sharesTeam) {
+        return res.status(404).json({ success: false, message: "User not found" });
+      }
+    }
+
+    if (!canViewHiddenAwards && userRow.hide_badges) {
+      return res.status(200).json({ success: true, data: [] });
+    }
+
     await ensureBadgeVisibilityColumns();
 
     const result = await pool.query(
@@ -1819,6 +2025,151 @@ const getUserBadges = async (req, res) => {
   }
 };
 
+// ============================================================
+// USER BLOCKS
+// ============================================================
+
+// Guards that the authenticated user is acting on their own blocklist.
+const isSelf = (req) => Number(req.user?.id) === Number(req.params.id);
+
+// Tell both parties' clients (all devices) to re-sync block state in realtime,
+// so a block/unblock instantly hides/restores chats without a manual refresh.
+const emitBlocksUpdated = (req, blockerId, blockedId, blocked) => {
+  const io = req.app.get("io");
+  if (!io) return;
+  io.to(`user:${blockedId}`).emit("blocks:updated", {
+    withUserId: Number(blockerId),
+    blocked,
+  });
+  io.to(`user:${blockerId}`).emit("blocks:updated", {
+    withUserId: Number(blockedId),
+    blocked,
+  });
+};
+
+/**
+ * @description List users the current user has blocked.
+ * @route GET /api/users/:id/blocks
+ * @access Private (self only)
+ */
+const getBlockedUsers = async (req, res) => {
+  try {
+    if (!isSelf(req)) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    const blocked = await userModel.getBlockedUsers(req.user.id);
+    res.status(200).json({ success: true, data: blocked });
+  } catch (error) {
+    console.error("Error fetching blocked users:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching blocked users",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
+/**
+ * @description Block a user.
+ * @route POST /api/users/:id/blocks
+ * @access Private (self only)
+ */
+const blockUser = async (req, res) => {
+  try {
+    if (!isSelf(req)) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    const blockedId = Number(req.body.blocked_id ?? req.body.blockedId);
+    if (!blockedId || Number.isNaN(blockedId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "blockedId is required" });
+    }
+    if (blockedId === Number(req.user.id)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "You cannot block yourself" });
+    }
+
+    const target = await pool.query(`SELECT id FROM users WHERE id = $1`, [
+      blockedId,
+    ]);
+    if (target.rows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    await userModel.blockUser(req.user.id, blockedId);
+    emitBlocksUpdated(req, req.user.id, blockedId, true);
+    res
+      .status(201)
+      .json({ success: true, message: "User blocked successfully" });
+  } catch (error) {
+    console.error("Error blocking user:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error blocking user",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
+/**
+ * @description Unblock a user.
+ * @route DELETE /api/users/:id/blocks/:blockedId
+ * @access Private (self only)
+ */
+const unblockUser = async (req, res) => {
+  try {
+    if (!isSelf(req)) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    const blockedId = Number(req.params.blockedId);
+    if (!blockedId || Number.isNaN(blockedId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid blocked user id" });
+    }
+    await userModel.unblockUser(req.user.id, blockedId);
+    emitBlocksUpdated(req, req.user.id, blockedId, false);
+    res
+      .status(200)
+      .json({ success: true, message: "User unblocked successfully" });
+  } catch (error) {
+    console.error("Error unblocking user:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error unblocking user",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
+/**
+ * @description Get every user id in a block relationship with the current user
+ *              (either direction) — used by the client to mutually anonymize
+ *              blocked users in shared teams.
+ * @route GET /api/users/:id/block-relationships
+ * @access Private (self only)
+ */
+const getBlockRelationships = async (req, res) => {
+  try {
+    if (!isSelf(req)) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    const ids = await userModel.getBlockRelationshipIds(req.user.id);
+    res.status(200).json({ success: true, data: { ids } });
+  } catch (error) {
+    console.error("Error fetching block relationships:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error fetching block relationships",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
 module.exports = {
   getUsers,
   getUserById,
@@ -1830,4 +2181,8 @@ module.exports = {
   updateUserTags,
   updateUserBadgeVisibility,
   getUserBadges,
+  getBlockedUsers,
+  blockUser,
+  unblockUser,
+  getBlockRelationships,
 };

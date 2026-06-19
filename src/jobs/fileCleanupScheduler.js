@@ -5,6 +5,9 @@ const {
   cleanupExpiredFiles,
   createExpirationNotifications,
 } = require('../utils/fileCleanup');
+const {
+  cleanupExpiredPasswordResetTokens,
+} = require('../utils/tokenCleanup');
 
 /**
  * Initialize all scheduled jobs
@@ -42,10 +45,25 @@ const initScheduledJobs = () => {
     timezone: 'Europe/Berlin'
   });
 
+  // Run expired password-reset token cleanup hourly
+  cron.schedule('15 * * * *', async () => {
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[SCHEDULER] Running password reset token cleanup...');
+    }
+    try {
+      await cleanupExpiredPasswordResetTokens();
+    } catch (error) {
+      console.error('[SCHEDULER] Password reset token cleanup failed:', error);
+    }
+  }, {
+    timezone: 'Europe/Berlin'
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     console.log('[SCHEDULER] Scheduled jobs initialized:');
     console.log('  - File cleanup: Daily at 2:00 AM');
     console.log('  - Expiration notifications: Daily at 9:00 AM');
+    console.log('  - Password reset token cleanup: Hourly at minute 15');
   }
 };
 

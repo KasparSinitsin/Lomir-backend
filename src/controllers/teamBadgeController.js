@@ -1,8 +1,33 @@
 const db = require("../config/database");
 
+const isTeamVisibleToViewer = async (teamId, viewerId) => {
+  const teamResult = await db.pool.query(
+    'SELECT is_public FROM teams WHERE id = $1 AND archived_at IS NULL',
+    [teamId],
+  );
+  if (teamResult.rows.length === 0) return false;
+
+  const team = teamResult.rows[0];
+  if (team.is_public === true || team.is_public === 'true') return true;
+
+  if (!viewerId) return false;
+
+  const memberCheck = await db.pool.query(
+    'SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2',
+    [teamId, viewerId],
+  );
+  return memberCheck.rows.length > 0;
+};
+
 const getTeamBadgeAwards = async (req, res) => {
   try {
     const teamId = req.params.id;
+    const viewerId = req.user?.id;
+
+    const visible = await isTeamVisibleToViewer(teamId, viewerId);
+    if (!visible) {
+      return res.status(404).json({ success: false, message: "Team not found" });
+    }
 
     const result = await db.pool.query(
       `
@@ -49,9 +74,13 @@ const getTeamBadgeAwards = async (req, res) => {
       LEFT JOIN teams t_ctx ON ba.team_id = t_ctx.id
       LEFT JOIN tags tag ON ba.tag_id = tag.id
       WHERE ba.tag_id IS NOT NULL
+        AND (
+          ba.awarded_to_user_id = $2
+          OR NOT (ba.id = ANY(COALESCE(recipient.hidden_award_ids, '{}'::INTEGER[])))
+        )
       ORDER BY ba.created_at DESC, ba.id DESC
       `,
-      [teamId],
+      [teamId, viewerId || null],
     );
 
     res.status(200).json({
@@ -71,6 +100,12 @@ const getTeamBadgeAwards = async (req, res) => {
 const getTeamMemberBadges = async (req, res) => {
   try {
     const teamId = req.params.id;
+    const viewerId = req.user?.id;
+
+    const visible = await isTeamVisibleToViewer(teamId, viewerId);
+    if (!visible) {
+      return res.status(404).json({ success: false, message: "Team not found" });
+    }
 
     const result = await db.pool.query(
       `
@@ -91,6 +126,11 @@ const getTeamMemberBadges = async (req, res) => {
         JOIN badges b         ON ba.badge_id = b.id
         JOIN team_members tm  ON ba.awarded_to_user_id = tm.user_id
                              AND tm.team_id = $1
+        LEFT JOIN users recipient ON recipient.id = ba.awarded_to_user_id
+        WHERE (
+          ba.awarded_to_user_id = $2
+          OR NOT (ba.id = ANY(COALESCE(recipient.hidden_award_ids, '{}'::INTEGER[])))
+        )
         GROUP BY b.id, b.name, b.description, b.category, b.color,
                  b.image_url, b.cat_image_url
       ),
@@ -112,7 +152,7 @@ const getTeamMemberBadges = async (req, res) => {
       JOIN category_totals ct ON bt.category = ct.category
       ORDER BY bt.category, bt.total_credits DESC, bt.name
       `,
-      [teamId],
+      [teamId, viewerId || null],
     );
 
     const grandTotalCredits = result.rows.reduce(
@@ -138,9 +178,25 @@ const getTeamMemberBadges = async (req, res) => {
 const getMemberBadgesForTeams = async (req, res) => {
   try {
     const rawIds = String(req.query.teamIds || "").split(",");
-    const teamIds = rawIds
+    const requestedIds = rawIds
       .map((id) => parseInt(id, 10))
       .filter((id) => Number.isFinite(id) && id > 0);
+
+    if (requestedIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: {},
+        meta: { totalCreditsByTeam: {} },
+      });
+    }
+
+    // Filter to only teams the viewer may access
+    const viewerId = req.user?.id;
+    const teamIds = [];
+    for (const id of requestedIds) {
+      const visible = await isTeamVisibleToViewer(id, viewerId);
+      if (visible) teamIds.push(id);
+    }
 
     if (teamIds.length === 0) {
       return res.status(200).json({
@@ -170,6 +226,11 @@ const getMemberBadgesForTeams = async (req, res) => {
         JOIN badges b         ON ba.badge_id = b.id
         JOIN team_members tm  ON ba.awarded_to_user_id = tm.user_id
                              AND tm.team_id = ANY($1)
+        LEFT JOIN users recipient ON recipient.id = ba.awarded_to_user_id
+        WHERE (
+          ba.awarded_to_user_id = $2
+          OR NOT (ba.id = ANY(COALESCE(recipient.hidden_award_ids, '{}'::INTEGER[])))
+        )
         GROUP BY tm.team_id, b.id, b.name, b.description, b.category, b.color,
                  b.image_url, b.cat_image_url
       ),
@@ -193,7 +254,7 @@ const getMemberBadgesForTeams = async (req, res) => {
         ON bt.category = ct.category AND bt.team_id = ct.team_id
       ORDER BY bt.team_id, bt.category, bt.total_credits DESC, bt.name
       `,
-      [teamIds],
+      [teamIds, viewerId || null],
     );
 
     const dataByTeam = {};
@@ -228,6 +289,12 @@ const getMemberBadgesForTeams = async (req, res) => {
 const getTeamMemberBadgeAwards = async (req, res) => {
   try {
     const teamId = req.params.id;
+    const viewerId = req.user?.id;
+
+    const visible = await isTeamVisibleToViewer(teamId, viewerId);
+    if (!visible) {
+      return res.status(404).json({ success: false, message: "Team not found" });
+    }
 
     const result = await db.pool.query(
       `
@@ -271,9 +338,13 @@ const getTeamMemberBadgeAwards = async (req, res) => {
       LEFT JOIN users recipient ON ba.awarded_to_user_id = recipient.id
       LEFT JOIN teams t_ctx ON ba.team_id = t_ctx.id
       LEFT JOIN tags tag ON ba.tag_id = tag.id
+      WHERE (
+        ba.awarded_to_user_id = $2
+        OR NOT (ba.id = ANY(COALESCE(recipient.hidden_award_ids, '{}'::INTEGER[])))
+      )
       ORDER BY ba.created_at DESC, ba.id DESC
       `,
-      [teamId],
+      [teamId, viewerId || null],
     );
 
     res.status(200).json({

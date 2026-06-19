@@ -1,5 +1,11 @@
 const db = require("../config/database");
 
+const PUBLIC_TEAM_FIELDS = `
+  t.id, t.name, t.description, t.is_public, t.max_members,
+  t.owner_id, t.teamavatar_url, t.is_remote, t.is_synthetic,
+  t.created_at, t.postal_code, t.city, t.state, t.district, t.country
+`;
+
 const getAllTeams = async (req, res) => {
   try {
     // Implement pagination
@@ -10,22 +16,23 @@ const getAllTeams = async (req, res) => {
     // Query database with pagination
     const teamsResult = await db.pool.query(
       `
-      SELECT t.*, 
-             COUNT(tm.id) AS current_members_count
+      SELECT ${PUBLIC_TEAM_FIELDS},
+             COALESCE(COUNT(DISTINCT tm.user_id), 0) AS current_members_count
       FROM teams t
       LEFT JOIN team_members tm ON t.id = tm.team_id
       WHERE t.archived_at IS NULL
+        AND t.is_public = TRUE
       GROUP BY t.id
       ORDER BY t.created_at DESC
       LIMIT $1 OFFSET $2
-    `,
+      `,
       [limit, offset],
     );
 
     // Get total count for pagination metadata
-    const countResult = await db.pool.query(`
-      SELECT COUNT(*) FROM teams WHERE archived_at IS NULL
-    `);
+    const countResult = await db.pool.query(
+      `SELECT COUNT(*) FROM teams WHERE archived_at IS NULL AND is_public = TRUE`,
+    );
 
     const totalTeams = parseInt(countResult.rows[0].count);
     const totalPages = Math.ceil(totalTeams / limit);
@@ -57,12 +64,15 @@ const getTeamById = async (req, res) => {
     // Fetch team details with member count
     const teamResult = await db.pool.query(
       `
-      SELECT t.*,
+      SELECT t.id, t.name, t.description, t.is_public, t.max_members,
+             t.owner_id, t.teamavatar_url, t.is_remote, t.is_synthetic,
+             t.created_at, t.updated_at, t.postal_code, t.city, t.country, t.state, t.district,
              COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
-             (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count
+             (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count,
+             (SELECT COALESCE(json_agg(vr.role_name ORDER BY vr.role_name ASC), '[]'::json) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_names
       FROM teams t
       LEFT JOIN team_members tm ON t.id = tm.team_id
-      WHERE t.id = $1
+      WHERE t.id = $1 AND t.archived_at IS NULL
       GROUP BY t.id
       `,
       [teamId],
@@ -77,25 +87,65 @@ const getTeamById = async (req, res) => {
 
     const team = teamResult.rows[0];
 
-    // Get team members with their details
+    // Normalize early so the visibility check works correctly
+    team.is_public = team.is_public === true || team.is_public === "true";
+
+    // Private team: only members may view it; reveal nothing to non-members
+    if (!team.is_public) {
+      const viewerId = req.user?.id;
+      if (!viewerId) {
+        return res.status(404).json({
+          success: false,
+          message: "Team not found",
+        });
+      }
+      const memberCheck = await db.pool.query(
+        'SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2',
+        [teamId, viewerId],
+      );
+      if (memberCheck.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Team not found",
+        });
+      }
+    }
+
+    // For private teams the viewer is already verified as a member (above).
+    // For public teams we still check membership so team members can see
+    // each other's city/country even when the profile is private.
+    let viewerIsMember = !team.is_public; // private team viewers are already members
+    if (!viewerIsMember && req.user?.id) {
+      const memberCheck = await db.pool.query(
+        'SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2',
+        [teamId, req.user.id],
+      );
+      viewerIsMember = memberCheck.rows.length > 0;
+    }
+
+    // Get team members — public profile location is visible to visitors and
+    // fellow members, while postal_code and precise coordinates stay hidden.
     const membersResult = await db.pool.query(
       `
   SELECT tm.user_id, tm.role, tm.joined_at,
-         u.username, u.email, u.avatar_url,
+         u.username, u.avatar_url,
          u.first_name, u.last_name, u.is_public, u.is_synthetic,
-         u.postal_code, u.city, u.country, u.state
+         CASE WHEN u.is_public = TRUE OR $2 THEN u.city ELSE NULL END AS city,
+         CASE WHEN u.is_public = TRUE OR $2 THEN u.state ELSE NULL END AS state,
+         CASE WHEN u.is_public = TRUE OR $2 THEN u.district ELSE NULL END AS district,
+         CASE WHEN u.is_public = TRUE OR $2 THEN u.country ELSE NULL END AS country
   FROM team_members tm
   JOIN users u ON tm.user_id = u.id
   WHERE tm.team_id = $1
-  ORDER BY 
-    CASE tm.role 
-      WHEN 'owner' THEN 1 
-      WHEN 'admin' THEN 2 
-      ELSE 3 
+  ORDER BY
+    CASE tm.role
+      WHEN 'owner' THEN 1
+      WHEN 'admin' THEN 2
+      ELSE 3
     END,
     tm.joined_at ASC
   `,
-      [teamId],
+      [teamId, viewerIsMember],
     );
 
     // Get team tags — enriched with aggregated badge credits from team members
@@ -138,9 +188,6 @@ const getTeamById = async (req, res) => {
     // Construct response with proper member count
     team.members = membersResult.rows;
     team.tags = tagsResult.rows;
-
-    // Ensure boolean values (handle string "true" from DB)
-    team.is_public = team.is_public === true || team.is_public === "true";
 
     res.status(200).json({
       success: true,
@@ -204,16 +251,27 @@ const getUserTeams = async (req, res) => {
              t.postal_code,
              t.city,
              t.state,
+             t.district,
              t.country,
              t.latitude,
              t.longitude,
              t.is_remote,
              COALESCE(COUNT(DISTINCT tm.user_id), 0) AS current_members_count,
              (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count,
-             (SELECT COUNT(*)::int FROM team_applications ta WHERE ta.team_id = t.id AND ta.status = 'pending') AS pending_applications_count,
+             (SELECT COUNT(*)::int FROM team_applications ta WHERE ta.team_id = t.id AND ta.status = 'pending'
+               AND NOT EXISTS (
+                 SELECT 1 FROM user_blocks ub
+                 WHERE (ub.blocker_id = ta.applicant_id AND ub.blocked_id = $1)
+                    OR (ub.blocked_id = ta.applicant_id AND ub.blocker_id = $1)
+               )) AS pending_applications_count,
              (SELECT COUNT(*)::int FROM team_invitations ti WHERE ti.team_id = t.id AND ti.status = 'pending') AS pending_sent_invitations_count,
              GREATEST(
-               (SELECT MAX(ta.created_at) FROM team_applications ta WHERE ta.team_id = t.id AND ta.status = 'pending'),
+               (SELECT MAX(ta.created_at) FROM team_applications ta WHERE ta.team_id = t.id AND ta.status = 'pending'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM user_blocks ub
+                   WHERE (ub.blocker_id = ta.applicant_id AND ub.blocked_id = $1)
+                      OR (ub.blocked_id = ta.applicant_id AND ub.blocker_id = $1)
+                 )),
                (SELECT MAX(ti.created_at) FROM team_invitations ti WHERE ti.team_id = t.id AND ti.status = 'pending')
              ) AS latest_request_timestamp,
              tmr.role as user_role,

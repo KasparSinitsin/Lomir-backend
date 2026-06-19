@@ -422,7 +422,7 @@ const getMatchingCandidates = async (req, res) => {
     const usersResult = await db.pool.query(
       `SELECT u.id, u.first_name, u.last_name, u.username, u.bio,
               u.avatar_url, u.latitude, u.longitude, u.postal_code,
-              u.city, u.country, u.state
+              u.city, u.country, u.state, u.district
        FROM users u
        WHERE u.is_public = TRUE
          AND NOT EXISTS (
@@ -514,8 +514,10 @@ const getMatchingCandidates = async (req, res) => {
         WEIGHTS.badges * badgeScore +
         WEIGHTS.distance * distanceScore;
 
+      // eslint-disable-next-line no-unused-vars
+      const { latitude, longitude, ...safeCandidate } = candidate;
       return {
-        ...candidate,
+        ...safeCandidate,
         match_score: Math.round(matchScore * 100) / 100,
         match_details: {
           tag_score: Math.round(tagScore * 100) / 100,

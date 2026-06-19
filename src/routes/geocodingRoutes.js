@@ -1,6 +1,38 @@
 const express = require("express");
 const axios = require("axios");
+const { deriveLocationFromPostalCode } = require("../utils/locationDerivation");
+const { geocodingLimiter } = require("../middlewares/rateLimiter");
 const router = express.Router();
+
+// In-memory cache for postal-code lookups. Reduces duplicate outbound calls to
+// the Nominatim (OSM) service for repeated postal codes, which both respects
+// their usage policy and limits how often user-entered locations leave the
+// server. Entries expire after the TTL; the map is bounded to cap memory use.
+const GEOCODE_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const GEOCODE_CACHE_MAX_ENTRIES = 1000;
+const geocodeCache = new Map();
+
+function getCachedLocation(key) {
+  const entry = geocodeCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    geocodeCache.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function setCachedLocation(key, value) {
+  // Evict the oldest entry once the cache is full (Map preserves insertion order).
+  if (geocodeCache.size >= GEOCODE_CACHE_MAX_ENTRIES) {
+    const oldestKey = geocodeCache.keys().next().value;
+    geocodeCache.delete(oldestKey);
+  }
+  geocodeCache.set(key, {
+    value,
+    expiresAt: Date.now() + GEOCODE_CACHE_TTL_MS,
+  });
+}
 
 // Helper function to detect country from postal code
 function detectCountryCode(postalCode) {
@@ -21,12 +53,13 @@ function detectCountryCode(postalCode) {
 // Simple postal code to city mapping for common European codes
 const postalCodeMapping = {
   // Germany
-  10115: { city: "Berlin", country: "Germany" },
-  80331: { city: "Munich", country: "Germany" },
-  20095: { city: "Hamburg", country: "Germany" },
-  50667: { city: "Cologne", country: "Germany" },
-  60308: { city: "Frankfurt", country: "Germany" },
-  55116: { city: "Mainz", country: "Germany" },
+  10115: { city: "Berlin", state: "Berlin", country: "Germany", district: "Mitte" },
+  12555: { city: "Berlin", state: "Berlin", country: "Germany", district: "Köpenick" },
+  80331: { city: "Munich", state: "Bavaria", country: "Germany", district: "Altstadt-Lehel" },
+  20095: { city: "Hamburg", state: "Hamburg", country: "Germany", district: "Hamburg-Altstadt" },
+  50667: { city: "Cologne", state: "North Rhine-Westphalia", country: "Germany", district: "Innenstadt" },
+  60308: { city: "Frankfurt am Main", state: "Hessen", country: "Germany", district: "Westend-Süd" },
+  55116: { city: "Mainz", state: "Rhineland-Palatinate", country: "Germany", district: "Altstadt" },
 
   // Netherlands
   1012: { city: "Amsterdam", country: "Netherlands" },
@@ -60,10 +93,11 @@ const postalCodeMapping = {
   "110 00": { city: "Prague", country: "Czech Republic" },
 };
 
-router.get("/postal-code/:code", async (req, res) => {
+router.get("/postal-code/:code", geocodingLimiter, async (req, res) => {
   try {
     const { code } = req.params;
-    const detectedCountry = detectCountryCode(code);
+    const requestedCountry = req.query.country || null;
+    const detectedCountry = requestedCountry || detectCountryCode(code);
 
     if (process.env.NODE_ENV !== "production") {
       console.log(
@@ -71,28 +105,57 @@ router.get("/postal-code/:code", async (req, res) => {
       );
     }
 
-    // First, try our simple mapping
-    if (postalCodeMapping[code]) {
-      const location = postalCodeMapping[code];
+    const cacheKey = `${code}|${detectedCountry}`;
+    const cachedLocation = getCachedLocation(cacheKey);
+    if (cachedLocation) {
+      if (process.env.NODE_ENV !== "production") {
+        console.log(`Cache hit for ${cacheKey}`);
+      }
+      return res.json(cachedLocation);
+    }
+
+    const derivedLocation = deriveLocationFromPostalCode(code, detectedCountry);
+    const mappedLocation = postalCodeMapping[code];
+
+    // First, try our deterministic mapping
+    if (derivedLocation.city || mappedLocation) {
+      const location = {
+        ...mappedLocation,
+        ...derivedLocation,
+      };
       if (process.env.NODE_ENV !== "production") {
         console.log(
           `Found in mapping: ${code} -> ${location.city}, ${location.country}`
         );
       }
 
+      const district =
+        location.district ||
+        location.suburb ||
+        location.borough ||
+        location.cityDistrict ||
+        null;
       const locationInfo = {
         city: location.city,
-        state: null,
+        state: location.state || null,
         country: location.country,
-        displayName: `${location.city}, ${location.country}`,
+        district,
+        suburb: location.suburb || null,
+        borough: location.borough || null,
+        cityDistrict: location.cityDistrict || null,
+        displayName: [district, location.city, location.country]
+          .filter(Boolean)
+          .join(", "),
         latitude: null,
         longitude: null,
       };
 
+      setCachedLocation(cacheKey, locationInfo);
       return res.json(locationInfo);
     }
 
     // If not in mapping, try Nominatim with proper country code
+    let nominatimErrored = false;
     try {
       if (process.env.NODE_ENV !== "production") {
         console.log(
@@ -126,17 +189,32 @@ router.get("/postal-code/:code", async (req, res) => {
             address.city || address.town || address.village || address.hamlet,
           state: address.state,
           country: address.country,
+          district:
+            address.city_district ||
+            address.suburb ||
+            address.quarter ||
+            address.neighbourhood ||
+            address.borough ||
+            null,
+          suburb: address.suburb || null,
+          borough: address.borough || null,
+          cityDistrict: address.city_district || null,
           displayName: formatDisplayName(address),
           latitude: parseFloat(result.lat),
           longitude: parseFloat(result.lon),
+          importance: result.importance,
+          osmType: result.osm_type,
+          rawAddress: address,
         };
 
         if (process.env.NODE_ENV !== "production") {
           console.log(`Nominatim success for ${code}:`, locationInfo.displayName);
         }
+        setCachedLocation(cacheKey, locationInfo);
         return res.json(locationInfo);
       }
     } catch (nominatimError) {
+      nominatimErrored = true;
       if (process.env.NODE_ENV !== "production") {
         console.log(`Nominatim failed for ${code}:`, nominatimError.message);
       }
@@ -146,14 +224,20 @@ router.get("/postal-code/:code", async (req, res) => {
     if (process.env.NODE_ENV !== "production") {
       console.log(`No geocoding results found for postal code: ${code}`);
     }
-    res.json({
+    const fallbackLocation = {
       city: null,
       state: null,
       country: null,
       displayName: code, // Just show the postal code
       latitude: null,
       longitude: null,
-    });
+    };
+    // Cache a definitive "no result" (Nominatim returned nothing), but never a
+    // transient failure (timeout/error), so lookups can succeed once it recovers.
+    if (!nominatimErrored) {
+      setCachedLocation(cacheKey, fallbackLocation);
+    }
+    res.json(fallbackLocation);
   } catch (error) {
     console.error("Geocoding service error:", error.message);
 

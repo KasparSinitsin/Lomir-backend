@@ -1,20 +1,45 @@
 const db = require("../config/database");
-const { geocodeAddress } = require("../utils/geocodingUtil");
+const { resolveLocationData } = require("../utils/geocodingUtil");
 const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 const { serializeVacantRole } = require("../utils/vacantRoleSerializer");
 const { createNotification } = require("./notificationController");
 const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
 
+const VACANT_ROLE_FIELDS = `
+  id,
+  team_id,
+  created_by,
+  role_name,
+  bio,
+  postal_code,
+  city,
+  country,
+  state,
+  district,
+  latitude,
+  longitude,
+  max_distance_km,
+  is_remote,
+  status,
+  is_synthetic,
+  filled_by,
+  created_at,
+  updated_at
+`;
+
 const VACANT_ROLE_SELECT = `SELECT vr.*,
               u.first_name AS creator_first_name,
               u.last_name AS creator_last_name,
               u.username AS creator_username,
+              u.is_public AS creator_is_public,
               fu.id AS filled_by_user_id,
               fu.first_name AS filled_by_user_first_name,
               fu.last_name AS filled_by_user_last_name,
               fu.username AS filled_by_user_username,
-              fu.avatar_url AS filled_by_user_avatar_url
+              fu.avatar_url AS filled_by_user_avatar_url,
+              fu.is_public AS filled_by_user_is_public
        FROM team_vacant_roles vr
+       JOIN teams t ON t.id = vr.team_id
        JOIN users u ON vr.created_by = u.id
        LEFT JOIN users fu ON vr.filled_by = fu.id`;
 
@@ -26,6 +51,26 @@ const VACANT_ROLE_STATUS_SELECT = `SELECT vr.*,
               fu.avatar_url AS filled_by_user_avatar_url
        FROM team_vacant_roles vr
        LEFT JOIN users fu ON vr.filled_by = fu.id`;
+
+const toApproxCoord = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Math.round(numeric * 10) / 10;
+};
+
+const withApproximateRoleLocation = (role) => {
+  const approximateLatitude = toApproxCoord(role.latitude);
+  const approximateLongitude = toApproxCoord(role.longitude);
+
+  return {
+    ...role,
+    latitude: approximateLatitude,
+    longitude: approximateLongitude,
+    approximate_latitude: approximateLatitude,
+    approximate_longitude: approximateLongitude,
+  };
+};
 
 const fetchRoleTags = async (clientOrPool, roleId) => {
   const result = await clientOrPool.query(
@@ -359,6 +404,7 @@ const getVacantRoles = async (req, res) => {
     const { teamId } = req.params;
     const statusFilter = req.query.status || "open"; // default: only open roles
     const idsParam = req.query.ids;
+    const viewerId = req.user?.id;
 
     const filterIds = idsParam
       ? String(idsParam)
@@ -378,15 +424,35 @@ const getVacantRoles = async (req, res) => {
           `${VACANT_ROLE_SELECT}
            WHERE vr.team_id = $1
              AND vr.id = ANY($2::int[])
+             AND t.archived_at IS NULL
+             AND (
+               t.is_public = TRUE
+               OR EXISTS (
+                 SELECT 1
+                 FROM team_members tm
+                 WHERE tm.team_id = t.id
+                   AND tm.user_id = $3
+               )
+             )
            ORDER BY vr.created_at DESC`,
-          [teamId, filterIds],
+          [teamId, filterIds, viewerId || null],
         )
       : await db.pool.query(
           `${VACANT_ROLE_SELECT}
            WHERE vr.team_id = $1
              AND ($2 = 'all' OR vr.status = $2)
+             AND t.archived_at IS NULL
+             AND (
+               t.is_public = TRUE
+               OR EXISTS (
+                 SELECT 1
+                 FROM team_members tm
+                 WHERE tm.team_id = t.id
+                   AND tm.user_id = $3
+               )
+             )
            ORDER BY vr.created_at DESC`,
-          [teamId, statusFilter],
+          [teamId, statusFilter, viewerId || null],
         );
 
     const roles = rolesResult.rows;
@@ -476,12 +542,12 @@ const getVacantRoles = async (req, res) => {
       const badges = badgesByRole[role.id] || [];
 
       if (!req.user) {
-        return serializeVacantRole(role, {
+        return withApproximateRoleLocation(serializeVacantRole(role, {
           tags,
           badges,
           desiredTags: tags,
           desiredBadges: badges,
-        });
+        }));
       }
 
       const roleTagIds = tags.map((t) => t.tag_id);
@@ -509,7 +575,7 @@ const getVacantRoles = async (req, res) => {
         WEIGHTS.badges * badgeScore +
         WEIGHTS.distance * distanceScore;
 
-      return serializeVacantRole(role, {
+      return withApproximateRoleLocation(serializeVacantRole(role, {
         tags,
         badges,
         desiredTags: tags,
@@ -527,7 +593,7 @@ const getVacantRoles = async (req, res) => {
           max_distance_km: role.max_distance_km,
           is_within_range: isWithinRange,
         },
-      });
+      }));
     });
 
     res.status(200).json({
@@ -551,11 +617,23 @@ const getVacantRoles = async (req, res) => {
 const getVacantRoleById = async (req, res) => {
   try {
     const { teamId, roleId } = req.params;
+    const viewerId = req.user?.id;
 
     const roleResult = await db.pool.query(
       `${VACANT_ROLE_SELECT}
-       WHERE vr.id = $1 AND vr.team_id = $2`,
-      [roleId, teamId],
+       WHERE vr.id = $1
+         AND vr.team_id = $2
+         AND t.archived_at IS NULL
+         AND (
+           t.is_public = TRUE
+           OR EXISTS (
+             SELECT 1
+             FROM team_members tm
+             WHERE tm.team_id = t.id
+               AND tm.user_id = $3
+           )
+         )`,
+      [roleId, teamId, viewerId || null],
     );
 
     if (roleResult.rows.length === 0) {
@@ -572,12 +650,12 @@ const getVacantRoleById = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: serializeVacantRole(role, {
+      data: withApproximateRoleLocation(serializeVacantRole(role, {
         tags,
         badges,
         desiredTags: tags,
         desiredBadges: badges,
-      }),
+      })),
     });
   } catch (error) {
     console.error("Error fetching vacant role:", error);
@@ -623,6 +701,7 @@ const createVacantRole = async (req, res) => {
       city,
       country,
       state,
+      district,
       max_distance_km,
       is_remote,
       tag_ids, // array of tag IDs
@@ -643,25 +722,26 @@ const createVacantRole = async (req, res) => {
     const finalCity = isRemote ? null : city || null;
     const finalCountry = isRemote ? null : country || null;
     let finalState = isRemote ? null : state || null;
+    let finalDistrict = isRemote ? null : district || null;
     let finalLatitude = null;
     let finalLongitude = null;
     const finalMaxDistance = isRemote ? null : max_distance_km || null;
 
     // ── Geocode if not remote and we have enough location data ──
-    if (!isRemote && (finalPostalCode || finalCity) && finalCountry) {
-      const coordinates = await geocodeAddress({
+    if (!isRemote && finalCountry) {
+      const resolvedLocation = await resolveLocationData({
         postal_code: finalPostalCode,
         city: finalCity,
+        state: finalState,
+        district: finalDistrict,
         country: finalCountry,
       });
 
-      if (coordinates) {
-        finalLatitude = coordinates.latitude;
-        finalLongitude = coordinates.longitude;
-        // Use geocoded state if we don't already have one
-        if (!finalState && coordinates.state) {
-          finalState = coordinates.state;
-        }
+      if (resolvedLocation) {
+        finalState = resolvedLocation.state;
+        finalDistrict = resolvedLocation.district;
+        finalLatitude = resolvedLocation.latitude;
+        finalLongitude = resolvedLocation.longitude;
       }
     }
 
@@ -674,11 +754,11 @@ const createVacantRole = async (req, res) => {
       const roleResult = await client.query(
         `INSERT INTO team_vacant_roles (
           team_id, created_by, role_name, bio,
-          postal_code, city, country, state,
+          postal_code, city, country, state, district,
           latitude, longitude, max_distance_km, is_remote,
           is_synthetic
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-        RETURNING *`,
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        RETURNING ${VACANT_ROLE_FIELDS}`,
         [
           teamId,
           userId,
@@ -688,6 +768,7 @@ const createVacantRole = async (req, res) => {
           finalCity,
           finalCountry,
           finalState,
+          finalDistrict,
           finalLatitude,
           finalLongitude,
           finalMaxDistance,
@@ -834,7 +915,9 @@ const updateVacantRole = async (req, res) => {
 
     // Verify role exists and belongs to this team
     const existingRole = await db.pool.query(
-      `SELECT * FROM team_vacant_roles WHERE id = $1 AND team_id = $2`,
+      `SELECT ${VACANT_ROLE_FIELDS}
+       FROM team_vacant_roles
+       WHERE id = $1 AND team_id = $2`,
       [roleId, teamId],
     );
 
@@ -852,6 +935,7 @@ const updateVacantRole = async (req, res) => {
       city,
       country,
       state,
+      district,
       max_distance_km,
       is_remote,
       tag_ids,
@@ -864,24 +948,26 @@ const updateVacantRole = async (req, res) => {
     const finalCity = isRemote ? null : city || null;
     const finalCountry = isRemote ? null : country || null;
     let finalState = isRemote ? null : state || null;
+    let finalDistrict = isRemote ? null : district || null;
     let finalLatitude = null;
     let finalLongitude = null;
     const finalMaxDistance = isRemote ? null : max_distance_km || null;
 
     // ── Geocode if not remote and we have enough location data ──
-    if (!isRemote && (finalPostalCode || finalCity) && finalCountry) {
-      const coordinates = await geocodeAddress({
+    if (!isRemote && finalCountry) {
+      const resolvedLocation = await resolveLocationData({
         postal_code: finalPostalCode,
         city: finalCity,
+        state: finalState,
+        district: finalDistrict,
         country: finalCountry,
       });
 
-      if (coordinates) {
-        finalLatitude = coordinates.latitude;
-        finalLongitude = coordinates.longitude;
-        if (!finalState && coordinates.state) {
-          finalState = coordinates.state;
-        }
+      if (resolvedLocation) {
+        finalState = resolvedLocation.state;
+        finalDistrict = resolvedLocation.district;
+        finalLatitude = resolvedLocation.latitude;
+        finalLongitude = resolvedLocation.longitude;
       }
     }
 
@@ -899,13 +985,14 @@ const updateVacantRole = async (req, res) => {
           city            = $4,
           country         = $5,
           state           = $6,
-          latitude        = $7,
-          longitude       = $8,
-          max_distance_km = $9,
-          is_remote       = $10,
+          district        = $7,
+          latitude        = $8,
+          longitude       = $9,
+          max_distance_km = $10,
+          is_remote       = $11,
           updated_at      = NOW()
-        WHERE id = $11 AND team_id = $12
-        RETURNING *`,
+        WHERE id = $12 AND team_id = $13
+        RETURNING ${VACANT_ROLE_FIELDS}`,
         [
           role_name?.trim() || null,
           bio?.trim() || null,
@@ -913,6 +1000,7 @@ const updateVacantRole = async (req, res) => {
           finalCity,
           finalCountry,
           finalState,
+          finalDistrict,
           finalLatitude,
           finalLongitude,
           finalMaxDistance,
@@ -1236,7 +1324,7 @@ const updateVacantRoleStatus = async (req, res) => {
            filled_by = $2,
            updated_at = NOW()
        WHERE id = $3 AND team_id = $4
-       RETURNING *`,
+       RETURNING ${VACANT_ROLE_FIELDS}`,
       [status, normalizedFilledBy, roleId, teamId],
     );
 

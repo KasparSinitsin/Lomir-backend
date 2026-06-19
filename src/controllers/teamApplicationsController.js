@@ -32,7 +32,7 @@ const getUserPendingApplications = async (req, res) => {
       `SELECT
     ta.id, ta.team_id, ta.role_id, ta.message, ta.status, ta.created_at,
     vr.role_name, vr.bio AS role_bio, vr.city AS role_city, vr.country AS role_country,
-    vr.state AS role_state, vr.is_remote AS role_is_remote,
+    vr.state AS role_state, vr.district AS role_district, vr.is_remote AS role_is_remote,
     vr.latitude AS role_latitude, vr.longitude AS role_longitude,
     vr.max_distance_km AS role_max_distance_km, vr.status AS role_status,
     vr.filled_by AS role_filled_by, vr.is_synthetic AS role_is_synthetic,
@@ -42,7 +42,7 @@ const getUserPendingApplications = async (req, res) => {
     fu.username AS role_filled_by_user_username,
     fu.avatar_url AS role_filled_by_user_avatar_url,
     t.name, t.description, t.teamavatar_url, t.max_members, t.is_public, t.is_synthetic,
-    t.latitude, t.longitude, t.is_remote, t.city, t.country, t.state, t.postal_code,
+    t.latitude, t.longitude, t.is_remote, t.city, t.country, t.state, t.district, t.postal_code,
     (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count,
     owner.id as owner_id,
     owner.username as owner_username,
@@ -50,6 +50,7 @@ const getUserPendingApplications = async (req, res) => {
     owner.last_name as owner_last_name,
     owner.avatar_url as owner_avatar_url,
     owner.is_synthetic as owner_is_synthetic,
+    owner.is_public as owner_is_public,
     u.latitude AS applicant_latitude, u.longitude AS applicant_longitude,
     EXISTS (
       SELECT 1 FROM team_members
@@ -249,6 +250,7 @@ const getUserPendingApplications = async (req, res) => {
         city: row.city,
         country: row.country,
         state: row.state,
+        district: row.district,
         postal_code: row.postal_code,
         tags: teamTagsByTeamId[row.team_id] || [],
         badges: teamBadgesByTeamId[row.team_id] || [],
@@ -261,6 +263,7 @@ const getUserPendingApplications = async (req, res) => {
         last_name: row.owner_last_name,
         avatar_url: row.owner_avatar_url,
         is_synthetic: row.owner_is_synthetic === true,
+        is_public: row.owner_is_public === true || row.owner_is_public === "true",
       },
     }));
 
@@ -438,7 +441,7 @@ const getTeamApplications = async (req, res) => {
       `SELECT
         ta.id, ta.role_id, ta.message, ta.status, ta.created_at,
         vr.role_name, vr.bio AS role_bio, vr.city AS role_city, vr.country AS role_country,
-        vr.state AS role_state, vr.is_remote AS role_is_remote,
+        vr.state AS role_state, vr.district AS role_district, vr.is_remote AS role_is_remote,
         vr.latitude AS role_latitude, vr.longitude AS role_longitude,
         vr.max_distance_km AS role_max_distance_km, vr.status AS role_status,
         vr.filled_by AS role_filled_by, vr.is_synthetic AS role_is_synthetic,
@@ -448,7 +451,7 @@ const getTeamApplications = async (req, res) => {
         fu.username AS role_filled_by_user_username,
         fu.avatar_url AS role_filled_by_user_avatar_url,
         u.id as applicant_id, u.username, u.first_name, u.last_name,
-        u.bio, u.avatar_url, u.postal_code, u.is_synthetic AS applicant_is_synthetic, u.city, u.country, u.state,
+        u.bio, u.avatar_url, u.postal_code, u.is_synthetic AS applicant_is_synthetic, u.city, u.country, u.state, u.district,
         u.latitude AS applicant_latitude, u.longitude AS applicant_longitude,
         EXISTS (
           SELECT 1
@@ -461,8 +464,13 @@ const getTeamApplications = async (req, res) => {
        LEFT JOIN team_vacant_roles vr ON ta.role_id = vr.id
        LEFT JOIN users fu ON vr.filled_by = fu.id
        WHERE ta.team_id = $1 AND ta.status = 'pending'
+         AND NOT EXISTS (
+           SELECT 1 FROM user_blocks ub
+           WHERE (ub.blocker_id = ta.applicant_id AND ub.blocked_id = $2)
+              OR (ub.blocked_id = ta.applicant_id AND ub.blocker_id = $2)
+         )
        ORDER BY ta.created_at ASC`,
-      [teamId],
+      [teamId, userId],
     );
 
     // Batch-fetch role tags and badges for applications that reference a vacant role
@@ -610,6 +618,7 @@ const getTeamApplications = async (req, res) => {
         city: row.city ?? null,
         country: row.country ?? null,
         state: row.state ?? null,
+        district: row.district ?? null,
         is_synthetic: row.applicant_is_synthetic === true,
       },
     }));

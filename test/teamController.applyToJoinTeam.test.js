@@ -210,6 +210,17 @@ function buildPoolQueryStubAsMember({ pendingRoleRows = [] } = {}) {
       return { rows: [{ first_name: "Test", last_name: "User", username: "testuser" }] };
     }
 
+    if (
+      sql.includes("SELECT user_id FROM team_members") &&
+      sql.includes("role IN ('owner', 'admin')")
+    ) {
+      return { rows: [{ user_id: 2 }] };
+    }
+
+    if (sql.includes("INSERT INTO notifications")) {
+      return { rows: [{ id: 501 }] };
+    }
+
     throw new Error(`Unexpected pool SQL in member stub: ${sql}`);
   };
 

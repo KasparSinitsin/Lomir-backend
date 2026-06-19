@@ -3,6 +3,82 @@ const {
   deleteImageKitFile,
   isImageKitUrl,
 } = require("../utils/imagekitUtils");
+const { validateChatFileUrl } = require("../utils/fileValidation");
+const userModel = require("../models/userModel");
+
+const CHAT_FILE_RETENTION_DAYS = 60;
+
+const getChatFileExpiresAt = () =>
+  new Date(Date.now() + CHAT_FILE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+
+const validateMessageFileInputs = async ({ imageUrl, fileUrl }) => {
+  let fileSize = null;
+  let fileExpiresAt = null;
+
+  if (imageUrl) {
+    const validation = await validateChatFileUrl(imageUrl, "chatImage");
+    if (!validation.valid) {
+      return { valid: false, message: validation.error };
+    }
+    fileSize = validation.size || null;
+    fileExpiresAt = getChatFileExpiresAt();
+  }
+
+  if (fileUrl) {
+    const validation = await validateChatFileUrl(fileUrl, "chatFile");
+    if (!validation.valid) {
+      return { valid: false, message: validation.error };
+    }
+    fileSize = validation.size || null;
+    fileExpiresAt = getChatFileExpiresAt();
+  }
+
+  return { valid: true, fileSize, fileExpiresAt };
+};
+
+const ensureTeamMessageAccess = async (teamId, userId) => {
+  const result = await db.query(
+    `SELECT 1
+     FROM team_members tm
+     JOIN teams t ON t.id = tm.team_id
+     WHERE tm.team_id = $1
+       AND tm.user_id = $2
+       AND t.archived_at IS NULL
+     LIMIT 1`,
+    [teamId, userId],
+  );
+
+  return result.rows.length > 0;
+};
+
+const ensureReplyMessageAccess = async ({ replyToId, userId, conversationId, type }) => {
+  if (!replyToId) return true;
+
+  const result =
+    type === "team"
+      ? await db.query(
+          `SELECT 1
+           FROM messages
+           WHERE id = $1
+             AND team_id = $2
+           LIMIT 1`,
+          [replyToId, conversationId],
+        )
+      : await db.query(
+          `SELECT 1
+           FROM messages
+           WHERE id = $1
+             AND team_id IS NULL
+             AND (
+               (sender_id = $2 AND receiver_id = $3)
+               OR (sender_id = $3 AND receiver_id = $2)
+             )
+           LIMIT 1`,
+          [replyToId, userId, conversationId],
+        );
+
+  return result.rows.length > 0;
+};
 
 const emitMessageReceived = async (req, messageRow, type, conversationId) => {
   const io = req.app.get("io");
@@ -65,6 +141,11 @@ const getUnreadCount = async (req, res) => {
            MAX(sent_at) AS latest
          FROM messages
          WHERE receiver_id = $1 AND read_at IS NULL AND team_id IS NULL AND deleted_at IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM user_blocks ub
+             WHERE (ub.blocker_id = messages.sender_id AND ub.blocked_id = $1)
+                OR (ub.blocked_id = messages.sender_id AND ub.blocker_id = $1)
+           )
          GROUP BY sender_id
        ),
        team_unread AS (
@@ -84,6 +165,11 @@ const getUnreadCount = async (req, res) => {
              WHERE mr.message_id = m.id
                AND mr.user_id = $1
            )
+           AND NOT EXISTS (
+             SELECT 1 FROM user_blocks ub
+             WHERE (ub.blocker_id = m.sender_id AND ub.blocked_id = $1)
+                OR (ub.blocked_id = m.sender_id AND ub.blocker_id = $1)
+           )
          GROUP BY m.team_id
        ),
        combined AS (
@@ -98,10 +184,17 @@ const getUnreadCount = async (req, res) => {
          (SELECT COUNT(*)::int FROM team_unread) AS team_count,
          (SELECT COUNT(DISTINCT m.sender_id)::int
           FROM messages m
-          WHERE (m.receiver_id = $1 AND m.read_at IS NULL AND m.team_id IS NULL AND m.deleted_at IS NULL)
-             OR (m.team_id IS NOT NULL AND m.sender_id != $1 AND m.deleted_at IS NULL
-                 AND EXISTS (SELECT 1 FROM team_members tm WHERE tm.team_id = m.team_id AND tm.user_id = $1)
-                 AND NOT EXISTS (SELECT 1 FROM message_reads mr WHERE mr.message_id = m.id AND mr.user_id = $1))
+          WHERE (
+                  (m.receiver_id = $1 AND m.read_at IS NULL AND m.team_id IS NULL AND m.deleted_at IS NULL)
+               OR (m.team_id IS NOT NULL AND m.sender_id != $1 AND m.deleted_at IS NULL
+                   AND EXISTS (SELECT 1 FROM team_members tm WHERE tm.team_id = m.team_id AND tm.user_id = $1)
+                   AND NOT EXISTS (SELECT 1 FROM message_reads mr WHERE mr.message_id = m.id AND mr.user_id = $1))
+                )
+            AND NOT EXISTS (
+              SELECT 1 FROM user_blocks ub
+              WHERE (ub.blocker_id = m.sender_id AND ub.blocked_id = $1)
+                 OR (ub.blocked_id = m.sender_id AND ub.blocker_id = $1)
+            )
          ) AS sender_count
        FROM combined`,
       [userId],
@@ -162,6 +255,13 @@ const startConversation = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Recipient not found",
+      });
+    }
+
+    if (await userModel.isBlockedBetween(senderId, receiverId)) {
+      return res.status(403).json({
+        success: false,
+        message: "You can no longer message this user",
       });
     }
 
@@ -234,19 +334,25 @@ const getConversations = async (req, res) => {
           AND team_id IS NULL
         GROUP BY sender_id
       )
-      SELECT 
+      SELECT
         lm.partner_id as id,
         'direct' as type,
         u.username,
         u.first_name,
         u.last_name,
         u.avatar_url,
+        u.is_synthetic,
         lm.last_message,
         lm.last_message_time as updated_at,
         COALESCE(uc.unread_count, 0) as unread_count
       FROM latest_messages lm
       JOIN users u ON lm.partner_id = u.id
       LEFT JOIN unread_counts uc ON lm.partner_id = uc.partner_id
+      WHERE NOT EXISTS (
+        SELECT 1 FROM user_blocks ub
+        WHERE (ub.blocker_id = $1 AND ub.blocked_id = lm.partner_id)
+           OR (ub.blocked_id = $1 AND ub.blocker_id = lm.partner_id)
+      )
       ORDER BY lm.last_message_time DESC
     `;
 
@@ -260,23 +366,33 @@ const getConversations = async (req, res) => {
         FROM messages m
         JOIN team_members tm ON m.team_id = tm.team_id
         WHERE tm.user_id = $1 AND m.team_id IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM user_blocks ub
+            WHERE (ub.blocker_id = m.sender_id AND ub.blocked_id = $1)
+               OR (ub.blocked_id = m.sender_id AND ub.blocker_id = $1)
+          )
         GROUP BY m.team_id
       ),
       latest_team_messages AS (
-        SELECT 
+        SELECT
           tc.team_id,
           tc.last_message_time,
           m.content as last_message
         FROM team_conversations tc
         JOIN messages m ON m.team_id = tc.team_id AND m.sent_at = tc.last_message_time
+          AND NOT EXISTS (
+            SELECT 1 FROM user_blocks ub
+            WHERE (ub.blocker_id = m.sender_id AND ub.blocked_id = $1)
+               OR (ub.blocked_id = m.sender_id AND ub.blocker_id = $1)
+          )
       ),
       team_unread_counts AS (
-        SELECT 
+        SELECT
           m.team_id,
           COUNT(*) as unread_count
         FROM messages m
         JOIN team_members tm ON m.team_id = tm.team_id
-        WHERE tm.user_id = $1 
+        WHERE tm.user_id = $1
           AND m.sender_id != $1
           AND m.team_id IS NOT NULL
           AND NOT EXISTS (
@@ -284,6 +400,11 @@ const getConversations = async (req, res) => {
             FROM message_reads mr
             WHERE mr.message_id = m.id
               AND mr.user_id = $1
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM user_blocks ub
+            WHERE (ub.blocker_id = m.sender_id AND ub.blocked_id = $1)
+               OR (ub.blocked_id = m.sender_id AND ub.blocker_id = $1)
           )
         GROUP BY m.team_id
       )
@@ -318,6 +439,8 @@ const getConversations = async (req, res) => {
         firstName: row.first_name,
         lastName: row.last_name,
         avatarUrl: row.avatar_url,
+        isSynthetic: row.is_synthetic,
+        is_synthetic: row.is_synthetic,
       },
       lastMessage: row.last_message,
       updatedAt: row.updated_at,
@@ -400,14 +523,41 @@ const getConversationById = async (req, res) => {
         },
       });
     } else {
+      if (await userModel.isBlockedBetween(userId, conversationId)) {
+        return res.status(404).json({
+          success: false,
+          message: "Conversation not found or access denied",
+        });
+      }
+
+      const participantCheck = await db.query(
+        `SELECT 1
+         FROM messages
+         WHERE team_id IS NULL
+           AND (
+             (sender_id = $1 AND receiver_id = $2)
+             OR (sender_id = $2 AND receiver_id = $1)
+           )
+         LIMIT 1`,
+        [userId, conversationId],
+      );
+
+      if (participantCheck.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Conversation not found or access denied",
+        });
+      }
+
       // Get direct conversation partner details
       const userQuery = `
-        SELECT 
+        SELECT
           id,
           username,
           first_name,
           last_name,
-          avatar_url
+          avatar_url,
+          is_synthetic
         FROM users
         WHERE id = $1
       `;
@@ -434,6 +584,8 @@ const getConversationById = async (req, res) => {
             firstName: partner.first_name,
             lastName: partner.last_name,
             avatarUrl: partner.avatar_url,
+            isSynthetic: partner.is_synthetic,
+            is_synthetic: partner.is_synthetic,
           },
         },
       });
@@ -518,6 +670,11 @@ const getMessages = async (req, res) => {
     FROM messages m
     LEFT JOIN users u ON m.sender_id = u.id
     LEFT JOIN messages rm ON m.reply_to_id = rm.id
+      AND NOT EXISTS (
+        SELECT 1 FROM user_blocks ubr
+        WHERE (ubr.blocker_id = rm.sender_id AND ubr.blocked_id = $2)
+           OR (ubr.blocked_id = rm.sender_id AND ubr.blocker_id = $2)
+      )
     LEFT JOIN users ru ON rm.sender_id = ru.id
     LEFT JOIN LATERAL (
       SELECT mr.read_at
@@ -546,6 +703,11 @@ const getMessages = async (req, res) => {
       LEFT JOIN users u ON u.id = mr.user_id
       WHERE mr.message_id = m.id
         AND mr.user_id != m.sender_id
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks ubrd
+          WHERE (ubrd.blocker_id = mr.user_id AND ubrd.blocked_id = $2)
+             OR (ubrd.blocked_id = mr.user_id AND ubrd.blocker_id = $2)
+        )
     ) read_stats ON TRUE
     LEFT JOIN LATERAL (
       SELECT COUNT(*)::int as recipient_count
@@ -554,6 +716,11 @@ const getMessages = async (req, res) => {
         AND tm.user_id != m.sender_id
     ) recipient_stats ON TRUE
     WHERE m.team_id = $1
+      AND NOT EXISTS (
+        SELECT 1 FROM user_blocks ub
+        WHERE (ub.blocker_id = m.sender_id AND ub.blocked_id = $2)
+           OR (ub.blocked_id = m.sender_id AND ub.blocker_id = $2)
+      )
     ${before ? "AND m.id < $3" : ""}
     ORDER BY m.sent_at DESC, m.id DESC
     LIMIT $${before ? "4" : "3"}
@@ -562,8 +729,15 @@ const getMessages = async (req, res) => {
         ? [conversationId, userId, before, limit]
         : [conversationId, userId, limit];
     } else {
+      if (await userModel.isBlockedBetween(userId, conversationId)) {
+        return res.status(403).json({
+          success: false,
+          message: "You can no longer view this conversation",
+        });
+      }
+
       messagesQuery = `
-    SELECT 
+    SELECT
       m.id,
       m.sender_id,
       m.receiver_id,
@@ -683,6 +857,7 @@ const sendMessage = async (req, res) => {
       reply_to_id: bodyReplyToIdSnake,
     } = req.body;
     const replyToId = bodyReplyToId || bodyReplyToIdSnake || null;
+    const messageType = type === "team" ? "team" : "direct";
 
     // Allow content OR imageUrl OR fileUrl (or combinations)
     if ((!content || content.trim() === "") && !imageUrl && !fileUrl) {
@@ -692,39 +867,64 @@ const sendMessage = async (req, res) => {
       });
     }
 
-    /**
-     * ✅ Fix 2: Backend - Block messages to archived teams
-     * Use the "targetTeamId" derived from:
-     * - conversationId when type === "team"
-     * - req.body.team_id (if some clients send it)
-     *
-     * (We use db.query here for consistency with the rest of this controller.
-     * If your database module exposes db.pool.query as well, you can swap it in.)
-     */
-    const targetTeamId =
-      type === "team" ? conversationId : req.body.team_id || req.body.teamId;
+    const fileValidation = await validateMessageFileInputs({ imageUrl, fileUrl });
+    if (!fileValidation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: fileValidation.message,
+      });
+    }
 
-    if (targetTeamId) {
-      const teamCheck = await db.query(
-        `SELECT archived_at FROM teams WHERE id = $1`,
-        [targetTeamId],
-      );
-
-      if (teamCheck.rows.length > 0 && teamCheck.rows[0].archived_at) {
+    if (messageType === "team") {
+      const canAccessTeam = await ensureTeamMessageAccess(conversationId, userId);
+      if (!canAccessTeam) {
         return res.status(403).json({
           success: false,
-          message: "Cannot send messages to a deleted team",
+          message: "Not authorized to send messages to this team",
+        });
+      }
+    } else {
+      const recipientResult = await db.query(
+        `SELECT id FROM users WHERE id = $1`,
+        [conversationId],
+      );
+
+      if (recipientResult.rows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Recipient not found",
+        });
+      }
+
+      if (await userModel.isBlockedBetween(userId, conversationId)) {
+        return res.status(403).json({
+          success: false,
+          message: "You can no longer message this user",
         });
       }
     }
 
+    const replyAllowed = await ensureReplyMessageAccess({
+      replyToId,
+      userId,
+      conversationId,
+      type: messageType,
+    });
+
+    if (!replyAllowed) {
+      return res.status(403).json({
+        success: false,
+        message: "Not authorized to reply to this message",
+      });
+    }
+
     let messageResult;
 
-    if (type === "team") {
+    if (messageType === "team") {
       messageResult = await db.query(
-        `INSERT INTO messages (sender_id, team_id, content, reply_to_id, image_url, file_url, file_name, sent_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-     RETURNING id, sender_id, team_id, content, reply_to_id, image_url, file_url, file_name, sent_at`,
+        `INSERT INTO messages (sender_id, team_id, content, reply_to_id, image_url, file_url, file_name, file_size, file_expires_at, sent_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+     RETURNING id, sender_id, team_id, content, reply_to_id, image_url, file_url, file_name, file_size, file_expires_at, sent_at`,
         [
           userId,
           conversationId,
@@ -733,13 +933,15 @@ const sendMessage = async (req, res) => {
           imageUrl || null,
           fileUrl || null,
           fileName || null,
+          fileValidation.fileSize,
+          fileValidation.fileExpiresAt,
         ],
       );
     } else {
       messageResult = await db.query(
-        `INSERT INTO messages (sender_id, receiver_id, content, reply_to_id, image_url, file_url, file_name, sent_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-     RETURNING id, sender_id, receiver_id, content, reply_to_id, image_url, file_url, file_name, sent_at`,
+        `INSERT INTO messages (sender_id, receiver_id, content, reply_to_id, image_url, file_url, file_name, file_size, file_expires_at, sent_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+     RETURNING id, sender_id, receiver_id, content, reply_to_id, image_url, file_url, file_name, file_size, file_expires_at, sent_at`,
         [
           userId,
           conversationId,
@@ -748,6 +950,8 @@ const sendMessage = async (req, res) => {
           imageUrl || null,
           fileUrl || null,
           fileName || null,
+          fileValidation.fileSize,
+          fileValidation.fileExpiresAt,
         ],
       );
     }
@@ -755,7 +959,7 @@ const sendMessage = async (req, res) => {
     await emitMessageReceived(
       req,
       messageResult.rows[0],
-      type === "team" ? "team" : "direct",
+      messageType,
       conversationId,
     );
 
@@ -810,6 +1014,28 @@ const getMessageById = async (req, res) => {
     }
 
     const row = result.rows[0];
+    const currentUserId = Number(req.user?.id ?? req.userId);
+
+    if (row.team_id) {
+      const memberCheck = await db.query(
+        'SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2',
+        [row.team_id, currentUserId],
+      );
+      if (memberCheck.rows.length === 0) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to view this message',
+        });
+      }
+    } else {
+      if (Number(row.sender_id) !== currentUserId &&
+          Number(row.receiver_id) !== currentUserId) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to view this message',
+        });
+      }
+    }
 
     res.status(200).json({
       success: true,
@@ -829,6 +1055,7 @@ const getMessageById = async (req, res) => {
       },
     });
   } catch (error) {
+    console.error("Error fetching message:", error);
     res.status(500).json({
       success: false,
       message: "Error fetching message",
@@ -868,6 +1095,15 @@ const updateMessage = async (req, res) => {
       return res
         .status(403)
         .json({ message: "Not authorized to edit this message" });
+    }
+
+    if (msg.team_id) {
+      const canAccessTeam = await ensureTeamMessageAccess(msg.team_id, currentUserId);
+      if (!canAccessTeam) {
+        return res
+          .status(403)
+          .json({ message: "Not authorized to edit this message" });
+      }
     }
 
     if (msg.deleted_at) {
@@ -957,7 +1193,11 @@ const updateMessage = async (req, res) => {
     });
   } catch (error) {
     console.error("updateMessage error:", error);
-    return res.status(500).json({ message: "Failed to edit message" });
+    return res.status(500).json({
+      success: false,
+      message: "Failed to edit message",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
   }
 };
 
@@ -988,6 +1228,15 @@ const deleteMessage = async (req, res) => {
       return res
         .status(403)
         .json({ message: "Not authorized to delete this message" });
+    }
+
+    if (msg.team_id) {
+      const canAccessTeam = await ensureTeamMessageAccess(msg.team_id, currentUserId);
+      if (!canAccessTeam) {
+        return res
+          .status(403)
+          .json({ message: "Not authorized to delete this message" });
+      }
     }
 
     const imageUrl = msg.image_url;
@@ -1037,7 +1286,11 @@ const deleteMessage = async (req, res) => {
     return res.status(200).json({ success: true, message: "Message deleted" });
   } catch (error) {
     console.error("deleteMessage error:", error);
-    return res.status(500).json({ message: "Failed to delete message" });
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete message",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
   }
 };
 

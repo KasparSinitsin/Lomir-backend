@@ -325,11 +325,11 @@ const getUserReceivedInvitations = async (req, res) => {
         ti.id, ti.message, ti.status, ti.created_at, ti.role_id,
         t.id as team_id, t.name as team_name, t.description as team_description,
         t.teamavatar_url, t.max_members, t.is_public, t.is_synthetic as team_is_synthetic,
-        t.latitude, t.longitude, t.is_remote, t.city, t.country, t.state, t.postal_code,
+        t.latitude, t.longitude, t.is_remote, t.city, t.country, t.state, t.district, t.postal_code,
         (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count,
         vr.role_name,
         vr.bio as role_bio,
-        vr.city as role_city, vr.country as role_country, vr.state as role_state,
+        vr.city as role_city, vr.country as role_country, vr.state as role_state, vr.district as role_district,
         vr.is_remote as role_is_remote,
         vr.latitude as role_latitude, vr.longitude as role_longitude,
         vr.max_distance_km as role_max_distance_km,
@@ -340,6 +340,7 @@ const getUserReceivedInvitations = async (req, res) => {
         u.first_name as inviter_first_name, u.last_name as inviter_last_name,
         u.avatar_url as inviter_avatar_url,
         u.is_synthetic as inviter_is_synthetic,
+        u.is_public as inviter_is_public,
         EXISTS (
           SELECT 1 FROM team_members tm
           WHERE tm.team_id = t.id AND tm.user_id = $1
@@ -578,6 +579,7 @@ const getUserReceivedInvitations = async (req, res) => {
         city: row.city,
         country: row.country,
         state: row.state,
+        district: row.district,
         postal_code: row.postal_code,
         tags: teamTagsByTeamId[row.team_id] || [],
         badges: teamBadgesByTeamId[row.team_id] || [],
@@ -589,6 +591,7 @@ const getUserReceivedInvitations = async (req, res) => {
         last_name: row.inviter_last_name,
         avatar_url: row.inviter_avatar_url,
         is_synthetic: row.inviter_is_synthetic === true,
+        is_public: row.inviter_is_public === true || row.inviter_is_public === "true",
       },
       is_internal: row.is_internal === true || row.is_internal === "true",
     }));
@@ -634,7 +637,7 @@ const getTeamSentInvitations = async (req, res) => {
     ti.id, ti.message, ti.status, ti.created_at, ti.role_id,
     vr.role_name,
     vr.bio as role_bio,
-    vr.city as role_city, vr.country as role_country, vr.state as role_state,
+    vr.city as role_city, vr.country as role_country, vr.state as role_state, vr.district as role_district,
     vr.is_remote as role_is_remote,
     vr.latitude as role_latitude, vr.longitude as role_longitude,
     vr.max_distance_km as role_max_distance_km,
@@ -642,7 +645,7 @@ const getTeamSentInvitations = async (req, res) => {
     filled_role.id as current_filled_role_id,
     filled_role.role_name as current_filled_role_name,
     u.id as invitee_id, u.username, u.first_name, u.last_name,
-    u.avatar_url, u.bio, u.postal_code, u.city, u.country, u.state, u.is_synthetic as invitee_is_synthetic,
+    u.avatar_url, u.bio, u.postal_code, u.city, u.country, u.state, u.district, u.is_synthetic as invitee_is_synthetic,
     u.latitude as invitee_latitude, u.longitude as invitee_longitude,
     inv.id as inviter_id,
     inv.username as inviter_username,
@@ -650,6 +653,7 @@ const getTeamSentInvitations = async (req, res) => {
     inv.last_name as inviter_last_name,
     inv.avatar_url as inviter_avatar_url,
     inv.is_synthetic as inviter_is_synthetic,
+    inv.is_public as inviter_is_public,
     EXISTS (
       SELECT 1 FROM team_members tm
       WHERE tm.team_id = ti.team_id AND tm.user_id = ti.invitee_id
@@ -814,6 +818,7 @@ const getTeamSentInvitations = async (req, res) => {
         city: row.city ?? null,
         country: row.country ?? null,
         state: row.state ?? null,
+        district: row.district ?? null,
         is_synthetic: row.invitee_is_synthetic === true,
       },
       inviter: {
@@ -823,6 +828,7 @@ const getTeamSentInvitations = async (req, res) => {
         last_name: row.inviter_last_name,
         avatar_url: row.inviter_avatar_url,
         is_synthetic: row.inviter_is_synthetic === true,
+        is_public: row.inviter_is_public === true || row.inviter_is_public === "true",
       },
       role_is_synthetic: row.role_is_synthetic === true,
       inviter_username: row.inviter_username,

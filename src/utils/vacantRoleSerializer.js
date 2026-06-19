@@ -4,6 +4,7 @@ const FILLED_BY_USER_COLUMN_NAMES = [
   "filled_by_user_last_name",
   "filled_by_user_username",
   "filled_by_user_avatar_url",
+  "filled_by_user_is_public",
 ];
 
 const buildFilledByUserFromRow = (row, prefix = "") => {
@@ -13,13 +14,20 @@ const buildFilledByUserFromRow = (row, prefix = "") => {
     return null;
   }
 
-  return {
+  const user = {
     id,
     first_name: row[`${prefix}filled_by_user_first_name`] ?? null,
     last_name: row[`${prefix}filled_by_user_last_name`] ?? null,
     username: row[`${prefix}filled_by_user_username`] ?? null,
     avatar_url: row[`${prefix}filled_by_user_avatar_url`] ?? null,
   };
+
+  const isPublic = row[`${prefix}filled_by_user_is_public`];
+  if (isPublic !== null && isPublic !== undefined) {
+    user.is_public = isPublic;
+  }
+
+  return user;
 };
 
 const stripFilledByUserColumns = (row, prefix = "") => {
@@ -45,6 +53,7 @@ const serializeEmbeddedVacantRole = (row, extraFields = {}) => ({
   city: row.role_city,
   country: row.role_country,
   state: row.role_state,
+  district: row.role_district,
   is_remote: row.role_is_remote,
   latitude: row.role_latitude,
   longitude: row.role_longitude,

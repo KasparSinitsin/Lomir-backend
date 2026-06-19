@@ -96,7 +96,7 @@ test("deleteUser rolls back and returns 401 when the password is incorrect", asy
         return { rows: [] };
       }
 
-      if (sql.includes("SELECT id, first_name, last_name, username, avatar_url, password_hash")) {
+      if (sql.includes("SELECT id, first_name, last_name, username, avatar_url, avatar_file_id, password_hash")) {
         return {
           rows: [
             {
@@ -105,6 +105,7 @@ test("deleteUser rolls back and returns 401 when the password is incorrect", asy
               last_name: "Doe",
               username: "janed",
               avatar_url: null,
+              avatar_file_id: null,
               password_hash: "stored-hash",
             },
           ],
@@ -149,7 +150,7 @@ test("deleteUser completes the transaction flow and emits the expected socket ev
         return { rows: [] };
       }
 
-      if (sql.includes("SELECT id, first_name, last_name, username, avatar_url, password_hash")) {
+      if (sql.includes("SELECT id, first_name, last_name, username, avatar_url, avatar_file_id, password_hash")) {
         return {
           rows: [
             {
@@ -158,6 +159,7 @@ test("deleteUser completes the transaction flow and emits the expected socket ev
               last_name: "Doe",
               username: "janed",
               avatar_url: null,
+              avatar_file_id: null,
               password_hash: "stored-hash",
             },
           ],
@@ -312,7 +314,11 @@ test("deleteUser completes the transaction flow and emits the expected socket ev
   );
   const departureMessageIndex = calls.findIndex(({ sql, params }) =>
     sql.includes("INSERT INTO messages (sender_id, team_id, content, sent_at)") &&
-    params[2] === "🚪 Jane Doe has left Lomir.",
+    params[2] === "🚪 Former Lomir User has left Lomir.",
+  );
+  const ownershipMessageIndex = calls.findIndex(({ sql, params }) =>
+    sql.includes("INSERT INTO messages (sender_id, team_id, content, sent_at)") &&
+    params[2] === "👑 OWNERSHIP_TEAM: Former Lomir User | Sam Smith",
   );
   const transferRoleIndex = calls.findIndex(({ sql }) =>
     sql.includes("UPDATE team_members") && sql.includes("SET role = 'owner'"),
@@ -329,6 +335,7 @@ test("deleteUser completes the transaction flow and emits the expected socket ev
 
   assert.ok(deleteDmIndex >= 0);
   assert.ok(departureMessageIndex > deleteDmIndex);
+  assert.ok(ownershipMessageIndex > deleteDmIndex);
   assert.ok(transferRoleIndex >= 0);
   assert.ok(transferOwnerIndex > transferRoleIndex);
   assert.ok(reopenRoleIndex > transferOwnerIndex);
