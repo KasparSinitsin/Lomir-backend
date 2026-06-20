@@ -12,7 +12,13 @@ dotenv.config();
 const app = express();
 
 if (process.env.NODE_ENV === "production") {
-  app.set("trust proxy", 1);
+  // Two proxy hops sit in front of the app in production: the Vercel rewrite
+  // (which proxies /api/* and /socket.io/* to make the app same-origin) and
+  // Render's own load balancer. Trusting 2 hops lets express derive the real
+  // client IP from X-Forwarded-For so per-IP rate limiting keys on the user,
+  // not on Vercel's shared edge IP. (Verify req.ip on the live deploy if rate
+  // limiting ever looks off — the exact hop count depends on provider infra.)
+  app.set("trust proxy", 2);
 }
 
 const corsOptions = {
