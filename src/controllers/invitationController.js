@@ -1623,18 +1623,35 @@ const getTeamsWhereUserCanInvite = async (req, res) => {
 
     let query = `
       SELECT t.id, t.name, t.teamavatar_url, t.max_members, t.city, t.country, t.is_remote,
+             t.is_synthetic,
              tm.role as user_role,
-             (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count
+             (SELECT COUNT(*) FROM team_members WHERE team_id = t.id) as current_members_count,
+             (SELECT COUNT(*) FROM team_vacant_roles
+              WHERE team_id = t.id AND status = 'open') as open_role_count
     `;
 
     const params = [userId];
 
     if (inviteeId) {
+      // Embed invitee-specific status so the client doesn't have to fan out a
+      // per-team request loop (pending invite / application / filled role).
       query += `
         , EXISTS (
           SELECT 1 FROM team_members
           WHERE team_id = t.id AND user_id = $2
         ) as is_invitee_member
+        , EXISTS (
+          SELECT 1 FROM team_invitations
+          WHERE team_id = t.id AND invitee_id = $2 AND status = 'pending'
+        ) as has_pending_invite_for_invitee
+        , EXISTS (
+          SELECT 1 FROM team_applications
+          WHERE team_id = t.id AND applicant_id = $2 AND status = 'pending'
+        ) as has_pending_application_from_invitee
+        , EXISTS (
+          SELECT 1 FROM team_vacant_roles
+          WHERE team_id = t.id AND filled_by = $2 AND status = 'filled'
+        ) as has_invitee_filled_role
       `;
       params.push(inviteeId);
     }
@@ -1676,12 +1693,23 @@ const getTeamsWhereUserCanInvite = async (req, res) => {
           city: team.city ?? null,
           country: team.country ?? null,
           is_remote: team.is_remote ?? false,
+          is_synthetic: team.is_synthetic === true || team.is_synthetic === "true",
           user_role: team.user_role,
+          open_role_count: parseInt(team.open_role_count, 10) || 0,
         };
 
         if (inviteeId) {
           mappedTeam.is_invitee_member =
             team.is_invitee_member === true || team.is_invitee_member === "true";
+          mappedTeam.has_pending_invite_for_invitee =
+            team.has_pending_invite_for_invitee === true ||
+            team.has_pending_invite_for_invitee === "true";
+          mappedTeam.has_pending_application_from_invitee =
+            team.has_pending_application_from_invitee === true ||
+            team.has_pending_application_from_invitee === "true";
+          mappedTeam.has_invitee_filled_role =
+            team.has_invitee_filled_role === true ||
+            team.has_invitee_filled_role === "true";
         }
 
         return mappedTeam;
