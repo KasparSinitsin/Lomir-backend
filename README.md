@@ -18,9 +18,11 @@ Built with Node.js, Express, PostgreSQL (Neon), and Socket.IO.
 | Backend  | Render   | [lomir-backend-knae.onrender.com](https://lomir-backend-knae.onrender.com) |
 | Database | Neon     | PostgreSQL (remote) |
 
-### Test Credentials
+### Accounts & Demo Content
 
-Contact the project owner for a demo login, or register a new account with a valid email address. Email verification is required, and new profiles stay private until the user changes visibility in settings.
+Anyone can **register their own account** directly in the app with a valid email address (email verification is required); new profiles stay private until the user makes them public in settings. A demo login can also be provided on request.
+
+> **Note on demo content:** Lomir currently shows many demo users, teams, and roles — while few real users have registered yet, this seed data gives visitors a realistic impression of the app's purpose and possibilities (and supports ongoing development and testing). It can be hidden at any time via the demo-data filter in the search page's filter settings.
 
 ---
 
