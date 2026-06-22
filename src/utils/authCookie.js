@@ -11,10 +11,13 @@ const isProduction = () => process.env.NODE_ENV === "production";
 /**
  * Cookie attributes for the session token.
  *
- * In production the frontend (Vercel) and backend (Render) live on different
- * domains, so the cookie must be cross-site: `sameSite: "none"` with
- * `secure: true` (browsers reject SameSite=None without Secure). Locally both
- * run on localhost, where `sameSite: "lax"` works over plain HTTP.
+ * In production the app is served same-origin — Vercel reverse-proxies `/api/*`
+ * and `/socket.io/*` to the Render backend (see the frontend `vercel.json`), so
+ * the session cookie is first-party. `sameSite: "lax"` therefore suffices and is
+ * preferred: it keeps the cookie from being sent on cross-site requests at all
+ * (a stronger CSRF posture than `"none"`), while still covering the app's
+ * same-site navigations and XHR/fetch. `secure: true` in production (HTTPS);
+ * locally `sameSite: "lax"` works over plain HTTP on localhost.
  *
  * `clear` omits `maxAge`/`expires` so the same attributes can be reused to
  * delete the cookie (the attributes must match for the browser to remove it).
@@ -23,7 +26,7 @@ const buildCookieOptions = ({ clear = false } = {}) => {
   const options = {
     httpOnly: true,
     secure: isProduction(),
-    sameSite: isProduction() ? "none" : "lax",
+    sameSite: "lax",
     path: "/",
   };
 
