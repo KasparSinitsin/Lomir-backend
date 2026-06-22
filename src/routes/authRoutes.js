@@ -6,6 +6,7 @@ const auth = require("../middlewares/auth");
 const {
   authLimiter,
   registerLimiter,
+  accountChangeLimiter,
   usernameAvailabilityLimiter,
 } = require("../middlewares/rateLimiter");
 const { upload } = require("../middlewares/uploadMiddleware");
@@ -46,18 +47,19 @@ router.get("/me", auth.authenticateToken, authController.getCurrentUser);
 router.post("/forgot-password", authLimiter, authController.forgotPassword);
 router.post("/reset-password", authLimiter, authController.resetPassword);
 
-// Change password (authenticated)
+// Change password (authenticated) — dedicated limiter so a mistyped current
+// password can't lock the user out of login (which uses authLimiter).
 router.put(
   "/change-password",
-  authLimiter,
+  accountChangeLimiter,
   auth.authenticateToken,
   authController.changePassword,
 );
 
-// Change email (authenticated)
+// Change email (authenticated) — same dedicated limiter as change-password.
 router.put(
   "/change-email",
-  authLimiter,
+  accountChangeLimiter,
   auth.authenticateToken,
   authController.changeEmail,
 );
