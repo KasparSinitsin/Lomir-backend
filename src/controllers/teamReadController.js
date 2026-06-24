@@ -258,6 +258,8 @@ const getUserTeams = async (req, res) => {
              t.is_remote,
              COALESCE(COUNT(DISTINCT tm.user_id), 0) AS current_members_count,
              (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count,
+             (SELECT COALESCE(json_agg(vr.role_name ORDER BY vr.role_name ASC), '[]'::json)
+                FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_names,
              (SELECT COUNT(*)::int FROM team_applications ta WHERE ta.team_id = t.id AND ta.status = 'pending'
                AND NOT EXISTS (
                  SELECT 1 FROM user_blocks ub
