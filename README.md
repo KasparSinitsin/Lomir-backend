@@ -18,9 +18,11 @@ Built with Node.js, Express, PostgreSQL (Neon), and Socket.IO.
 | Backend  | Render   | [lomir-backend-knae.onrender.com](https://lomir-backend-knae.onrender.com) |
 | Database | Neon     | PostgreSQL (remote) |
 
-### Test Credentials
+### Accounts & Demo Content
 
-Contact the project owner for a demo login, or register a new account with a valid email address. Email verification is required, and new profiles stay private until the user changes visibility in settings.
+To test the live demo, anyone can just **register their own account** directly in the deployed app — open the app, sign up with a valid email address, confirm it via the verification link sent to them, and log in (no need to contact the developers). New profiles stay private until the user makes them public in settings.
+
+> **Note on demo content:** Lomir currently shows many demo users, teams, and roles — while few real users have registered yet, this seed data gives visitors a realistic impression of the app's purpose and possibilities (and supports ongoing development and testing). It can be hidden at any time via the demo-data filter in the search page's filter settings.
 
 ---
 
@@ -422,7 +424,7 @@ Full transactional account deletion. Key highlights:
 | Security headers | Helmet middleware sets standard HTTP security headers (including HSTS) on every response |
 | CSRF protection | Global `csrfProtection` middleware validates the `Origin`/`Referer` of every state-changing request (non-`GET`/`HEAD`/`OPTIONS`) against the CORS allowlist; cookie-authenticated requests without an origin are rejected. Non-browser API clients using `Authorization: Bearer` are unaffected |
 | Request body cap | `express.json` and `express.urlencoded` limited to 1 MB |
-| Rate limiting | 8 req/15 min on login/password flows; 10 req/hr on registration; 20 req/hr on username availability; 5 req/hr on contact form; 60 req/15 min on geocoding |
+| Rate limiting | 8 req/15 min on login + password reset; 15 req/15 min on authenticated account changes (change email / change password); 10 req/hr on registration; 20 req/hr on username availability; 5 req/hr on contact form; 60 req/15 min on geocoding |
 | CAPTCHA | Cloudflare Turnstile on registration and the contact form |
 | CORS | Allowlist: exact match for production URL + regex for Vercel preview deploys |
 | Password policy | Min 8 chars, at least one letter and one number (registration, reset, change) |

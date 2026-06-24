@@ -28,6 +28,16 @@ const registerLimiter = createRateLimiter({
   message: "Too many registration attempts. Please try again later.",
 });
 
+// Authenticated account changes (change-email / change-password). Kept separate
+// from authLimiter so a user mistyping their current password can't burn through
+// the shared login budget (and vice versa); slightly more generous since these
+// already require an authenticated session plus the current password.
+const accountChangeLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  message: "Too many account-change attempts. Please try again in 15 minutes.",
+});
+
 const usernameAvailabilityLimiter = createRateLimiter({
   windowMs: 60 * 60 * 1000,
   max: 20,
@@ -51,6 +61,7 @@ const geocodingLimiter = createRateLimiter({
 module.exports = {
   authLimiter,
   registerLimiter,
+  accountChangeLimiter,
   usernameAvailabilityLimiter,
   contactLimiter,
   geocodingLimiter,

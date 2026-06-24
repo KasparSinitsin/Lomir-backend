@@ -105,6 +105,9 @@ logs
 *.swo
 *~
 
+# Claude Code local config (machine-specific; not shared via the repo)
+.claude/
+
 # OS generated files
 .DS_Store
 .DS_Store?
