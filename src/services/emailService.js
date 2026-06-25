@@ -3,15 +3,25 @@ const nodemailer = require("nodemailer");
 const useSmtp = Boolean(
   process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS,
 );
+const smtpPort = parseInt(process.env.SMTP_PORT || "587", 10);
+// Port 465 uses implicit TLS; 587 uses STARTTLS. Some hosts (incl. cloud
+// platforms) throttle or block outbound 587, surfacing as an ETIMEDOUT on
+// connect — switching to 465 via SMTP_PORT (or forcing SMTP_SECURE=true) is the
+// usual fix. Explicit timeouts so an unreachable SMTP host fails fast instead of
+// hanging the request for the nodemailer default (~2 min).
+const smtpSecure = process.env.SMTP_SECURE === "true" || smtpPort === 465;
 const smtpTransporter = useSmtp
   ? nodemailer.createTransport({
       host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT || "587", 10),
-      secure: false, // STARTTLS
+      port: smtpPort,
+      secure: smtpSecure,
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
       },
+      connectionTimeout: 15000,
+      greetingTimeout: 10000,
+      socketTimeout: 30000,
     })
   : null;
 
@@ -31,6 +41,11 @@ const sendEmail = async ({ to, subject, html, replyTo }) => {
     html,
     replyTo,
   });
+
+  // Log success in all environments (subject + messageId are not PII; the
+  // recipient is intentionally omitted) so a delivery/transport problem is
+  // diagnosable from the production logs, not just locally.
+  console.log(`Email sent (${subject}): ${info?.messageId}`);
 
   return { success: true, messageId: info?.messageId };
 };
