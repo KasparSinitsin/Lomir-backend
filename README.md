@@ -28,7 +28,7 @@ To test the live demo, anyone can just **register their own account** directly i
 
 ## Features
 
-- **Authentication** — JWT-based registration, login, email verification, password reset, and verified email change. The session JWT is delivered as an `httpOnly`, `sameSite` cookie (never in the response body or readable by frontend JavaScript); auth middleware and the Socket.IO handshake read it from the cookie, with the `Authorization: Bearer` header kept as a fallback for API clients. Transactional auth emails are sent through Nodemailer SMTP. Registration protected by Cloudflare Turnstile CAPTCHA (feature-flagged for local dev). Registration requires explicit acceptance of Terms of Service, acknowledgement of the Privacy Policy, and confirmation of minimum age (16+); the version of each legal document is stamped on the user row at sign-up. Changing an account email is double-opt-in: the current-password-protected request stores the new address as `pending_email` with a 24-hour token and sends a verification link to it, and the account email only switches over once the new address confirms — the old address stays active until then. Expired email-change tokens are cleared by the same cleanup pass as password-reset tokens.
+- **Authentication** — JWT-based registration, login, email verification, password reset, and verified email change. The session JWT is delivered as an `httpOnly`, `sameSite` cookie (never in the response body or readable by frontend JavaScript); auth middleware and the Socket.IO handshake read it from the cookie, with the `Authorization: Bearer` header kept as a fallback for API clients. Transactional emails are sent through Brevo's transactional HTTPS API (Render blocks outbound SMTP). Registration protected by Cloudflare Turnstile CAPTCHA (feature-flagged for local dev). Registration requires explicit acceptance of Terms of Service, acknowledgement of the Privacy Policy, and confirmation of minimum age (16+); the version of each legal document is stamped on the user row at sign-up. Changing an account email is double-opt-in: the current-password-protected request stores the new address as `pending_email` with a 24-hour token and sends a verification link to it, and the account email only switches over once the new address confirms — the old address stays active until then. Expired email-change tokens are cleared by the same cleanup pass as password-reset tokens.
 - **User Profiles** — CRUD with avatar uploads (ImageKit), interest tags, badge portfolios, and user-controlled public/private visibility. Verified accounts remain private by default until the user opts in to public visibility.
 - **User Blocking** — Authenticated users can manage a private blocklist. Block relationships hide profiles and user-search results where requester context is available, suppress team application visibility, disable direct messaging, and exclude blocked users from team chat realtime events where needed.
 - **Teams** — Create, join, manage members, assign roles, and archive teams
@@ -39,7 +39,7 @@ To test the live demo, anyone can just **register their own account** directly i
 - **Badge System** — 30 badges across 5 categories; award badges to teammates with reasons and context
 - **Notifications** — In-app notifications for invitations, applications, badge awards, messages, @mentions, and role lifecycle events; each notification deep-links to the exact message that triggered it; stale notifications are cleaned up automatically on member removal, role deletion, and team deletion
 - **Account Deletion** — Full transactional account deletion with impact preview, automatic team ownership transfer, role reopening, and "Former Lomir User" handling for preserved references
-- **Contact Form & Reports** — Public `/api/contact` endpoint with Joi validation, Turnstile CAPTCHA, in-memory file attachments (up to 3 files, 5 MB each, 10 MB total), and SMTP forwarding. Abuse/content reports are persisted in `contact_reports` with a reference ID before email forwarding, so reports are not lost if SMTP delivery fails; reporters also receive an automated acknowledgement-of-receipt email with their reference ID (sent only for `Report content or abuse` submissions, best-effort so a failed receipt never fails the request); unexpected body fields are stripped defensively so multipart attachment fields cannot break validation; rate-limited to 5 submissions/hr
+- **Contact Form & Reports** — Public `/api/contact` endpoint with Joi validation, Turnstile CAPTCHA, in-memory file attachments (up to 3 files, 5 MB each, 10 MB total), and email delivery via Brevo. Abuse/content reports are persisted in `contact_reports` with a reference ID before the email is forwarded, so reports are not lost if email delivery fails; reporters also receive an automated acknowledgement-of-receipt email with their reference ID (sent only for `Report content or abuse` submissions, best-effort so a failed receipt never fails the request); unexpected body fields are stripped defensively so multipart attachment fields cannot break validation; rate-limited to 5 submissions/hr
 - **Geocoding** — Location enrichment via Nominatim: resolves a full location object (postal code, city, district, state, country, coordinates) from partial input. Built-in postal-code-to-district lookup for Berlin and Frankfurt (200+ mappings) used as a fast offline fallback before the API call. Works with country alone — does not require both postal code and city.
 - **Security** — `httpOnly` cookie sessions (JWT not exposed to JavaScript), CSRF origin/referer validation on all state-changing requests, Helmet security headers, request body size cap (1 MB), rate limiting on auth, contact, and geocoding endpoints, credentialed CORS allowlist (applied before body parsing), password policy enforcement, Socket.IO conversation/message authorization, production error message scrubbing
 
@@ -56,7 +56,7 @@ To test the live demo, anyone can just **register their own account** directly i
 | Auth | JSON Web Tokens (jsonwebtoken, bcrypt) |
 | Validation | Joi |
 | File Uploads | ImageKit + Multer |
-| Email | Nodemailer SMTP |
+| Email | Brevo (transactional HTTPS API) |
 | Scheduling | node-cron |
 | CAPTCHA | Cloudflare Turnstile |
 | Rate Limiting | express-rate-limit |
@@ -109,11 +109,11 @@ IMAGEKIT_PUBLIC_KEY=<your-public-key>
 IMAGEKIT_PRIVATE_KEY=<your-private-key>
 IMAGEKIT_URL_ENDPOINT=https://ik.imagekit.io/<your-id>
 
-# SMTP email (Gmail SMTP in the current deployment)
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=<smtp-email-address>
-SMTP_PASS=<smtp-app-password>
+# Email (Brevo transactional HTTPS API — Render blocks outbound SMTP)
+BREVO_API_KEY=<brevo-api-key>
+BREVO_SENDER_EMAIL=<verified-brevo-sender-address>
+# BREVO_SENDER_NAME=Lomir              # optional, defaults to "Lomir"
+# CONTACT_INBOX_EMAIL=<inbox-address>  # where contact-form/report mail is sent
 
 # Frontend URL (for CORS and email links)
 CLIENT_URL=http://localhost:5173
@@ -191,7 +191,7 @@ Lomir-backend/
 │   │   ├── searchController.js
 │   │   ├── badgeController.js
 │   │   ├── contactController.js       # Contact form: Joi validation with unknown-field stripping,
-│   │   │                              #   Turnstile CAPTCHA, report persistence, SMTP forwarding
+│   │   │                              #   Turnstile CAPTCHA, report persistence, email forwarding
 │   │   ├── messageController.js
 │   │   ├── notificationController.js
 │   │   └── matchingController.js
@@ -221,7 +221,8 @@ Lomir-backend/
 │   │   ├── tagModel.js
 │   │   └── contactReportModel.js # Persistent abuse/content report records and email status updates
 │   ├── services/
-│   │   └── emailService.js     # Nodemailer SMTP transactional email (verification, password reset/changed, email-change, contact forwarding, report receipt)
+│   │   ├── emailService.js     # Transactional email methods + templates (verification, password reset/changed, email-change, contact forwarding, report receipt)
+│   │   └── mailProvider.js     # Brevo HTTPS transport (single seam; swap provider here)
 │   ├── utils/
 │   │   ├── booleanSearchParser.js
 │   │   ├── imagekitUtils.js
@@ -296,7 +297,7 @@ All routes are prefixed with `/api`.
 | `/api/imagekit` | Auth params for client-side ImageKit uploads |
 | `/api/tags` | Tag catalog (structured by category) |
 | `/api/geocoding` | Postal code → city/district/country/coordinates lookup |
-| `/api/contact` | Public contact form submission with optional file attachments forwarded by SMTP; `Report content or abuse` submissions are persisted first, return a `referenceId`, and trigger an automated acknowledgement-of-receipt email to the reporter |
+| `/api/contact` | Public contact form submission with optional file attachments forwarded by email (Brevo); `Report content or abuse` submissions are persisted first, return a `referenceId`, and trigger an automated acknowledgement-of-receipt email to the reporter |
 
 ---
 
@@ -443,7 +444,7 @@ Full transactional account deletion. Key highlights:
 - **`npm install` fails on bcrypt** — Install native build tools (see Prerequisites), then `rm -rf node_modules package-lock.json && npm install`
 - **CORS errors** — Make sure `CLIENT_URL` in `.env` matches your frontend origin (`http://localhost:5173`)
 - **Database connection issues** — Verify `DATABASE_URL` is correct and you have internet access
-- **SMTP transport is not configured** — Set `SMTP_HOST`, `SMTP_USER`, and `SMTP_PASS`; `SMTP_PORT` defaults to `587`
+- **Email provider is not configured** — Set `BREVO_API_KEY` and `BREVO_SENDER_EMAIL` (the sender must be verified in Brevo)
 - **Port already in use** — `lsof -i :5001` to find the process, `kill -9 <PID>` to free the port
 - **CAPTCHA not loading locally** — Expected when no Turnstile key is configured; the CAPTCHA check runs in the deployed environment.
 

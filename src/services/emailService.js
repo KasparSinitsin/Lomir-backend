@@ -1,45 +1,17 @@
-const nodemailer = require("nodemailer");
+const mailProvider = require("./mailProvider");
 
-const useSmtp = Boolean(
-  process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS,
-);
-const smtpPort = parseInt(process.env.SMTP_PORT || "587", 10);
-// Port 465 uses implicit TLS; 587 uses STARTTLS. Some hosts (incl. cloud
-// platforms) throttle or block outbound 587, surfacing as an ETIMEDOUT on
-// connect — switching to 465 via SMTP_PORT (or forcing SMTP_SECURE=true) is the
-// usual fix. Explicit timeouts so an unreachable SMTP host fails fast instead of
-// hanging the request for the nodemailer default (~2 min).
-const smtpSecure = process.env.SMTP_SECURE === "true" || smtpPort === 465;
-const smtpTransporter = useSmtp
-  ? nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: smtpPort,
-      secure: smtpSecure,
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      },
-      connectionTimeout: 15000,
-      greetingTimeout: 10000,
-      socketTimeout: 30000,
-    })
-  : null;
-
-const SMTP_FROM = `Lomir <${process.env.SMTP_USER}>`;
-
-const sendEmail = async ({ to, subject, html, replyTo }) => {
-  if (!smtpTransporter) {
-    throw new Error(
-      "SMTP transport is not configured. Set SMTP_HOST, SMTP_USER, and SMTP_PASS environment variables.",
-    );
-  }
-
-  const info = await smtpTransporter.sendMail({
-    from: SMTP_FROM,
+// All transactional email goes out through the provider module (Brevo over the
+// HTTPS API, port 443). Render blocks outbound SMTP, so nodemailer/SMTP is no
+// longer used. sendEmail is the single transport seam — swap the provider and
+// every mail method follows. `attachments` are passed through for the contact
+// form (multer files); the provider base64-encodes them.
+const sendEmail = async ({ to, subject, html, replyTo, attachments }) => {
+  const info = await mailProvider.send({
     to,
     subject,
     html,
     replyTo,
+    attachments,
   });
 
   // Log success in all environments (subject + messageId are not PII; the
@@ -389,13 +361,11 @@ const emailService = {
     const subjectTopic = cleanHeaderValue(topic || "General inquiry");
 
     try {
-      if (!smtpTransporter) {
-        throw new Error("SMTP transport is not configured");
-      }
-
       const mailOptions = {
-        from: SMTP_FROM,
-        to: process.env.SMTP_USER,
+        to:
+          process.env.CONTACT_INBOX_EMAIL ||
+          process.env.BREVO_SENDER_EMAIL ||
+          process.env.SMTP_USER,
         replyTo: {
           name: cleanHeaderValue(name),
           address: email,
@@ -438,20 +408,10 @@ const emailService = {
       };
 
       if (attachments?.length) {
-        mailOptions.attachments = attachments.map((file) => ({
-          filename: file.originalname,
-          content: file.buffer,
-          contentType: file.mimetype,
-        }));
+        mailOptions.attachments = attachments;
       }
 
-      const info = await smtpTransporter.sendMail(mailOptions);
-
-      if (process.env.NODE_ENV !== "production") {
-        console.log("Contact form email sent:", info?.messageId);
-      }
-
-      return { success: true, messageId: info?.messageId };
+      return await sendEmail(mailOptions);
     } catch (error) {
       console.error("Contact form email send error:", error);
       return { success: false };
