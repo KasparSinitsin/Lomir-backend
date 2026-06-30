@@ -830,6 +830,9 @@ initScheduledJobs();
 const cleanupUnverifiedAccounts = require("./jobs/cleanupUnverifiedAccounts");
 cleanupUnverifiedAccounts();
 
+const cleanupArchivedTeams = require("./jobs/cleanupArchivedTeams");
+cleanupArchivedTeams();
+
 // Start server
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT} with Socket.IO enabled`);
