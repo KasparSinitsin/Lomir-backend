@@ -28,7 +28,7 @@ To test the live demo, anyone can just **register their own account** directly i
 
 ## Features
 
-- **Authentication** — JWT-based registration, login, email verification, password reset, and verified email change. The session JWT is delivered as an `httpOnly`, `sameSite` cookie (never in the response body or readable by frontend JavaScript); auth middleware and the Socket.IO handshake read it from the cookie, with the `Authorization: Bearer` header kept as a fallback for API clients. Transactional emails are sent through Brevo's transactional HTTPS API (Render blocks outbound SMTP). Registration protected by Cloudflare Turnstile CAPTCHA (feature-flagged for local dev). Registration requires explicit acceptance of Terms of Service, acknowledgement of the Privacy Policy, and confirmation of minimum age (16+); the version of each legal document is stamped on the user row at sign-up. Changing an account email is double-opt-in: the current-password-protected request stores the new address as `pending_email` with a 24-hour token and sends a verification link to it, and the account email only switches over once the new address confirms — the old address stays active until then. Expired email-change tokens are cleared by the same cleanup pass as password-reset tokens.
+- **Authentication** — JWT-based registration, login, email verification, password reset, and verified email change. The session JWT is delivered as an `httpOnly`, `sameSite` cookie (never in the response body or readable by frontend JavaScript); auth middleware and the Socket.IO handshake read it from the cookie, with the `Authorization: Bearer` header kept as a fallback for API clients. Transactional emails are sent through Brevo's transactional HTTPS API (Render blocks outbound SMTP). Registration protected by Cloudflare Turnstile CAPTCHA (feature-flagged for local dev). Registration requires explicit acceptance of Terms of Service, acknowledgement of the Privacy Policy, and confirmation of minimum age (16+); the version of each legal document is stamped on the user row at sign-up. Unverified accounts are deleted after their verification link expires plus a one-hour buffer, with cleanup running every six hours and once on server startup. Changing an account email is double-opt-in: the current-password-protected request stores the new address as `pending_email` with a 24-hour token and sends a verification link to it, and the account email only switches over once the new address confirms — the old address stays active until then. Expired email-change tokens are cleared by the same cleanup pass as password-reset tokens.
 - **User Profiles** — CRUD with avatar uploads (ImageKit), interest tags, badge portfolios, and user-controlled public/private visibility. Verified accounts remain private by default until the user opts in to public visibility.
 - **User Blocking** — Authenticated users can manage a private blocklist. Block relationships hide profiles and user-search results where requester context is available, suppress team application visibility, disable direct messaging, and exclude blocked users from team chat realtime events where needed.
 - **Teams** — Create, join, manage members, assign roles, and archive teams
@@ -247,8 +247,8 @@ Lomir-backend/
 │   │   └── geocodingUtil.js    # resolveLocationData (full enrichment) + geocodeAddress (coords only)
 │   ├── jobs/
 │   │   ├── fileCleanupScheduler.js # node-cron job that calls fileCleanup utilities on a schedule
-│   │   ├── cleanupUnverifiedAccounts.js # Runs every 6 hours; deletes expired unverified accounts
-│   │   └── cleanupArchivedTeams.js # Daily; permanently deletes teams archived longer than the grace period
+│   │   ├── cleanupUnverifiedAccounts.js # Every 6 hours + startup; deletes expired unverified accounts
+│   │   └── cleanupArchivedTeams.js # Daily + startup; permanently deletes teams archived longer than the grace period
 │   └── database/
 │       └── migrations/
 │           └── create_contact_reports.js # Stores report submissions with reference IDs and mail status
@@ -408,8 +408,13 @@ The public `GET /api/geocoding/postal-code/:code` endpoint is rate-limited (60 r
 | Job | Schedule | Description |
 |---|---|---|
 | File cleanup | Configurable (see `fileCleanupScheduler.js`) | Expires and deletes orphaned ImageKit files |
-| Unverified account cleanup | Every 6 hours | Deletes accounts where email verification expired more than 1 hour ago |
+| Unverified account cleanup | Every 6 hours and once on server startup | Deletes accounts where email verification expired more than 1 hour ago, including on hosts that may sleep through the cron time |
 | Archived team cleanup | Daily at 03:30 (Europe/Berlin) and once on server startup | Permanently deletes teams (with their chat, members, and avatar) archived longer than `ARCHIVED_TEAM_GRACE_DAYS` (default 30); safety net for deleted teams whose members never leave, including on hosts that may sleep through the cron time |
+
+The unverified-account cleanup first clears optional references that may point at
+expired registration rows (for example role, tag, team-owner, and badge-awarder
+references) so old unverified accounts can still be deleted safely even if they
+picked up related records during development or test activity.
 
 ---
 
@@ -431,7 +436,7 @@ When an owner deletes a team (`DELETE /api/teams/:id`), the behaviour depends on
 
 - **Solo team (owner is the only member)** — the team is **permanently deleted right away** via `permanentlyDeleteTeam`, removing the team row, its chat messages, invitations/applications, badges, notifications, members, and the ImageKit avatar. Nothing is left behind, so a deleted solo team never leaves an orphaned, unreachable conversation.
 - **Team with other members** — the team is **soft-deleted (archived)**: `archived_at`/`status` are set, a `TEAM_DELETED` system message is posted to the chat, and every member is notified. The archived chat stays visible so members can see the notice and read the history; it is permanently purged once the **last** member leaves (`checkAndCleanupArchivedTeam`).
-- **Grace-period safety net** — to guarantee a deleted team never lingers forever when members never explicitly leave, the daily `cleanupArchivedTeams` job permanently deletes any team archived longer than `ARCHIVED_TEAM_GRACE_DAYS` (default 30). See [Scheduled Jobs](#scheduled-jobs).
+- **Grace-period safety net** — to guarantee a deleted team never lingers forever when members never explicitly leave, the `cleanupArchivedTeams` job permanently deletes any team archived longer than `ARCHIVED_TEAM_GRACE_DAYS` (default 30). It runs daily and once on server startup. See [Scheduled Jobs](#scheduled-jobs).
 
 Covered by `teamController.deleteTeam.test.js` and `cleanupArchivedTeams.test.js`.
 

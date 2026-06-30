@@ -829,6 +829,9 @@ initScheduledJobs();
 
 const cleanupUnverifiedAccounts = require("./jobs/cleanupUnverifiedAccounts");
 cleanupUnverifiedAccounts();
+cleanupUnverifiedAccounts.purgeExpiredUnverifiedAccounts().catch((error) => {
+  console.error("[Cleanup] Error cleaning up unverified accounts on startup:", error);
+});
 
 const cleanupArchivedTeams = require("./jobs/cleanupArchivedTeams");
 cleanupArchivedTeams();
