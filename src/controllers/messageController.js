@@ -421,6 +421,14 @@ const getConversations = async (req, res) => {
       FROM latest_team_messages ltm
       JOIN teams t ON ltm.team_id = t.id
       LEFT JOIN team_unread_counts tuc ON ltm.team_id = tuc.team_id
+      -- Hide archived (deleted) teams where the viewer is the only remaining
+      -- member: there is no one left who needs to see the deletion notice, so the
+      -- chat should disappear. Archived teams with other members stay visible so
+      -- those members still see the "team deleted" message until they leave.
+      WHERE NOT (
+        t.archived_at IS NOT NULL
+        AND (SELECT COUNT(*) FROM team_members tm2 WHERE tm2.team_id = t.id) <= 1
+      )
       ORDER BY ltm.last_message_time DESC
     `;
 
