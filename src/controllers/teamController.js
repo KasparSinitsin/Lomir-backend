@@ -752,6 +752,27 @@ const deleteTeam = async (req, res) => {
       });
     }
 
+    // If the owner is the only remaining member, there is no one left to be
+    // notified or to read a "team deleted" message — skip the soft-delete/archive
+    // path and permanently remove the team right away. This also purges the team
+    // chat (messages) and avatar, so a solo team never leaves an orphaned,
+    // unreachable conversation behind.
+    const otherMembersResult = await db.pool.query(
+      `SELECT COUNT(*)::int AS count
+       FROM team_members
+       WHERE team_id = $1 AND user_id != $2`,
+      [teamId, userId],
+    );
+
+    if (otherMembersResult.rows[0].count === 0) {
+      await permanentlyDeleteTeam(teamId);
+      return res.status(200).json({
+        success: true,
+        message: "Team deleted successfully",
+        permanentlyDeleted: true,
+      });
+    }
+
     // Begin transaction
     const client = await db.pool.connect();
 
