@@ -42,14 +42,12 @@ const CHAT_FILE_RETENTION_DAYS = 60;
 const getChatFileExpiresAt = () =>
   new Date(Date.now() + CHAT_FILE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
 
-const isActiveTeamMember = async (teamId, userId) => {
+const isCurrentTeamMember = async (teamId, userId) => {
   const result = await db.query(
     `SELECT 1
      FROM team_members tm
-     JOIN teams t ON t.id = tm.team_id
      WHERE tm.team_id = $1
        AND tm.user_id = $2
-       AND t.archived_at IS NULL
      LIMIT 1`,
     [teamId, userId],
   );
@@ -216,8 +214,7 @@ io.on("connection", (socket) => {
          FROM team_members tm
          JOIN teams t ON t.id = tm.team_id
          WHERE tm.team_id = $1
-           AND tm.user_id = $2
-           AND t.archived_at IS NULL`,
+           AND tm.user_id = $2`,
         [conversationId, userId],
       );
 
@@ -324,7 +321,7 @@ io.on("connection", (socket) => {
       let replyTo = null;
 
       if (type === "team") {
-        const canAccessTeam = await isActiveTeamMember(conversationId, userId);
+        const canAccessTeam = await isCurrentTeamMember(conversationId, userId);
         if (!canAccessTeam) {
           socket.emit("error", { message: "Not authorized to send messages to this team" });
           return;
@@ -542,7 +539,7 @@ io.on("connection", (socket) => {
         for (const mentionedUserId of notified) {
           try {
             if (type === "team") {
-              const mentionedMember = await isActiveTeamMember(
+              const mentionedMember = await isCurrentTeamMember(
                 conversationId,
                 mentionedUserId,
               );
@@ -591,7 +588,7 @@ io.on("connection", (socket) => {
     }
 
     if (type === "team") {
-      const canAccessTeam = await isActiveTeamMember(conversationId, userId);
+      const canAccessTeam = await isCurrentTeamMember(conversationId, userId);
       if (!canAccessTeam) {
         socket.emit("error", { message: "Not authorized for this team conversation" });
         return;
@@ -639,7 +636,7 @@ io.on("connection", (socket) => {
     }
 
     if (type === "team") {
-      const canAccessTeam = await isActiveTeamMember(conversationId, userId);
+      const canAccessTeam = await isCurrentTeamMember(conversationId, userId);
       if (!canAccessTeam) {
         socket.emit("error", { message: "Not authorized for this team conversation" });
         return;
@@ -689,7 +686,7 @@ io.on("connection", (socket) => {
       }
 
       if (type === "team") {
-        const canAccessTeam = await isActiveTeamMember(conversationId, userId);
+        const canAccessTeam = await isCurrentTeamMember(conversationId, userId);
         if (!canAccessTeam) {
           socket.emit("error", { message: "Not authorized for this team conversation" });
           return;

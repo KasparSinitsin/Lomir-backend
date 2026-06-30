@@ -40,10 +40,8 @@ const ensureTeamMessageAccess = async (teamId, userId) => {
   const result = await db.query(
     `SELECT 1
      FROM team_members tm
-     JOIN teams t ON t.id = tm.team_id
      WHERE tm.team_id = $1
        AND tm.user_id = $2
-       AND t.archived_at IS NULL
      LIMIT 1`,
     [teamId, userId],
   );
@@ -415,6 +413,8 @@ const getConversations = async (req, res) => {
         NULL as first_name,
         NULL as last_name,
         t.teamavatar_url as avatar_url,
+        t.archived_at,
+        t.status,
         ltm.last_message,
         ltm.last_message_time as updated_at,
         COALESCE(tuc.unread_count, 0) as unread_count
@@ -462,6 +462,9 @@ const getConversations = async (req, res) => {
         id: row.id,
         name: row.name,
         avatarUrl: row.avatar_url,
+        archived_at: row.archived_at,
+        archivedAt: row.archived_at,
+        status: row.status,
       },
       lastMessage: row.last_message,
       updatedAt: row.updated_at,
@@ -501,10 +504,31 @@ const getConversationById = async (req, res) => {
         SELECT 
           t.id,
           t.name,
-          t.teamavatar_url as avatar_url
+          t.teamavatar_url as avatar_url,
+          t.archived_at,
+          t.status,
+          COALESCE(
+            jsonb_agg(
+              jsonb_build_object(
+                'id', u.id,
+                'userId', u.id,
+                'user_id', u.id,
+                'username', u.username,
+                'firstName', u.first_name,
+                'lastName', u.last_name,
+                'avatarUrl', u.avatar_url,
+                'role', tm_all.role
+              )
+              ORDER BY u.first_name, u.last_name, u.username
+            ) FILTER (WHERE u.id IS NOT NULL),
+            '[]'::jsonb
+          ) as members
         FROM teams t
         JOIN team_members tm ON t.id = tm.team_id
+        LEFT JOIN team_members tm_all ON t.id = tm_all.team_id
+        LEFT JOIN users u ON tm_all.user_id = u.id
         WHERE t.id = $1 AND tm.user_id = $2
+        GROUP BY t.id
       `;
 
       const teamResult = await db.query(teamQuery, [conversationId, userId]);
@@ -527,6 +551,10 @@ const getConversationById = async (req, res) => {
             id: team.id,
             name: team.name,
             avatarUrl: team.avatar_url,
+            archived_at: team.archived_at,
+            archivedAt: team.archived_at,
+            status: team.status,
+            members: team.members || [],
           },
         },
       });
