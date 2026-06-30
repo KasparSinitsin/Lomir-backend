@@ -409,7 +409,7 @@ The public `GET /api/geocoding/postal-code/:code` endpoint is rate-limited (60 r
 |---|---|---|
 | File cleanup | Configurable (see `fileCleanupScheduler.js`) | Expires and deletes orphaned ImageKit files |
 | Unverified account cleanup | Every 6 hours | Deletes accounts where email verification expired more than 1 hour ago |
-| Archived team cleanup | Daily at 03:30 (Europe/Berlin) | Permanently deletes teams (with their chat, members, and avatar) archived longer than `ARCHIVED_TEAM_GRACE_DAYS` (default 30); safety net for deleted teams whose members never leave |
+| Archived team cleanup | Daily at 03:30 (Europe/Berlin) and once on server startup | Permanently deletes teams (with their chat, members, and avatar) archived longer than `ARCHIVED_TEAM_GRACE_DAYS` (default 30); safety net for deleted teams whose members never leave, including on hosts that may sleep through the cron time |
 
 ---
 

@@ -832,6 +832,9 @@ cleanupUnverifiedAccounts();
 
 const cleanupArchivedTeams = require("./jobs/cleanupArchivedTeams");
 cleanupArchivedTeams();
+cleanupArchivedTeams.purgeExpiredArchivedTeams().catch((error) => {
+  console.error("[Cleanup] Error cleaning up archived teams on startup:", error);
+});
 
 // Start server
 server.listen(PORT, () => {
