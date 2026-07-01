@@ -12,7 +12,7 @@ const { permanentlyDeleteTeam } = require("../controllers/teamController");
 // never lingers forever.
 const parsedGrace = Number(process.env.ARCHIVED_TEAM_GRACE_DAYS);
 const GRACE_PERIOD_DAYS =
-  Number.isFinite(parsedGrace) && parsedGrace >= 0 ? parsedGrace : 30;
+  Number.isFinite(parsedGrace) && parsedGrace >= 0 ? parsedGrace : 14;
 
 const debugLog = (...args) => {
   if (process.env.NODE_ENV !== "production") {

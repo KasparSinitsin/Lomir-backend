@@ -2,21 +2,30 @@ const db = require("../config/database");
 
 const isTeamVisibleToViewer = async (teamId, viewerId) => {
   const teamResult = await db.pool.query(
-    'SELECT is_public FROM teams WHERE id = $1 AND archived_at IS NULL',
+    'SELECT is_public, archived_at FROM teams WHERE id = $1',
     [teamId],
   );
   if (teamResult.rows.length === 0) return false;
 
   const team = teamResult.rows[0];
+
+  const isMember = async () => {
+    if (!viewerId) return false;
+    const memberCheck = await db.pool.query(
+      'SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2',
+      [teamId, viewerId],
+    );
+    return memberCheck.rows.length > 0;
+  };
+
+  // Archived (deleted, scheduled-for-deletion) teams are only visible to their
+  // remaining members, regardless of is_public — so the archived-team chat can
+  // still show team badges to those members.
+  if (team.archived_at) return isMember();
+
   if (team.is_public === true || team.is_public === 'true') return true;
 
-  if (!viewerId) return false;
-
-  const memberCheck = await db.pool.query(
-    'SELECT 1 FROM team_members WHERE team_id = $1 AND user_id = $2',
-    [teamId, viewerId],
-  );
-  return memberCheck.rows.length > 0;
+  return isMember();
 };
 
 const getTeamBadgeAwards = async (req, res) => {

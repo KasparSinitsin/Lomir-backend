@@ -67,12 +67,13 @@ const getTeamById = async (req, res) => {
       SELECT t.id, t.name, t.description, t.is_public, t.max_members,
              t.owner_id, t.teamavatar_url, t.is_remote, t.is_synthetic,
              t.created_at, t.updated_at, t.postal_code, t.city, t.country, t.state, t.district,
+             t.archived_at, t.status,
              COALESCE(COUNT(DISTINCT tm.user_id), 0) as current_members_count,
              (SELECT COUNT(*) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_count,
              (SELECT COALESCE(json_agg(vr.role_name ORDER BY vr.role_name ASC), '[]'::json) FROM team_vacant_roles vr WHERE vr.team_id = t.id AND vr.status = 'open') AS open_role_names
       FROM teams t
       LEFT JOIN team_members tm ON t.id = tm.team_id
-      WHERE t.id = $1 AND t.archived_at IS NULL
+      WHERE t.id = $1
       GROUP BY t.id
       `,
       [teamId],
@@ -121,6 +122,16 @@ const getTeamById = async (req, res) => {
         [teamId, req.user.id],
       );
       viewerIsMember = memberCheck.rows.length > 0;
+    }
+
+    // Archived (deleted, scheduled-for-deletion) teams are only visible to their
+    // remaining members — never to outsiders — regardless of is_public, so the
+    // archived-team chat can still show full team details to those members.
+    if (team.archived_at && !viewerIsMember) {
+      return res.status(404).json({
+        success: false,
+        message: "Team not found",
+      });
     }
 
     // Get team members — public profile location is visible to visitors and

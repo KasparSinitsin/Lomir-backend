@@ -123,7 +123,7 @@ FRONTEND_URL=http://localhost:5173
 # TURNSTILE_SECRET_KEY=<turnstile-secret-key>
 
 # Scheduled jobs (optional)
-# ARCHIVED_TEAM_GRACE_DAYS=30          # days an archived (deleted) team is kept before the cleanup job purges it; defaults to 30
+# ARCHIVED_TEAM_GRACE_DAYS=14          # days an archived (deleted) team is kept before the cleanup job purges it; defaults to 14
 ```
 
 > Get the ImageKit and database values from the project owner.
@@ -264,6 +264,7 @@ Lomir-backend/
 │   ├── errorResponse.test.js
 │   ├── invitationController.test.js
 │   ├── contactController.test.js
+│   ├── messageController.sendMessage.test.js
 │   ├── locationDerivation.test.js
 │   ├── searchController.test.js
 │   ├── teamController.applyToJoinTeam.test.js
@@ -409,7 +410,7 @@ The public `GET /api/geocoding/postal-code/:code` endpoint is rate-limited (60 r
 |---|---|---|
 | File cleanup | Configurable (see `fileCleanupScheduler.js`) | Expires and deletes orphaned ImageKit files |
 | Unverified account cleanup | Every 6 hours and once on server startup | Deletes accounts where email verification expired more than 1 hour ago, including on hosts that may sleep through the cron time |
-| Archived team cleanup | Daily at 03:30 (Europe/Berlin) and once on server startup | Permanently deletes teams (with their chat, members, and avatar) archived longer than `ARCHIVED_TEAM_GRACE_DAYS` (default 30); safety net for deleted teams whose members never leave, including on hosts that may sleep through the cron time |
+| Archived team cleanup | Daily at 03:30 (Europe/Berlin) and once on server startup | Permanently deletes teams (with their chat, members, and avatar) archived longer than `ARCHIVED_TEAM_GRACE_DAYS` (default 14); safety net for deleted teams whose members never leave, including on hosts that may sleep through the cron time |
 
 The unverified-account cleanup first clears optional references that may point at
 expired registration rows (for example role, tag, team-owner, and badge-awarder
@@ -436,7 +437,7 @@ When an owner deletes a team (`DELETE /api/teams/:id`), the behaviour depends on
 
 - **Solo team (owner is the only member)** — the team is **permanently deleted right away** via `permanentlyDeleteTeam`, removing the team row, its chat messages, invitations/applications, badges, notifications, members, and the ImageKit avatar. Nothing is left behind, so a deleted solo team never leaves an orphaned, unreachable conversation.
 - **Team with other members** — the team is **soft-deleted (archived)**: `archived_at`/`status` are set, a `TEAM_DELETED` system message is posted to the chat, and every member is notified. The archived chat stays visible so members can see the notice and read the history; it is permanently purged once the **last** member leaves (`checkAndCleanupArchivedTeam`).
-- **Grace-period safety net** — to guarantee a deleted team never lingers forever when members never explicitly leave, the `cleanupArchivedTeams` job permanently deletes any team archived longer than `ARCHIVED_TEAM_GRACE_DAYS` (default 30). It runs daily and once on server startup. See [Scheduled Jobs](#scheduled-jobs).
+- **Grace-period safety net** — to guarantee a deleted team never lingers forever when members never explicitly leave, the `cleanupArchivedTeams` job permanently deletes any team archived longer than `ARCHIVED_TEAM_GRACE_DAYS` (default 14). It runs daily and once on server startup. See [Scheduled Jobs](#scheduled-jobs).
 
 Covered by `teamController.deleteTeam.test.js` and `cleanupArchivedTeams.test.js`.
 
