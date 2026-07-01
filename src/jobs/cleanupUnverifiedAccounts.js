@@ -8,36 +8,93 @@ const debugLog = (...args) => {
   }
 };
 
+const purgeExpiredUnverifiedAccounts = async () => {
+  const client = await db.pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const expiredUsersResult = await client.query(
+      `
+      SELECT id
+      FROM users
+      WHERE email_verified = FALSE
+        AND verification_token_expires IS NOT NULL
+        AND verification_token_expires < NOW() - INTERVAL '${BUFFER_HOURS} hours'
+      `,
+    );
+
+    const expiredUserIds = expiredUsersResult.rows.map((row) => Number(row.id));
+
+    if (expiredUserIds.length === 0) {
+      await client.query("COMMIT");
+      return { deleted: 0, accounts: [] };
+    }
+
+    await client.query(
+      `UPDATE teams SET owner_id = NULL WHERE owner_id = ANY($1::int[])`,
+      [expiredUserIds],
+    );
+    await client.query(
+      `UPDATE team_vacant_roles SET created_by = NULL WHERE created_by = ANY($1::int[])`,
+      [expiredUserIds],
+    );
+    await client.query(
+      `UPDATE team_vacant_roles SET filled_by = NULL WHERE filled_by = ANY($1::int[])`,
+      [expiredUserIds],
+    );
+    await client.query(
+      `UPDATE team_applications SET reviewed_by = NULL WHERE reviewed_by = ANY($1::int[])`,
+      [expiredUserIds],
+    );
+    await client.query(
+      `UPDATE user_badges SET awarded_by = NULL WHERE awarded_by = ANY($1::int[])`,
+      [expiredUserIds],
+    );
+    await client.query(
+      `UPDATE tags SET created_by = NULL WHERE created_by = ANY($1::int[])`,
+      [expiredUserIds],
+    );
+
+    const result = await client.query(
+      `
+      DELETE FROM users
+      WHERE id = ANY($1::int[])
+      RETURNING id, created_at
+      `,
+      [expiredUserIds],
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      deleted: result.rowCount || 0,
+      accounts: result.rows.map((row) => ({
+        id: row.id,
+        created: row.created_at,
+      })),
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+const logCleanupResult = ({ deleted, accounts }) => {
+  if (deleted > 0) {
+    debugLog(`[Cleanup] Deleted ${deleted} unverified account(s):`, accounts);
+  } else {
+    debugLog("[Cleanup] No expired unverified accounts to delete.");
+  }
+};
+
 const cleanupUnverifiedAccounts = () => {
   cron.schedule("0 */6 * * *", async () => {
     try {
-      const result = await db.query(
-        `
-        WITH expired_users AS (
-          SELECT id FROM users
-          WHERE email_verified = FALSE
-            AND verification_token_expires IS NOT NULL
-            AND verification_token_expires < NOW() - INTERVAL '${BUFFER_HOURS} hours'
-        ),
-        deleted_tags AS (
-          DELETE FROM user_tags
-          WHERE user_id IN (SELECT id FROM expired_users)
-        )
-        DELETE FROM users
-        WHERE id IN (SELECT id FROM expired_users)
-        RETURNING id, email, created_at
-        `,
-      );
-
-      const count = result.rowCount || 0;
-      if (count > 0) {
-        debugLog(
-          `[Cleanup] Deleted ${count} unverified account(s):`,
-          result.rows.map((r) => ({ id: r.id, created: r.created_at })),
-        );
-      } else {
-        debugLog("[Cleanup] No expired unverified accounts to delete.");
-      }
+      const result = await purgeExpiredUnverifiedAccounts();
+      logCleanupResult(result);
     } catch (error) {
       console.error("[Cleanup] Error cleaning up unverified accounts:", error);
     }
@@ -47,3 +104,5 @@ const cleanupUnverifiedAccounts = () => {
 };
 
 module.exports = cleanupUnverifiedAccounts;
+module.exports.purgeExpiredUnverifiedAccounts = purgeExpiredUnverifiedAccounts;
+module.exports.BUFFER_HOURS = BUFFER_HOURS;
