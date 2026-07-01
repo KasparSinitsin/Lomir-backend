@@ -415,6 +415,7 @@ const getConversations = async (req, res) => {
         t.teamavatar_url as avatar_url,
         t.archived_at,
         t.status,
+        t.is_synthetic,
         ltm.last_message,
         ltm.last_message_time as updated_at,
         COALESCE(tuc.unread_count, 0) as unread_count
@@ -465,6 +466,8 @@ const getConversations = async (req, res) => {
         archived_at: row.archived_at,
         archivedAt: row.archived_at,
         status: row.status,
+        is_synthetic: row.is_synthetic,
+        isSynthetic: row.is_synthetic,
       },
       lastMessage: row.last_message,
       updatedAt: row.updated_at,
