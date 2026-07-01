@@ -436,10 +436,11 @@ Full transactional account deletion. Key highlights:
 When an owner deletes a team (`DELETE /api/teams/:id`), the behaviour depends on whether anyone else is still a member:
 
 - **Solo team (owner is the only member)** — the team is **permanently deleted right away** via `permanentlyDeleteTeam`, removing the team row, its chat messages, invitations/applications, badges, notifications, members, and the ImageKit avatar. Nothing is left behind, so a deleted solo team never leaves an orphaned, unreachable conversation.
-- **Team with other members** — the team is **soft-deleted (archived)**: `archived_at`/`status` are set, a `TEAM_DELETED` system message is posted to the chat, and every member is notified. The archived chat stays visible so members can see the notice and read the history; it is permanently purged once the **last** member leaves (`checkAndCleanupArchivedTeam`).
+- **Team with other members** — the team is **soft-deleted (archived)**: `archived_at`/`status` are set, a `TEAM_DELETED` system message is posted to the chat, and every member is notified. The archived chat stays available to the remaining members as a **"farewell" window**: they can still read **and post** messages until they leave or the grace period ends. Socket and REST team access are gated on current membership (not on `archived_at`), so live messages keep flowing to remaining members. It is permanently purged once the **last** member leaves (`checkAndCleanupArchivedTeam`).
+- **Member visibility of archived teams** — archived teams are still served to their current members (never to outsiders — 404 otherwise, regardless of `is_public`): `getTeamById` and the team badge endpoints return them so members can open the full Team Details modal (info, focus areas, badges, roles, members) for an archived team's chat, and `getConversations`/`getConversationById` expose `archived_at`/`status`. Archived teams where the viewer is the only remaining member are hidden from the conversation list and chat search.
 - **Grace-period safety net** — to guarantee a deleted team never lingers forever when members never explicitly leave, the `cleanupArchivedTeams` job permanently deletes any team archived longer than `ARCHIVED_TEAM_GRACE_DAYS` (default 14). It runs daily and once on server startup. See [Scheduled Jobs](#scheduled-jobs).
 
-Covered by `teamController.deleteTeam.test.js` and `cleanupArchivedTeams.test.js`.
+Covered by `teamController.deleteTeam.test.js`, `cleanupArchivedTeams.test.js`, and `messageController.sendMessage.test.js`.
 
 ---
 
