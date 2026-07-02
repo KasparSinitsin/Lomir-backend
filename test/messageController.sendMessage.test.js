@@ -182,3 +182,56 @@ test("getConversationById includes archived team metadata", async () => {
   assert.equal(res.body.data.team.members.length, 1);
   assert.equal(res.body.data.team.members[0].userId, 10);
 });
+
+test("getConversationById embeds member is_synthetic so the chat skips per-member profile fetches", async () => {
+  let memberQuerySql = "";
+
+  db.query = async (sql) => {
+    if (sql.includes("FROM teams t") && sql.includes("JOIN team_members tm")) {
+      memberQuerySql = sql;
+      return {
+        rows: [
+          {
+            id: 20,
+            name: "Farewell Team",
+            avatar_url: null,
+            archived_at: null,
+            status: "active",
+            members: [
+              {
+                id: 10,
+                userId: 10,
+                user_id: 10,
+                username: "current_member",
+                firstName: "Current",
+                lastName: "Member",
+                avatarUrl: null,
+                is_synthetic: true,
+                isSynthetic: true,
+                role: "member",
+              },
+            ],
+          },
+        ],
+      };
+    }
+
+    throw new Error(`Unexpected query for team conversation details: ${sql}`);
+  };
+
+  const req = {
+    user: { id: 10 },
+    params: { id: "20" },
+    query: { type: "team" },
+  };
+  const res = createResponse();
+
+  await messageController.getConversationById(req, res);
+
+  // The members payload must carry the synthetic flag so MessageDisplay's gate
+  // is satisfied without a per-member getUserById fallback (chat-load N+1).
+  assert.match(memberQuerySql, /'is_synthetic',\s*u\.is_synthetic/);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.team.members[0].is_synthetic, true);
+  assert.equal(res.body.data.team.members[0].isSynthetic, true);
+});
