@@ -520,6 +520,8 @@ const getConversationById = async (req, res) => {
                 'firstName', u.first_name,
                 'lastName', u.last_name,
                 'avatarUrl', u.avatar_url,
+                'is_synthetic', u.is_synthetic,
+                'isSynthetic', u.is_synthetic,
                 'role', tm_all.role
               )
               ORDER BY u.first_name, u.last_name, u.username
