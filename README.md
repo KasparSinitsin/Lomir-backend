@@ -276,8 +276,6 @@ Lomir-backend/
 │   ├── userController.emailUpdate.test.js
 │   ├── userModel.legalConsent.test.js
 │   └── vacantRoleController.test.js
-├── docs/
-│   └── postman/                           # Postman collection exports for API testing
 ├── .env                        # Environment variables (not committed)
 ├── package.json
 └── README.md
