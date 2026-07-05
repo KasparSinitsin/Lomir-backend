@@ -1,5 +1,9 @@
 const { initScheduledJobs } = require("./jobs/fileCleanupScheduler");
 const { validateChatFileUrl } = require("./utils/fileValidation");
+const {
+  replySnapshotSelfColumns,
+  buildReplyTo,
+} = require("./utils/replySnapshot");
 
 require("dotenv").config();
 
@@ -358,8 +362,7 @@ io.on("connection", (socket) => {
 
         if (replyToId) {
           const replyResult = await db.query(
-            `SELECT m.id, m.content, m.sender_id,
-                    u.username, u.first_name
+            `SELECT ${replySnapshotSelfColumns}
              FROM messages m
              LEFT JOIN users u ON m.sender_id = u.id
              WHERE m.id = $1`,
@@ -367,14 +370,7 @@ io.on("connection", (socket) => {
           );
 
           if (replyResult.rows.length > 0) {
-            const r = replyResult.rows[0];
-            replyTo = {
-              id: r.id,
-              content: r.content ? r.content.slice(0, 150) : null,
-              senderId: r.sender_id,
-              senderUsername: r.username,
-              senderFirstName: r.first_name,
-            };
+            replyTo = buildReplyTo(replyResult.rows[0]);
           }
         }
 
@@ -460,8 +456,7 @@ io.on("connection", (socket) => {
 
         if (replyToId) {
           const replyResult = await db.query(
-            `SELECT m.id, m.content, m.sender_id,
-                    u.username, u.first_name
+            `SELECT ${replySnapshotSelfColumns}
              FROM messages m
              LEFT JOIN users u ON m.sender_id = u.id
              WHERE m.id = $1`,
@@ -469,14 +464,7 @@ io.on("connection", (socket) => {
           );
 
           if (replyResult.rows.length > 0) {
-            const r = replyResult.rows[0];
-            replyTo = {
-              id: r.id,
-              content: r.content ? r.content.slice(0, 150) : null,
-              senderId: r.sender_id,
-              senderUsername: r.username,
-              senderFirstName: r.first_name,
-            };
+            replyTo = buildReplyTo(replyResult.rows[0]);
           }
         }
 
