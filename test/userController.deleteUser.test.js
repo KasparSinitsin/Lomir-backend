@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 
 const bcrypt = require("bcrypt");
 const db = require("../src/config/database");
-const userController = require("../src/controllers/userController");
+const userDeletionController = require("../src/controllers/userDeletionController");
 
 const originalConnect = db.pool.connect;
 const originalCompare = bcrypt.compare;
@@ -76,7 +76,7 @@ test("deleteUser rejects attempts to delete another user's account", async () =>
   const req = createRequest({ userId: 7, paramId: "8" });
   const res = createResponse();
 
-  await userController.deleteUser(req, res);
+  await userDeletionController.deleteUser(req, res);
 
   assert.equal(res.statusCode, 403);
   assert.equal(res.body.success, false);
@@ -127,7 +127,7 @@ test("deleteUser rolls back and returns 401 when the password is incorrect", asy
   const req = createRequest();
   const res = createResponse();
 
-  await userController.deleteUser(req, res);
+  await userDeletionController.deleteUser(req, res);
 
   assert.equal(res.statusCode, 401);
   assert.equal(res.body.success, false);
@@ -301,7 +301,7 @@ test("deleteUser completes the transaction flow and emits the expected socket ev
   });
   const res = createResponse();
 
-  await userController.deleteUser(req, res);
+  await userDeletionController.deleteUser(req, res);
 
   assert.equal(res.statusCode, 200);
   assert.deepEqual(res.body, {
