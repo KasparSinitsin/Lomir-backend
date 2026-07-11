@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 
 const bcrypt = require("bcrypt");
 const db = require("../src/config/database");
-const userController = require("../src/controllers/userController");
+const userDeletionController = require("../src/controllers/userDeletionController");
 
 const originalQuery = db.pool.query;
 const originalCompare = bcrypt.compare;
@@ -51,7 +51,7 @@ test("deletionPreview rejects attempts to preview another user's account", async
   const req = createRequest({ userId: 7, paramId: "8" });
   const res = createResponse();
 
-  await userController.deletionPreview(req, res);
+  await userDeletionController.deletionPreview(req, res);
 
   assert.equal(res.statusCode, 403);
   assert.equal(res.body.success, false);
@@ -81,7 +81,7 @@ test("deletionPreview returns 401 when the password is incorrect", async () => {
   const req = createRequest();
   const res = createResponse();
 
-  await userController.deletionPreview(req, res);
+  await userDeletionController.deletionPreview(req, res);
 
   assert.equal(res.statusCode, 401);
   assert.equal(res.body.success, false);
@@ -174,7 +174,7 @@ test("deletionPreview returns transfer, deletion, role, and count summaries", as
   const req = createRequest();
   const res = createResponse();
 
-  await userController.deletionPreview(req, res);
+  await userDeletionController.deletionPreview(req, res);
 
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.success, true);
