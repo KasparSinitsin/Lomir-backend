@@ -120,7 +120,13 @@ const deleteUser = async (req, res) => {
 
   try {
     const userId = parseInt(req.params.id, 10);
-    const { password, ownershipOverrides = [] } = req.body || {};
+    const body = req.body || {};
+    const { password } = body;
+    // The frontend request interceptor serializes all request bodies to
+    // snake_case, so the wire payload is `ownership_overrides` with `team_id` /
+    // `successor_id`. Accept both casings so real requests AND direct/camelCase
+    // callers (e.g. tests) work.
+    const ownershipOverrides = body.ownershipOverrides ?? body.ownership_overrides ?? [];
 
     // Verify the user making the request is the same as the user being deleted
     if (Number(req.user.id) !== userId) {
@@ -147,8 +153,8 @@ const deleteUser = async (req, res) => {
     const ownershipOverrideMap = new Map();
 
     for (const override of ownershipOverrides) {
-      const teamId = Number(override?.teamId);
-      const successorId = Number(override?.successorId);
+      const teamId = Number(override?.teamId ?? override?.team_id);
+      const successorId = Number(override?.successorId ?? override?.successor_id);
 
       if (!Number.isInteger(teamId) || !Number.isInteger(successorId)) {
         return res.status(400).json({
