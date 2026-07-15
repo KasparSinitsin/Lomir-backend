@@ -5,6 +5,10 @@ const {
 } = require("../utils/imagekitUtils");
 const { validateChatFileUrl } = require("../utils/fileValidation");
 const userModel = require("../models/userModel");
+const {
+  replySnapshotJoinColumns,
+  buildReplyTo,
+} = require("../utils/replySnapshot");
 
 const CHAT_FILE_RETENTION_DAYS = 60;
 
@@ -703,11 +707,7 @@ const getMessages = async (req, res) => {
       u.first_name as sender_first_name,
       u.last_name as sender_last_name,
       u.avatar_url as sender_avatar_url,
-      rm.id as reply_to_message_id,
-      rm.content as reply_to_content,
-      rm.sender_id as reply_to_sender_id,
-      ru.username as reply_to_sender_username,
-      ru.first_name as reply_to_sender_first_name
+      ${replySnapshotJoinColumns}
     FROM messages m
     LEFT JOIN users u ON m.sender_id = u.id
     LEFT JOIN messages rm ON m.reply_to_id = rm.id
@@ -800,11 +800,7 @@ const getMessages = async (req, res) => {
       u.first_name as sender_first_name,
       u.last_name as sender_last_name,
       u.avatar_url as sender_avatar_url,
-      rm.id as reply_to_message_id,
-      rm.content as reply_to_content,
-      rm.sender_id as reply_to_sender_id,
-      ru.username as reply_to_sender_username,
-      ru.first_name as reply_to_sender_first_name
+      ${replySnapshotJoinColumns}
     FROM messages m
     LEFT JOIN users u ON m.sender_id = u.id
     LEFT JOIN messages rm ON m.reply_to_id = rm.id
@@ -832,17 +828,7 @@ const getMessages = async (req, res) => {
       teamId: row.team_id,
       content: row.content,
       replyToId: row.reply_to_id,
-      replyTo: row.reply_to_message_id
-        ? {
-            id: row.reply_to_message_id,
-            content: row.reply_to_content
-              ? row.reply_to_content.slice(0, 150)
-              : null,
-            senderId: row.reply_to_sender_id,
-            senderUsername: row.reply_to_sender_username,
-            senderFirstName: row.reply_to_sender_first_name,
-          }
-        : null,
+      replyTo: buildReplyTo(row),
       imageUrl: row.image_url,
       fileUrl: row.file_url,
       fileName: row.file_name,
@@ -1033,11 +1019,7 @@ const getMessageById = async (req, res) => {
         m.sent_at,
         m.read_at,
         u.username as sender_username,
-        rm.id as reply_to_message_id,
-        rm.content as reply_to_content,
-        rm.sender_id as reply_to_sender_id,
-        ru.username as reply_to_sender_username,
-        ru.first_name as reply_to_sender_first_name
+        ${replySnapshotJoinColumns}
       FROM messages m
       LEFT JOIN users u ON m.sender_id = u.id
       LEFT JOIN messages rm ON m.reply_to_id = rm.id
@@ -1082,17 +1064,7 @@ const getMessageById = async (req, res) => {
       success: true,
       data: {
         ...row,
-        replyTo: row.reply_to_message_id
-          ? {
-              id: row.reply_to_message_id,
-              content: row.reply_to_content
-                ? row.reply_to_content.slice(0, 150)
-                : null,
-              senderId: row.reply_to_sender_id,
-              senderUsername: row.reply_to_sender_username,
-              senderFirstName: row.reply_to_sender_first_name,
-            }
-          : null,
+        replyTo: buildReplyTo(row),
       },
     });
   } catch (error) {

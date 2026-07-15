@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 
 const bcrypt = require("bcrypt");
 const db = require("../src/config/database");
-const userController = require("../src/controllers/userController");
+const userDeletionController = require("../src/controllers/userDeletionController");
 
 const originalConnect = db.pool.connect;
 const originalCompare = bcrypt.compare;
@@ -59,90 +59,12 @@ function createRequest({
   };
 }
 
-test.afterEach(() => {
-  db.pool.connect = originalConnect;
-  bcrypt.compare = originalCompare;
-  process.env.NODE_ENV = originalNodeEnv;
-});
-
-test("deleteUser rejects attempts to delete another user's account", async () => {
-  let connectCalled = false;
-
-  db.pool.connect = async () => {
-    connectCalled = true;
-    throw new Error("connect should not be called");
-  };
-
-  const req = createRequest({ userId: 7, paramId: "8" });
-  const res = createResponse();
-
-  await userController.deleteUser(req, res);
-
-  assert.equal(res.statusCode, 403);
-  assert.equal(res.body.success, false);
-  assert.match(res.body.message, /delete your own account/i);
-  assert.equal(connectCalled, false);
-});
-
-test("deleteUser rolls back and returns 401 when the password is incorrect", async () => {
-  process.env.NODE_ENV = "production";
-
-  const calls = [];
-  const client = {
-    async query(sql, params = []) {
-      calls.push({ sql, params });
-
-      if (sql === "BEGIN" || sql === "ROLLBACK") {
-        return { rows: [] };
-      }
-
-      if (sql.includes("SELECT id, first_name, last_name, username, avatar_url, avatar_file_id, password_hash")) {
-        return {
-          rows: [
-            {
-              id: 7,
-              first_name: "Jane",
-              last_name: "Doe",
-              username: "janed",
-              avatar_url: null,
-              avatar_file_id: null,
-              password_hash: "stored-hash",
-            },
-          ],
-        };
-      }
-
-      throw new Error(`Unexpected SQL in wrong-password delete test: ${sql}`);
-    },
-    release() {},
-  };
-
-  db.pool.connect = async () => client;
-  bcrypt.compare = async (password, hash) => {
-    assert.equal(password, "secret123");
-    assert.equal(hash, "stored-hash");
-    return false;
-  };
-
-  const req = createRequest();
-  const res = createResponse();
-
-  await userController.deleteUser(req, res);
-
-  assert.equal(res.statusCode, 401);
-  assert.equal(res.body.success, false);
-  assert.match(res.body.message, /password is incorrect/i);
-  assert.equal(calls.some(({ sql }) => sql === "ROLLBACK"), true);
-  assert.equal(calls.some(({ sql }) => sql === "COMMIT"), false);
-});
-
-test("deleteUser completes the transaction flow and emits the expected socket events", async () => {
-  process.env.NODE_ENV = "production";
-
-  const calls = [];
-  const { emits, io } = createIoRecorder();
-
-  const client = {
+// Shared pool client mock for the happy-path delete flow: one solo team (10,
+// deleted), one shared team (20, transferred) with two successor candidates —
+// user 11 (admin, earliest joined = the DEFAULT candidates[0]) and user 12
+// (member). Records every query into `calls`.
+function createSuccessfulDeleteClient(calls) {
+  return {
     async query(sql, params = []) {
       calls.push({ sql, params });
 
@@ -284,6 +206,92 @@ test("deleteUser completes the transaction flow and emits the expected socket ev
     },
     release() {},
   };
+}
+
+test.afterEach(() => {
+  db.pool.connect = originalConnect;
+  bcrypt.compare = originalCompare;
+  process.env.NODE_ENV = originalNodeEnv;
+});
+
+test("deleteUser rejects attempts to delete another user's account", async () => {
+  let connectCalled = false;
+
+  db.pool.connect = async () => {
+    connectCalled = true;
+    throw new Error("connect should not be called");
+  };
+
+  const req = createRequest({ userId: 7, paramId: "8" });
+  const res = createResponse();
+
+  await userDeletionController.deleteUser(req, res);
+
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body.success, false);
+  assert.match(res.body.message, /delete your own account/i);
+  assert.equal(connectCalled, false);
+});
+
+test("deleteUser rolls back and returns 401 when the password is incorrect", async () => {
+  process.env.NODE_ENV = "production";
+
+  const calls = [];
+  const client = {
+    async query(sql, params = []) {
+      calls.push({ sql, params });
+
+      if (sql === "BEGIN" || sql === "ROLLBACK") {
+        return { rows: [] };
+      }
+
+      if (sql.includes("SELECT id, first_name, last_name, username, avatar_url, avatar_file_id, password_hash")) {
+        return {
+          rows: [
+            {
+              id: 7,
+              first_name: "Jane",
+              last_name: "Doe",
+              username: "janed",
+              avatar_url: null,
+              avatar_file_id: null,
+              password_hash: "stored-hash",
+            },
+          ],
+        };
+      }
+
+      throw new Error(`Unexpected SQL in wrong-password delete test: ${sql}`);
+    },
+    release() {},
+  };
+
+  db.pool.connect = async () => client;
+  bcrypt.compare = async (password, hash) => {
+    assert.equal(password, "secret123");
+    assert.equal(hash, "stored-hash");
+    return false;
+  };
+
+  const req = createRequest();
+  const res = createResponse();
+
+  await userDeletionController.deleteUser(req, res);
+
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.body.success, false);
+  assert.match(res.body.message, /password is incorrect/i);
+  assert.equal(calls.some(({ sql }) => sql === "ROLLBACK"), true);
+  assert.equal(calls.some(({ sql }) => sql === "COMMIT"), false);
+});
+
+test("deleteUser completes the transaction flow and emits the expected socket events", async () => {
+  process.env.NODE_ENV = "production";
+
+  const calls = [];
+  const { emits, io } = createIoRecorder();
+
+  const client = createSuccessfulDeleteClient(calls);
 
   db.pool.connect = async () => client;
   bcrypt.compare = async (password, hash) => {
@@ -301,7 +309,7 @@ test("deleteUser completes the transaction flow and emits the expected socket ev
   });
   const res = createResponse();
 
-  await userController.deleteUser(req, res);
+  await userDeletionController.deleteUser(req, res);
 
   assert.equal(res.statusCode, 200);
   assert.deepEqual(res.body, {
@@ -373,6 +381,73 @@ test("deleteUser completes the transaction flow and emits the expected socket ev
     emits.some(
       ({ room, event, payload }) =>
         room === "user:11" &&
+        event === "notification:new" &&
+        payload.type === "ownership_transferred" &&
+        payload.teamId === 20,
+    ),
+    true,
+  );
+});
+
+// Regression test for the ownership-transfer casing bug: the frontend request
+// interceptor serializes the body to snake_case, so a real request arrives as
+// `ownership_overrides: [{ team_id, successor_id }]`. deleteUser must honor it.
+// The chosen successor here is user 12 (member) — NOT the default candidates[0]
+// (user 11, admin) — so a dropped/ignored override would transfer to 11 and
+// fail this test.
+test("deleteUser honors a snake_case ownership override for a non-default successor", async () => {
+  process.env.NODE_ENV = "production";
+
+  const calls = [];
+  const { emits, io } = createIoRecorder();
+  const client = createSuccessfulDeleteClient(calls);
+
+  db.pool.connect = async () => client;
+  bcrypt.compare = async () => true;
+
+  const req = createRequest({
+    body: {
+      password: "secret123",
+      ownership_overrides: [{ team_id: 20, successor_id: 12 }],
+    },
+    io,
+  });
+  const res = createResponse();
+
+  await userDeletionController.deleteUser(req, res);
+
+  assert.equal(res.statusCode, 200);
+
+  const transferRoleCall = calls.find(
+    ({ sql }) =>
+      sql.includes("UPDATE team_members") && sql.includes("SET role = 'owner'"),
+  );
+  const transferOwnerCall = calls.find(
+    ({ sql }) =>
+      sql.includes("UPDATE teams") && sql.includes("SET owner_id = $1"),
+  );
+
+  // team_members: WHERE team_id = $1 AND user_id = $2 -> [20, 12]
+  assert.deepEqual(transferRoleCall.params, [20, 12]);
+  // teams: SET owner_id = $1 WHERE id = $2 -> [12, 20]
+  assert.deepEqual(transferOwnerCall.params, [12, 20]);
+
+  // The in-chat ownership message names the chosen successor (Mia Ng), not the
+  // default (Sam Smith).
+  assert.equal(
+    calls.some(
+      ({ sql, params }) =>
+        sql.includes("INSERT INTO messages (sender_id, team_id, content, sent_at)") &&
+        params[2] === "👑 OWNERSHIP_TEAM: Former Lomir User | Mia Ng",
+    ),
+    true,
+  );
+
+  // The ownership-transferred notification goes to user 12, not user 11.
+  assert.equal(
+    emits.some(
+      ({ room, event, payload }) =>
+        room === "user:12" &&
         event === "notification:new" &&
         payload.type === "ownership_transferred" &&
         payload.teamId === 20,

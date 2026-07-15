@@ -183,7 +183,10 @@ Lomir-backend/
 │   │   └── legalDocuments.js   # Current version constants for Terms, Privacy Policy, and age confirmation
 │   ├── controllers/
 │   │   ├── authController.js
-│   │   ├── userController.js
+│   │   ├── userController.js          # User profile CRUD (list, get, update, avatar)
+│   │   ├── userDeletionController.js  # Account deletion + deletion-preview (ownership transfer)
+│   │   ├── userTagsBadgesController.js # User tags + badge visibility/awards
+│   │   ├── userBlockingController.js  # Block/unblock + block relationships
 │   │   ├── teamController.js          # Team create/update/delete + ownership transfer
 │   │   ├── teamReadController.js      # Team reads (getTeamById, getMyTeams, lite list)
 │   │   ├── teamMembersController.js   # Team member add/remove/role-change
@@ -276,8 +279,6 @@ Lomir-backend/
 │   ├── userController.emailUpdate.test.js
 │   ├── userModel.legalConsent.test.js
 │   └── vacantRoleController.test.js
-├── docs/
-│   └── postman/                           # Postman collection exports for API testing
 ├── .env                        # Environment variables (not committed)
 ├── package.json
 └── README.md

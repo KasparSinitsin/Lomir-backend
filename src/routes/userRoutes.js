@@ -1,5 +1,8 @@
 const express = require("express");
 const userController = require("../controllers/userController");
+const userBlockingController = require("../controllers/userBlockingController");
+const userTagsBadgesController = require("../controllers/userTagsBadgesController");
+const userDeletionController = require("../controllers/userDeletionController");
 // Import your authentication middleware
 const auth = require("../middlewares/auth");
 
@@ -24,12 +27,16 @@ router.put("/:id", auth.authenticateToken, userController.updateUser);
 router.post(
   "/:id/deletion-preview",
   auth.authenticateToken,
-  userController.deletionPreview,
+  userDeletionController.deletionPreview,
 );
 
 // DELETE /api/users/:id - Delete a specific user by their ID
 // Access: Private (Requires valid token)
-router.delete("/:id", auth.authenticateToken, userController.deleteUser);
+router.delete(
+  "/:id",
+  auth.authenticateToken,
+  userDeletionController.deleteUser,
+);
 
 // DELETE /api/users/:id/avatar - Delete user's avatar image
 router.delete(
@@ -45,19 +52,23 @@ router.delete(
 router.get(
   "/:id/blocks",
   auth.authenticateToken,
-  userController.getBlockedUsers,
+  userBlockingController.getBlockedUsers,
 );
 
 // POST /api/users/:id/blocks - Block a user
 // Access: Private (self only)
-router.post("/:id/blocks", auth.authenticateToken, userController.blockUser);
+router.post(
+  "/:id/blocks",
+  auth.authenticateToken,
+  userBlockingController.blockUser,
+);
 
 // DELETE /api/users/:id/blocks/:blockedId - Unblock a user
 // Access: Private (self only)
 router.delete(
   "/:id/blocks/:blockedId",
   auth.authenticateToken,
-  userController.unblockUser,
+  userBlockingController.unblockUser,
 );
 
 // GET /api/users/:id/block-relationships - Ids in a block relationship (either direction)
@@ -65,7 +76,7 @@ router.delete(
 router.get(
   "/:id/block-relationships",
   auth.authenticateToken,
-  userController.getBlockRelationships,
+  userBlockingController.getBlockRelationships,
 );
 
 // === User-Specific Sub-Resources ===
@@ -79,19 +90,23 @@ router.get(
 router.get(
   "/:id/tags",
   auth.optionalAuthenticateToken,
-  userController.getUserTags,
+  userTagsBadgesController.getUserTags,
 );
 
 // PUT /api/users/:id/tags - Update tags associated with a specific user
 // Access: Private (Requires valid token)
-router.put("/:id/tags", auth.authenticateToken, userController.updateUserTags);
+router.put(
+  "/:id/tags",
+  auth.authenticateToken,
+  userTagsBadgesController.updateUserTags,
+);
 
 // PATCH /api/users/:id/badges/awards/:awardId/visibility - Hide/show one award on own profile
 // Access: Private (Requires valid token)
 router.patch(
   "/:id/badges/awards/:awardId/visibility",
   auth.authenticateToken,
-  userController.updateUserBadgeVisibility,
+  userTagsBadgesController.updateUserBadgeVisibility,
 );
 
 // GET /api/users/:id/badges - Get badges for a specific user
@@ -99,7 +114,7 @@ router.patch(
 router.get(
   "/:id/badges",
   auth.optionalAuthenticateToken,
-  userController.getUserBadges,
+  userTagsBadgesController.getUserBadges,
 );
 
 // Export the router for use in app.js
