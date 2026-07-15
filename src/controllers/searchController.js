@@ -168,6 +168,9 @@ const searchController = {
             sortBy: roleSort,
             sortDir: getRolesSortDir(roleSort, direction),
           },
+          userLocation: userLocation
+            ? { hasLocation: true, hasCoordinates: !!userLocation.hasCoordinates }
+            : { hasLocation: false, hasCoordinates: false },
         });
       }
 
@@ -550,6 +553,9 @@ const searchController = {
             sortBy: roleSort,
             sortDir: getRolesSortDir(roleSort, direction),
           },
+          userLocation: userLocation
+            ? { hasLocation: true, hasCoordinates: !!userLocation.hasCoordinates }
+            : { hasLocation: false, hasCoordinates: false },
         });
       }
 
