@@ -231,6 +231,90 @@ const getUnreadCount = async (req, res) => {
   }
 };
 
+// PUT /messages/read-all - Mark every unread conversation as read for the user
+// Clears both direct messages (messages.read_at) and team messages
+// (message_reads), mirroring the per-conversation "message:read" socket handler
+// but across all of the user's conversations at once. Emits "messages:read-all"
+// to the user's own socket room so the Navbar badges and the chat page's
+// conversation list can drop to zero in real time.
+const markAllAsRead = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // Direct messages received by the user that are still unread.
+    const directResult = await db.query(
+      `UPDATE messages
+         SET read_at = NOW()
+       WHERE receiver_id = $1
+         AND read_at IS NULL
+         AND team_id IS NULL
+         AND deleted_at IS NULL
+       RETURNING id`,
+      [userId],
+    );
+
+    // Team messages in teams the user belongs to that they have not read yet
+    // (and did not send themselves). Insert a read receipt for each.
+    const teamResult = await db.query(
+      `INSERT INTO message_reads (message_id, user_id, read_at)
+       SELECT m.id, $1, NOW()
+       FROM messages m
+       JOIN team_members tm ON m.team_id = tm.team_id AND tm.user_id = $1
+       WHERE m.team_id IS NOT NULL
+         AND m.sender_id != $1
+         AND m.deleted_at IS NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM message_reads mr
+           WHERE mr.message_id = m.id AND mr.user_id = $1
+         )
+       RETURNING message_id`,
+      [userId],
+    );
+
+    // @mention alerts are surfaced on the chat icon's tooltip, so clearing the
+    // chat also clears the mention notifications that feed that line.
+    const mentionResult = await db.query(
+      `UPDATE notifications
+         SET read_at = NOW()
+       WHERE user_id = $1
+         AND read_at IS NULL
+         AND type = 'message_mention'
+       RETURNING id`,
+      [userId],
+    );
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`user:${userId}`).emit("messages:read-all", {
+        userId,
+        readAt: new Date().toISOString(),
+      });
+      // Refresh notification-derived counts (mentions) on the user's other tabs.
+      if (mentionResult.rows.length > 0) {
+        io.to(`user:${userId}`).emit("notification:updated", {
+          type: "message_mention",
+        });
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        markedDirect: directResult.rows.length,
+        markedTeam: teamResult.rows.length,
+        markedMentions: mentionResult.rows.length,
+      },
+    });
+  } catch (error) {
+    console.error("Error marking all messages as read:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error marking all messages as read",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
 // Start a conversation by sending the first message
 const startConversation = async (req, res) => {
   try {
@@ -1317,4 +1401,5 @@ module.exports = {
   updateMessage,
   deleteMessage,
   getUnreadCount,
+  markAllAsRead,
 };
