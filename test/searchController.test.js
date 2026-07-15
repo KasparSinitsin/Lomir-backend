@@ -683,6 +683,70 @@ test("globalSearch proximity sort applies distance ordering to open roles in all
   assert.match(roleSql, /ORDER BY .*distance_km ASC/s);
 });
 
+test("globalSearch roles-only response reports userLocation so the frontend can offer the Nearest sort", async () => {
+  const { query } = buildQueryStub({
+    userLocation: {
+      latitude: "52.52",
+      longitude: "13.405",
+      postal_code: "10115",
+      city: "Berlin",
+    },
+  });
+  db.pool.query = query;
+
+  const req = {
+    query: {
+      query: "de",
+      page: "1",
+      limit: "15",
+      searchType: "roles",
+    },
+    user: { id: 99 },
+  };
+  const res = createResponse();
+
+  await searchController.globalSearch(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body.data.teams, []);
+  assert.deepEqual(res.body.data.users, []);
+  assert.deepEqual(res.body.userLocation, {
+    hasLocation: true,
+    hasCoordinates: true,
+  });
+});
+
+test("globalSearch roles-only response reports no coordinates when the user has none", async () => {
+  const { query } = buildQueryStub({
+    userLocation: {
+      latitude: null,
+      longitude: null,
+      postal_code: null,
+      city: null,
+    },
+  });
+  db.pool.query = query;
+
+  const req = {
+    query: {
+      query: "de",
+      page: "1",
+      limit: "15",
+      searchType: "roles",
+    },
+    user: { id: 99 },
+  };
+  const res = createResponse();
+
+  await searchController.globalSearch(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.body.userLocation, {
+    hasLocation: false,
+    hasCoordinates: false,
+  });
+});
+
 test("globalSearch excludes own teams for authenticated users and keeps user results unchanged", async () => {
   const { query, calls } = buildQueryStub();
   db.pool.query = query;
