@@ -319,7 +319,10 @@ const markAllAsRead = async (req, res) => {
 const startConversation = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { recipientId, initialMessage } = req.body;
+    // The frontend snake_cases request bodies, so accept both spellings.
+    const recipientId = req.body.recipientId ?? req.body.recipient_id;
+    const initialMessage =
+      req.body.initialMessage ?? req.body.initial_message;
 
     if (!recipientId) {
       return res.status(400).json({
@@ -958,16 +961,12 @@ const sendMessage = async (req, res) => {
   try {
     const userId = req.user.id;
     const conversationId = req.params.id;
-    const {
-      content,
-      type,
-      imageUrl,
-      fileUrl,
-      fileName,
-      replyToId: bodyReplyToId,
-      reply_to_id: bodyReplyToIdSnake,
-    } = req.body;
-    const replyToId = bodyReplyToId || bodyReplyToIdSnake || null;
+    const { content, type } = req.body;
+    // The frontend snake_cases request bodies, so accept both spellings.
+    const imageUrl = req.body.imageUrl ?? req.body.image_url;
+    const fileUrl = req.body.fileUrl ?? req.body.file_url;
+    const fileName = req.body.fileName ?? req.body.file_name;
+    const replyToId = req.body.replyToId || req.body.reply_to_id || null;
     const messageType = type === "team" ? "team" : "direct";
 
     // Allow content OR imageUrl OR fileUrl (or combinations)
