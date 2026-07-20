@@ -176,7 +176,7 @@ That suite covers abuse report persistence, reference ID responses, email-forwar
 Lomir-backend/
 ├── src/
 │   ├── app.js                  # Express app setup, middleware, route mounting
-│   ├── server.js               # HTTP server + Socket.IO setup
+│   ├── server.js               # Bootstrap: startup guards, HTTP server, initSocket, scheduled jobs, listen
 │   ├── config/
 │   │   ├── database.js         # PostgreSQL connection pool (Neon)
 │   │   ├── imagekit.js         # ImageKit client configuration
@@ -229,6 +229,16 @@ Lomir-backend/
 │   ├── services/
 │   │   ├── emailService.js     # Transactional email methods + templates (verification, password reset/changed, email-change, contact forwarding, report receipt)
 │   │   └── mailProvider.js     # Brevo HTTPS transport (single seam; swap provider here)
+│   ├── socket/
+│   │   ├── index.js            # initSocket(server, app): io + CORS, app.set("io"), auth, handler registration
+│   │   ├── socketAuth.js       # Handshake authentication (session cookie, auth-token fallback)
+│   │   ├── access.js           # Shared authorization helpers (team membership, DM access, reply access, blocked-user rooms, chat-file expiry)
+│   │   ├── presence.js         # Connected-users map, room joins, users:online, disconnect
+│   │   └── handlers/
+│   │       ├── conversationHandlers.js # conversation:join / conversation:leave
+│   │       ├── messageHandlers.js      # message:new incl. @mention notification fanout
+│   │       ├── typingHandlers.js       # typing:start / typing:stop
+│   │       └── readHandlers.js         # message:read
 │   ├── utils/
 │   │   ├── booleanSearchParser.js
 │   │   ├── imagekitUtils.js
@@ -270,6 +280,7 @@ Lomir-backend/
 │   ├── contactController.test.js
 │   ├── messageController.sendMessage.test.js
 │   ├── messageController.markAllAsRead.test.js
+│   ├── messageController.bodyCasing.test.js # Drives controllers with the snake_case bodies the frontend sends
 │   ├── notificationController.getUnreadCount.test.js
 │   ├── locationDerivation.test.js
 │   ├── searchController.test.js
