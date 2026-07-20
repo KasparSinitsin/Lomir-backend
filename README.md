@@ -37,7 +37,7 @@ To test the live demo, anyone can just **register their own account** directly i
 - **Search** — Global search across teams, users, and roles with boolean queries, tag/badge/location filtering, proximity sorting, and "Best Match" scoring
 - **Chat** — Real-time direct and team group messaging via Socket.IO, including typing indicators, read receipts, message replies (reply-to with sender preview), @mention notifications, and structured system messages for team events (member join/leave/removal, role changes, invitation responses, application decisions, role lifecycle, team deletion)
 - **Badge System** — 30 badges across 5 categories; award badges to teammates with reasons and context
-- **Notifications** — In-app notifications for invitations, applications, badge awards, messages, @mentions, and role lifecycle events; each notification deep-links to the exact message that triggered it; stale notifications are cleaned up automatically on member removal, role deletion, and team deletion
+- **Notifications** — In-app notifications for invitations, applications, badge awards, messages, @mentions, and role lifecycle events; each notification deep-links to the exact message that triggered it. The unread-count response also returns the oldest unread notification per type, so a client can walk a type-group from oldest to newest, and both notifications and messages can be cleared in one call via mark-all-as-read endpoints. Stale notifications are cleaned up automatically on member removal, role deletion, team deletion, once a team application is handled, and once an invitation is resolved (accepted, declined, or withdrawn)
 - **Account Deletion** — Full transactional account deletion with impact preview, automatic team ownership transfer, role reopening, and "Former Lomir User" handling for preserved references
 - **Contact Form & Reports** — Public `/api/contact` endpoint with Joi validation, Turnstile CAPTCHA, in-memory file attachments (up to 3 files, 5 MB each, 10 MB total), and email delivery via Brevo. Abuse/content reports are persisted in `contact_reports` with a reference ID before the email is forwarded, so reports are not lost if email delivery fails; reporters also receive an automated acknowledgement-of-receipt email with their reference ID (sent only for `Report content or abuse` submissions, best-effort so a failed receipt never fails the request); unexpected body fields are stripped defensively so multipart attachment fields cannot break validation; rate-limited to 5 submissions/hr
 - **Geocoding** — Location enrichment via Nominatim: resolves a full location object (postal code, city, district, state, country, coordinates) from partial input. Built-in postal-code-to-district lookup for Berlin and Frankfurt (200+ mappings) used as a fast offline fallback before the API call. Works with country alone — does not require both postal code and city.
@@ -266,8 +266,11 @@ Lomir-backend/
 │   ├── csrfProtection.test.js
 │   ├── errorResponse.test.js
 │   ├── invitationController.test.js
+│   ├── invitationController.staleNotifications.test.js
 │   ├── contactController.test.js
 │   ├── messageController.sendMessage.test.js
+│   ├── messageController.markAllAsRead.test.js
+│   ├── notificationController.getUnreadCount.test.js
 │   ├── locationDerivation.test.js
 │   ├── searchController.test.js
 │   ├── teamController.applyToJoinTeam.test.js
@@ -300,8 +303,8 @@ All routes are prefixed with `/api`.
 | `/api/search/all` | Initial search-page data without a required keyword, using the same filtering/sorting core |
 | `/api/matching` | Role ↔ user matching scores and candidate lists |
 | `/api/badges` | Badge catalog and awarding |
-| `/api/messages` | Direct and team message history |
-| `/api/notifications` | User notifications (includes `referenceType`, `typeTeamCounts` in unread count response) |
+| `/api/messages` | Direct and team message history; `PUT /messages/read-all` marks every conversation (direct and team) as read and clears the user's pending @mention notifications |
+| `/api/notifications` | User notifications. The unread-count response includes `referenceType`, `typeTeamCounts`, and `typeFirstUnread` (the oldest unread notification per type with its navigation target); `PUT /notifications/read-all` marks all of them as read |
 | `/api/imagekit` | Auth params for client-side ImageKit uploads |
 | `/api/tags` | Tag catalog (structured by category) |
 | `/api/geocoding` | Postal code → city/district/country/coordinates lookup |
@@ -356,6 +359,7 @@ The server uses Socket.IO for real-time features. Clients authenticate from the 
 | `message:received` | Server → Client | New message broadcast; includes `replyTo` object (id, content preview, sender) when replying; also emitted for server-inserted system messages (role events, member changes, etc.) |
 | `message:read` | Client → Server | Mark messages as read |
 | `message:status` | Server → Client | Read receipt notification |
+| `messages:read-all` | Server → Client | Emitted to the user's own room after `PUT /messages/read-all` so the navbar badge and the chat page conversation list drop to zero in real time |
 | `typing:start` / `typing:stop` | Bidirectional | Typing indicators |
 | `blocks:updated` | Server → Client | Tells both affected users to re-sync block state after a block or unblock |
 | `users:online` | Server → Client | Updated list of online user IDs |
@@ -363,7 +367,7 @@ The server uses Socket.IO for real-time features. Clients authenticate from the 
 | `team:member_kicked` | Server → Client | Emitted to the removed member to kick them from the team chat |
 | `conversation:deleted` | Server → Client | DM conversation removed |
 | `notification:new` | Server → Client | New notification for the user — covers invitations, applications, member changes, role lifecycle events (`role_created`, `role_updated`, `role_deleted`, `role_closed`, `role_filled`, `role_reopened`), badge awards, `message_mention`, team deletion, and ownership transfers |
-| `notification:updated` | Server → Client | Tells the client to re-fetch notifications — emitted on invitation cancellation, role invitation cancellation, stale notification cleanup (e.g. after member removal or role deletion), and admin action acknowledgements |
+| `notification:updated` | Server → Client | Tells the client to re-fetch notifications — emitted on invitation cancellation, role invitation cancellation, an invitee accepting or declining an invitation (so their own resolved invite notification disappears), stale notification cleanup (e.g. after member removal or role deletion), and admin action acknowledgements |
 
 ---
 
