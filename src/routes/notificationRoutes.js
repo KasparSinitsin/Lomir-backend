@@ -9,9 +9,6 @@ router.use(authenticateToken);
 // Get unread notification count (with firstUnread for navigation)
 router.get("/unread-count", notificationController.getUnreadCount);
 
-// Get all notifications
-router.get("/", notificationController.getNotifications);
-
 // Mark a single notification as read
 router.put("/:id/read", notificationController.markAsRead);
 

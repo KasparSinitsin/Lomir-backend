@@ -315,71 +315,6 @@ const markAllAsRead = async (req, res) => {
   }
 };
 
-// Start a conversation by sending the first message
-const startConversation = async (req, res) => {
-  try {
-    const userId = req.user.id;
-    // The frontend snake_cases request bodies, so accept both spellings.
-    const recipientId = req.body.recipientId ?? req.body.recipient_id;
-    const initialMessage =
-      req.body.initialMessage ?? req.body.initial_message;
-
-    if (!recipientId) {
-      return res.status(400).json({
-        success: false,
-        message: "Recipient ID is required",
-      });
-    }
-
-    const senderId = parseInt(userId);
-    const receiverId = parseInt(recipientId);
-
-    // Check if recipient exists
-    const recipientResult = await db.query(
-      `SELECT id FROM users WHERE id = $1`,
-      [receiverId],
-    );
-
-    if (recipientResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Recipient not found",
-      });
-    }
-
-    if (await userModel.isBlockedBetween(senderId, receiverId)) {
-      return res.status(403).json({
-        success: false,
-        message: "You can no longer message this user",
-      });
-    }
-
-    // Only send a message if there's actual content
-    if (initialMessage && initialMessage.trim() !== "") {
-      await db.query(
-        `INSERT INTO messages (sender_id, receiver_id, content, sent_at)
-         VALUES ($1, $2, $3, NOW())`,
-        [senderId, receiverId, initialMessage.trim()],
-      );
-    }
-
-    // Always return success - the frontend will handle showing the conversation
-    res.status(201).json({
-      success: true,
-      data: {
-        conversationId: receiverId,
-      },
-    });
-  } catch (error) {
-    console.error("Error starting conversation:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error starting conversation",
-      ...(process.env.NODE_ENV === "development" && { error: error.message }),
-    });
-  }
-};
-
 // Get all conversations for current user
 const getConversations = async (req, res) => {
   try {
@@ -1391,7 +1326,6 @@ const deleteMessage = async (req, res) => {
 };
 
 module.exports = {
-  startConversation,
   getConversations,
   getConversationById,
   sendMessage,

@@ -367,75 +367,6 @@ const getUnreadCount = async (req, res) => {
 };
 
 // ============================================================================
-// GET /notifications - Get all notifications for the user
-// ============================================================================
-const getNotifications = async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const { limit = 50, offset = 0, unreadOnly = false } = req.query;
-
-    let query = `
-      SELECT 
-        n.id,
-        n.type,
-        n.title,
-        n.message,
-        n.reference_type as "referenceType",
-        n.reference_id as "referenceId",
-        n.team_id as "teamId",
-        n.actor_id as "actorId",
-        n.read_at as "readAt",
-        n.created_at as "createdAt",
-        t.name as "teamName",
-        u.username as "actorUsername",
-        u.first_name as "actorFirstName",
-        u.last_name as "actorLastName",
-        u.avatar_url as "actorAvatarUrl"
-      FROM notifications n
-      LEFT JOIN teams t ON n.team_id = t.id
-      LEFT JOIN users u ON n.actor_id = u.id
-      WHERE n.user_id = $1
-    `;
-
-    const params = [userId];
-
-    if (unreadOnly === "true") {
-      query += ` AND n.read_at IS NULL`;
-    }
-
-    query += ` ORDER BY n.created_at DESC LIMIT $2 OFFSET $3`;
-    params.push(parseInt(limit), parseInt(offset));
-
-    const result = await db.query(query, params);
-
-    // Add navigation URL to each notification
-    const notifications = result.rows.map((notification) => ({
-      ...notification,
-      navigateTo: getNavigationUrl({
-        type: notification.type,
-        team_id: notification.teamId,
-        reference_type: notification.referenceType,
-        reference_id: notification.referenceId,
-        actor_id: notification.actorId,
-        title: notification.title,
-      }),
-    }));
-
-    res.status(200).json({
-      success: true,
-      data: notifications,
-    });
-  } catch (error) {
-    console.error("Error fetching notifications:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error fetching notifications",
-      ...(process.env.NODE_ENV === "development" && { error: error.message }),
-    });
-  }
-};
-
-// ============================================================================
 // PUT /notifications/:id/read - Mark a single notification as read
 // ============================================================================
 const markAsRead = async (req, res) => {
@@ -542,7 +473,6 @@ const deleteNotification = async (req, res) => {
 module.exports = {
   // API endpoints
   getUnreadCount,
-  getNotifications,
   markAsRead,
   markAllAsRead,
   deleteNotification,
