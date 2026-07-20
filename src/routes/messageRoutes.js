@@ -24,6 +24,13 @@ router.get(
   messageController.getUnreadCount,
 );
 
+// Mark every conversation as read for the current user
+router.put(
+  "/read-all",
+  authenticateToken,
+  messageController.markAllAsRead,
+);
+
 // Get specific conversation
 router.get(
   "/conversations/:id",

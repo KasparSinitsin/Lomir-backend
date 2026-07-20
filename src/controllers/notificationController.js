@@ -324,6 +324,28 @@ const getUnreadCount = async (req, res) => {
       typeTeamCounts[row.type] = row.team_count;
     }
 
+    // Oldest unread notification per type, with its navigation target. The bell
+    // tooltip groups by type, so this lets a group jump straight to its oldest
+    // entry (and step through the rest as they are marked read) without having
+    // to fetch and page the whole notification list on the client.
+    const typeFirstUnreadResult = await db.query(
+      `SELECT DISTINCT ON (type)
+         id, type, team_id, reference_type, reference_id, actor_id, title, created_at
+       FROM notifications
+       WHERE user_id = $1 AND read_at IS NULL
+       ORDER BY type, created_at ASC`,
+      [userId],
+    );
+
+    const typeFirstUnread = {};
+    for (const row of typeFirstUnreadResult.rows) {
+      typeFirstUnread[row.type] = {
+        id: row.id,
+        createdAt: row.created_at,
+        navigateTo: getNavigationUrl(row),
+      };
+    }
+
     res.status(200).json({
       success: true,
       data: {
@@ -331,6 +353,7 @@ const getUnreadCount = async (req, res) => {
         firstUnread,
         typeCounts,
         typeTeamCounts,
+        typeFirstUnread,
       },
     });
   } catch (error) {

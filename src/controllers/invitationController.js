@@ -7,6 +7,22 @@ const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer");
 const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
 
+// Remove an invitee's now-stale invitation notifications — the bell entries that
+// pointed at an invitation which has since been accepted, declined, or cancelled.
+// Covers both team (invitation_received) and role (role_invitation) invites, and
+// is scoped to the invitation id so unrelated notifications are untouched. Takes a
+// query function (the pool or a transaction client) so callers can run it inside
+// or outside a transaction.
+const deleteStaleInvitationNotifications = (queryFn, invitationId) =>
+  queryFn(
+    `DELETE FROM notifications
+     WHERE type IN ('invitation_received', 'role_invitation')
+       AND reference_type = 'team_invitation'
+       AND reference_id = $1
+       AND read_at IS NULL`,
+    [parseInt(invitationId, 10)],
+  );
+
 const buildRoleReopenedMessage = ({
   teamId,
   teamName,
@@ -898,6 +914,13 @@ const respondToInvitation = async (req, res) => {
     try {
       await client.query("BEGIN");
 
+      // The invitee is resolving this invitation (accept or decline), so their
+      // own pending invitation notification is no longer relevant.
+      await deleteStaleInvitationNotifications(
+        (text, params) => client.query(text, params),
+        invitationId,
+      );
+
       let roleFilled = false;
       let filledRoleName = null;
       let roleSwitched = false;
@@ -1308,6 +1331,13 @@ const respondToInvitation = async (req, res) => {
 
       await client.query("COMMIT");
 
+      // Refresh the invitee's own bell now that their invitation notification
+      // was cleared above.
+      req.app.get("io")?.to(`user:${userId}`).emit("notification:updated", {
+        type: "invitation_resolved",
+        invitationId: parseInt(invitationId, 10),
+      });
+
       res.status(200).json({
         success: true,
         message:
@@ -1410,13 +1440,10 @@ const cancelInvitation = async (req, res) => {
       [invitationId],
     );
 
-    // Remove stale invitation_received notification for the invitee
-    await db.pool.query(
-      `DELETE FROM notifications
-       WHERE type = 'invitation_received'
-         AND reference_id = $1
-         AND read_at IS NULL`,
-      [parseInt(invitationId)],
+    // Remove the invitee's now-stale invitation notifications (team + role).
+    await deleteStaleInvitationNotifications(
+      (text, params) => db.pool.query(text, params),
+      invitationId,
     );
 
     // System message format (parseable + clickable team/user)
@@ -1736,4 +1763,6 @@ module.exports = {
   cancelInvitation,
   cancelRoleInvitation,
   getTeamsWhereUserCanInvite,
+  // Exported for tests: the shared stale-invitation-notification cleanup.
+  deleteStaleInvitationNotifications,
 };

@@ -186,6 +186,11 @@ function buildRespondInvitationClientStub({
         return { rows: [] };
       }
 
+      // Stale-invitation-notification cleanup (the invitee resolved the invite).
+      if (sql.includes("DELETE FROM notifications")) {
+        return { rows: [] };
+      }
+
       if (sql.includes("SELECT id FROM team_members WHERE team_id = $1 AND user_id = $2")) {
         return { rows: isInternalMember ? [{ id: 1 }] : [] };
       }
@@ -770,6 +775,50 @@ test("respondToInvitation keeps the decline flow unchanged", async () => {
       payload.type === "invitation_declined",
   );
   assert.ok(declineSocketEvent);
+});
+
+test("respondToInvitation clears the invitee's stale invitation notification and refreshes their bell", async () => {
+  const { query: poolQuery } = buildRespondInvitationPoolQueryStub({ roleId: 9 });
+  const { client, calls: clientCalls } = buildRespondInvitationClientStub();
+  const { query: notificationQuery } = buildNotificationQueryStub();
+  const { io, emits } = createIoRecorder();
+
+  db.pool.query = poolQuery;
+  db.pool.connect = async () => client;
+  db.query = notificationQuery;
+
+  const req = createRequest({
+    invitationId: "77",
+    userId: 7,
+    body: { action: "decline" },
+    io,
+  });
+  const res = createResponse();
+
+  await invitationController.respondToInvitation(req, res);
+
+  assert.equal(res.statusCode, 200);
+
+  // The invitee's own pending invitation notification is removed, covering both
+  // team invites and role invites, scoped to this invitation only.
+  const cleanupCall = clientCalls.find(({ sql }) =>
+    sql.includes("DELETE FROM notifications"),
+  );
+  assert.ok(cleanupCall, "expected the stale-notification cleanup to run");
+  assert.match(
+    cleanupCall.sql,
+    /type IN \('invitation_received', 'role_invitation'\)/,
+  );
+  assert.match(cleanupCall.sql, /reference_type = 'team_invitation'/);
+  assert.match(cleanupCall.sql, /read_at IS NULL/);
+  assert.deepEqual(cleanupCall.params, [77]);
+
+  // The invitee's navbar is told to refetch so the badge drops right away.
+  const inviteeRefresh = emits.find(
+    ({ room, event }) => room === "user:7" && event === "notification:updated",
+  );
+  assert.ok(inviteeRefresh, "expected a bell refresh for the invitee");
+  assert.equal(inviteeRefresh.payload.invitationId, 77);
 });
 
 test("getTeamsWhereUserCanInvite includes teams where the invitee is already a member", async () => {
