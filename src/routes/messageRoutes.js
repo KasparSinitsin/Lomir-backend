@@ -4,13 +4,6 @@ const { authenticateToken } = require("../middlewares/auth");
 
 const router = express.Router();
 
-// Start a new conversation
-router.post(
-  "/conversations",
-  authenticateToken,
-  messageController.startConversation,
-);
-
 // Get all conversations for current user
 router.get(
   "/conversations",
