@@ -8,7 +8,12 @@
     "dev": "nodemon src/server.js",
     "test": "node --test",
     "migrate": "node migrate.js",
-    "seed": "node seed.js"
+    "seed": "node seed.js",
+    "backup": "./scripts/backup-db.sh",
+    "backup:status": "./scripts/backup-db.sh --status",
+    "backup:open": "open \"${LOMIR_BACKUP_DIR:-$HOME/LomirBackups}\"",
+    "backup:install": "./scripts/install-backup-agent.sh",
+    "backup:uninstall": "./scripts/install-backup-agent.sh --uninstall"
   },
   "repository": {
     "type": "git",
