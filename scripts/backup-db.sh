@@ -113,11 +113,34 @@ fi
 # Both are cheap to detect, so the script refuses rather than trusting the
 # operator to remember.
 
+# Every cloud-sync location known on macOS, not just OneDrive. This machine's
+# repo happens to live in CloudStorage, but the script also runs on a second
+# operator's laptop whose setup we do not know — an unguarded iCloud or Dropbox
+# folder would ship the whole database to a provider nobody vetted.
+#
+#   ~/Library/CloudStorage/   OneDrive, Google Drive, Box, current Dropbox
+#   ~/Library/Mobile Documents/  iCloud Drive (NOT under CloudStorage)
+#   ~/Dropbox, ~/Google Drive    legacy clients that still use home-level folders
+SYNC_HINT="Backups contain every user's email, password hash, private messages
+       and location. They must not be synced to a third party.
+       Use a local path such as \$HOME/LomirBackups."
+
 case "$BACKUP_DIR" in
 */Library/CloudStorage/*)
   die "refusing to write to '$BACKUP_DIR': that path is inside OneDrive/CloudStorage.
-       Backups contain personal data and must not be synced to a third party.
-       Use a local path such as \$HOME/LomirBackups."
+       $SYNC_HINT"
+  ;;
+*/Library/Mobile\ Documents/*)
+  die "refusing to write to '$BACKUP_DIR': that path is inside iCloud Drive.
+       $SYNC_HINT"
+  ;;
+"$HOME"/Dropbox | "$HOME"/Dropbox/* | *"/Dropbox ("*)
+  die "refusing to write to '$BACKUP_DIR': that path is inside Dropbox.
+       $SYNC_HINT"
+  ;;
+"$HOME"/Google\ Drive | "$HOME"/Google\ Drive/*)
+  die "refusing to write to '$BACKUP_DIR': that path is inside Google Drive.
+       $SYNC_HINT"
   ;;
 esac
 
@@ -128,6 +151,13 @@ if [ "$IN_REPO" = true ]; then
        which is public on GitHub. Use a local path such as \$HOME/LomirBackups."
     ;;
   esac
+fi
+
+# The installer validates the target before creating anything, by calling this
+# script rather than repeating the patterns above — one source of truth.
+if [ "${1:-}" = "--check-dir" ]; then
+  printf 'Backup directory is safe: %s\n' "$BACKUP_DIR"
+  exit 0
 fi
 
 # --- resolve the connection string -------------------------------------------

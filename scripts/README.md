@@ -26,8 +26,19 @@ keeps using the old copy. Details: `install-backup-agent.sh` and the runbook.
 
 **The storage location is a safety decision, not a preference.** A dump contains
 every user's email, password hash, private messages and location, so the script
-**refuses** to write anywhere inside this repository (public on GitHub) or
-inside OneDrive (synced to a processor that is not in the DPA register).
+**refuses** to write anywhere inside this repository (public on GitHub) or into
+any cloud-synced folder — `~/Library/CloudStorage` (OneDrive, Google Drive, Box,
+Dropbox), `~/Library/Mobile Documents` (iCloud Drive), `~/Dropbox`,
+`~/Google Drive`. Check a path without writing anything:
+
+```bash
+LOMIR_BACKUP_DIR=<path> ./scripts/backup-db.sh --check-dir
+```
+
+**Both operators run this on their own machine** — two laptops mean a period
+with one switched off is still covered. Requirements before installing on a
+machine: full-disk encryption on, and that machine legitimately holds the
+production `DATABASE_URL` already. See runbook §5.
 
 Neon's own PITR and snapshot branches are the first line of defence for everyday
 mistakes; this script exists for the case where Neon itself is unavailable.

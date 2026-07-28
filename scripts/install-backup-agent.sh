@@ -62,6 +62,12 @@ fi
 [ -f "$REPO_ROOT/.env" ] || die "no .env at $REPO_ROOT - cannot read DATABASE_URL"
 command -v pg_dump >/dev/null 2>&1 || die "pg_dump not found. Install it with: brew install postgresql@17"
 
+# Validate the target before creating any directory, so a cloud-synced path is
+# rejected rather than silently created. The check lives in backup-db.sh so the
+# rules are not duplicated here.
+LOMIR_BACKUP_DIR="$BACKUP_DIR" "$REPO_ROOT/scripts/backup-db.sh" --check-dir ||
+  die "refusing to install with this backup directory. Set LOMIR_BACKUP_DIR to a local path."
+
 DB_URL="$(grep -E '^DATABASE_URL=' "$REPO_ROOT/.env" | head -1 | cut -d= -f2- | tr -d '"'"'"'' | sed 's/[[:space:]]*$//')"
 [ -n "$DB_URL" ] || die "DATABASE_URL is empty or missing in $REPO_ROOT/.env"
 
