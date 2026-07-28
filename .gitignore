@@ -122,6 +122,15 @@ Thumbs.db
 *.backup
 *.old
 
+# Database dumps — belt-and-braces only.
+# scripts/backup-db.sh refuses to write inside the repo (see its guard), and the
+# configured location is outside both the repo and OneDrive. These patterns
+# exist so that a hand-rolled pg_dump run in the wrong directory still cannot be
+# committed: this repo is public, and a dump holds every user's email, password
+# hash, private messages and location.
+*.dump
+LomirBackups/
+
 # Test files
 test-results/
 coverage/

@@ -1,6 +1,36 @@
 # Database Scripts
 
-This folder contains SQL scripts for seeding and managing the Lomir database.
+This folder contains SQL scripts for seeding and managing the Lomir database,
+plus the database backup script.
+
+## Backups — `backup-db.sh`
+
+```bash
+npm run backup           # create a backup of the production database
+npm run backup:status    # list existing backups and the age of the newest
+npm run backup:open      # reveal the backup folder in Finder
+```
+
+Dumps go to `~/LomirBackups` (override with `LOMIR_BACKUP_DIR`), are kept for
+30 days, and are verified with `pg_restore --list` before the script reports
+success. Requires `brew install postgresql@17`.
+
+**The storage location is a safety decision, not a preference.** A dump contains
+every user's email, password hash, private messages and location, so the script
+**refuses** to write anywhere inside this repository (public on GitHub) or
+inside OneDrive (synced to a processor that is not in the DPA register).
+
+Run it **monthly** — alongside the `npm audit` pass — and manually before any
+risky migration. Neon's own PITR and snapshot branches are the first line of
+defence for everyday mistakes; this script exists for the case where Neon itself
+is unavailable.
+
+**Restore procedure and full reasoning:**
+`lomir-docs-internal/BACKUP_RESTORE_RUNBOOK.md`.
+
+---
+
+## SQL scripts
 
 ## How to Run Scripts in Neon
 
