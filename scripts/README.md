@@ -6,24 +6,31 @@ plus the database backup script.
 ## Backups — `backup-db.sh`
 
 ```bash
-npm run backup           # create a backup of the production database
+npm run backup           # create a backup now (do this before risky migrations)
 npm run backup:status    # list existing backups and the age of the newest
 npm run backup:open      # reveal the backup folder in Finder
+npm run backup:install   # install/refresh the daily launchd agent, then verify it
+npm run backup:uninstall # remove the agent (existing backups are kept)
 ```
 
-Dumps go to `~/LomirBackups` (override with `LOMIR_BACKUP_DIR`), are kept for
-30 days, and are verified with `pg_restore --list` before the script reports
-success. Requires `brew install postgresql@17`.
+A **launchd agent runs the backup daily at 10:00**, catching up after boot if a
+run was missed. Dumps go to `~/LomirBackups` (override with `LOMIR_BACKUP_DIR`),
+are kept for 30 days, and are verified with `pg_restore --list` before the
+script reports success. Requires `brew install postgresql@17`.
+
+**The agent runs from `~/.lomir/backup-db.sh`, not from this repo** — macOS
+denies background agents any access to `~/Library/CloudStorage` (OneDrive), so
+pointing launchd at the repo fails silently. **Re-run `npm run backup:install`
+after editing `backup-db.sh` or rotating the database password**, or the agent
+keeps using the old copy. Details: `install-backup-agent.sh` and the runbook.
 
 **The storage location is a safety decision, not a preference.** A dump contains
 every user's email, password hash, private messages and location, so the script
 **refuses** to write anywhere inside this repository (public on GitHub) or
 inside OneDrive (synced to a processor that is not in the DPA register).
 
-Run it **monthly** — alongside the `npm audit` pass — and manually before any
-risky migration. Neon's own PITR and snapshot branches are the first line of
-defence for everyday mistakes; this script exists for the case where Neon itself
-is unavailable.
+Neon's own PITR and snapshot branches are the first line of defence for everyday
+mistakes; this script exists for the case where Neon itself is unavailable.
 
 **Restore procedure and full reasoning:**
 `lomir-docs-internal/BACKUP_RESTORE_RUNBOOK.md`.

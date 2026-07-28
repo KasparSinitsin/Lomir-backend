@@ -26,6 +26,28 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKUP_DIR="${LOMIR_BACKUP_DIR:-$HOME/LomirBackups}"
 KEEP_DAYS="${LOMIR_BACKUP_KEEP_DAYS:-30}"
 STALE_AFTER_DAYS=30
+AGENT_CONFIG="$HOME/.lomir/backup.env"
+
+# This script runs from two places, and the difference matters.
+#
+#   1. From the repo, invoked by hand as `npm run backup`.
+#   2. From ~/.lomir, invoked by the launchd agent (see
+#      scripts/install-backup-agent.sh).
+#
+# Case 2 exists because the repo lives inside ~/Library/CloudStorage (OneDrive),
+# and macOS denies background agents *any* access there — verified 2026-07-28:
+# a launchd agent could not list the repo directory, read .env, or even read
+# this script (exit 126, "Operation not permitted"). Granting the access would
+# mean giving /bin/bash Full Disk Access, which is far too broad a permission
+# to hand out for a backup job. So the agent runs from a copy outside OneDrive
+# and never touches the repo at runtime.
+#
+# IN_REPO tells the two apart: only a real checkout has package.json one level
+# up. It must not be assumed, because when the installed copy sits in
+# $HOME/.lomir, REPO_ROOT resolves to $HOME — and the repo guard below would
+# then reject the perfectly good default backup directory underneath it.
+IN_REPO=false
+[ -f "$REPO_ROOT/package.json" ] && IN_REPO=true
 
 # --- helpers -----------------------------------------------------------------
 
@@ -99,19 +121,34 @@ case "$BACKUP_DIR" in
   ;;
 esac
 
-case "$BACKUP_DIR" in
-"$REPO_ROOT" | "$REPO_ROOT"/*)
-  die "refusing to write to '$BACKUP_DIR': that path is inside the repository,
+if [ "$IN_REPO" = true ]; then
+  case "$BACKUP_DIR" in
+  "$REPO_ROOT" | "$REPO_ROOT"/*)
+    die "refusing to write to '$BACKUP_DIR': that path is inside the repository,
        which is public on GitHub. Use a local path such as \$HOME/LomirBackups."
-  ;;
-esac
+    ;;
+  esac
+fi
 
 # --- resolve the connection string -------------------------------------------
 
+# Resolution order: environment, then the agent's own config outside OneDrive,
+# then the repo .env. The agent copy can only ever reach the second.
+read_database_url_from() {
+  grep -E '^DATABASE_URL=' "$1" | head -1 | cut -d= -f2- | tr -d '"'"'"'' | sed 's/[[:space:]]*$//'
+}
+
+if [ -z "${DATABASE_URL:-}" ] && [ -f "$AGENT_CONFIG" ]; then
+  DATABASE_URL="$(read_database_url_from "$AGENT_CONFIG")"
+fi
+
+if [ -z "${DATABASE_URL:-}" ] && [ "$IN_REPO" = true ] && [ -f "$REPO_ROOT/.env" ]; then
+  DATABASE_URL="$(read_database_url_from "$REPO_ROOT/.env")"
+fi
+
 if [ -z "${DATABASE_URL:-}" ]; then
-  [ -f "$REPO_ROOT/.env" ] || die "no DATABASE_URL in the environment and no .env at $REPO_ROOT"
-  DATABASE_URL="$(grep -E '^DATABASE_URL=' "$REPO_ROOT/.env" | head -1 | cut -d= -f2- | tr -d '"'"'"'' | sed 's/[[:space:]]*$//')"
-  [ -n "$DATABASE_URL" ] || die "DATABASE_URL is empty or missing in $REPO_ROOT/.env"
+  die "no DATABASE_URL found. Looked in: the environment, $AGENT_CONFIG$([ "$IN_REPO" = true ] && echo ", $REPO_ROOT/.env").
+       If this ran as the launchd agent, re-run 'npm run backup:install' from the repo."
 fi
 
 command -v pg_dump >/dev/null 2>&1 || die "pg_dump not found. Install it with: brew install postgresql@17"
@@ -122,7 +159,10 @@ command -v pg_restore >/dev/null 2>&1 || die "pg_restore not found. Install it w
 mkdir -p "$BACKUP_DIR"
 chmod 700 "$BACKUP_DIR"
 
-STAMP="$(date +%Y-%m-%d-%H%M)"
+# Seconds matter: with minute granularity, two runs in the same minute — a
+# manual `npm run backup` and the launchd agent firing right after it, which is
+# exactly what the installer does — silently overwrite each other.
+STAMP="$(date +%Y-%m-%d-%H%M%S)"
 TARGET="$BACKUP_DIR/lomir-$STAMP.dump"
 
 printf 'Backing up to %s\n' "$TARGET"
