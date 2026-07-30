@@ -149,6 +149,10 @@ Verify it's running by visiting `http://localhost:5001` — you should see **"Lo
 | `npm run migrate` | Run database migrations |
 | `npm run seed` | Seed the database with initial data |
 | `npm test` | Run tests (`node --test`) |
+| `npm run backup` | Create a database dump now (see [Database Backups](#database-backups)) |
+| `npm run backup:status` | List existing dumps with their age |
+| `npm run backup:install` | Install or refresh the scheduled backup agent |
+| `npm run backup:uninstall` | Remove the scheduled backup agent |
 
 ### Test Notes
 
@@ -435,6 +439,31 @@ picked up related records during development or test activity.
 
 ---
 
+## Database Backups
+
+Two layers with different jobs. The scheduled agent below is an operator tool that runs on a developer machine, not one of the server-side [Scheduled Jobs](#scheduled-jobs).
+
+- **Neon point-in-time recovery and snapshot branches** — the first line of defence, covering the likely failure modes: a bad migration, a wrong `UPDATE`, a destructive test. How far back it reaches depends on the history retention of the Neon plan.
+- **Local `pg_dump` archives** — the off-provider leg, covering the one thing Neon cannot: losing access to Neon itself.
+
+Dumps are written to `~/LomirBackups` as `lomir-<timestamp>.dump` in the custom `pg_dump` format, with the directory `chmod 700`, and are pruned after 30 days. Pruning only runs after a new dump succeeded, so a run of failures can never delete the last remaining backup. `npm run backup:status` reports the age of the newest dump and warns once it passes 30 days.
+
+The agent installed by `npm run backup:install` runs at **10:00, 14:00, and 17:00**. Three slots rather than one because a laptop asleep at a given time misses that run: launchd then fires it once on wake, when Wi-Fi may not be up yet, and `pg_dump` fails to resolve the database host. The later slots turn a missed slot into a retry a few hours later instead of a lost day. `backup:install` verifies itself by forcing a real run and fails loudly if no dump appears — an installed-but-broken backup job is worse than none, because it creates false confidence.
+
+Configuration, all optional shell variables:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `LOMIR_BACKUP_DIR` | `~/LomirBackups` | Target directory. Cloud-synced paths (OneDrive, iCloud Drive, Dropbox, Google Drive) and paths inside the repo are refused |
+| `LOMIR_BACKUP_KEEP_DAYS` | `30` | How long dumps are kept |
+| `LOMIR_BACKUP_HOURS` | `10,14,17` | Agent schedule, comma-separated hours 0-23; applied by `backup:install` |
+
+`DATABASE_URL` is read from the repo's `.env`. The agent cannot read it there, because the repo lives inside `~/Library/CloudStorage` and macOS denies background agents any access to that location, so `backup:install` provisions its own copy of the script and the credential under `~/.lomir` (`chmod 600`). **Re-run `npm run backup:install` after changing `scripts/backup-db.sh` or rotating the database credentials** — that copy does not update itself.
+
+Requires `pg_dump` on the `PATH` (`brew install postgresql@17`). The restore procedure is kept in an internal runbook outside this repository.
+
+---
+
 ## Account Deletion
 
 Full transactional account deletion. Key highlights:
@@ -491,6 +520,8 @@ Covered by `teamController.deleteTeam.test.js`, `cleanupArchivedTeams.test.js`, 
 - **Email provider is not configured** — Set `BREVO_API_KEY` and `BREVO_SENDER_EMAIL` (the sender must be verified in Brevo)
 - **Port already in use** — `lsof -i :5001` to find the process, `kill -9 <PID>` to free the port
 - **CAPTCHA not loading locally** — Expected when no Turnstile key is configured; the CAPTCHA check runs in the deployed environment.
+- **Scheduled backup logs `could not translate host name`** — The machine was asleep at the scheduled time, so launchd started the job on wake before the network was up. A later slot covers it; `npm run backup:status` shows whether a dump landed that day. `npm run backup` any time to close the gap.
+- **Scheduled backup stopped producing dumps** — `launchctl list com.lomir.backup` shows the last exit status, and `~/LomirBackups/backup.log` holds the output of agent runs only (a manual `npm run backup` writes to the terminal instead, so the log is not a reliable status indicator — use `npm run backup:status`).
 
 ---
 
