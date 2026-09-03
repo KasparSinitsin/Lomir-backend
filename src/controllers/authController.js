@@ -7,6 +7,7 @@ const emailService = require("../services/emailService");
 const db = require("../config/database");
 const { resolveLocationData } = require("../utils/geocodingUtil");
 const { verifyTurnstileToken } = require("../utils/turnstileVerify");
+const { SUPPORTED_LANGUAGES } = require("../config/languages");
 const { uploadToImageKit } = require("../middlewares/uploadMiddleware");
 const {
   CURRENT_AGE_CONFIRMATION_VERSION,
@@ -35,6 +36,11 @@ const registerSchema = Joi.object({
   state: Joi.string().allow("", null),
   district: Joi.string().allow("", null),
   country: Joi.string().allow("", null),
+  // Only sent when the visitor actually saw the picker. Absent means "never
+  // chose one", which is stored as NULL and leaves the country rule in charge.
+  preferred_language: Joi.string()
+    .valid(...SUPPORTED_LANGUAGES)
+    .allow("", null),
   avatar_url: Joi.string().uri().allow(null),
   acceptedTerms: Joi.boolean().truthy("true").valid(true).required().messages({
     "any.only": "Terms of Service must be accepted",

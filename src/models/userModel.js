@@ -15,6 +15,7 @@ const CREATED_USER_FIELDS = `
   state,
   district,
   country,
+  preferred_language,
   avatar_url,
   accepted_terms_at,
   accepted_privacy_at,
@@ -43,6 +44,7 @@ const AUTH_USER_FIELDS = `
   state,
   district,
   country,
+  preferred_language,
   avatar_url,
   accepted_terms_at,
   accepted_privacy_at,
@@ -69,6 +71,7 @@ const CURRENT_USER_FIELDS = `
   state,
   district,
   country,
+  preferred_language,
   avatar_url,
   accepted_terms_at,
   accepted_privacy_at,
@@ -116,9 +119,10 @@ const userModel = {
           email_verified,
           is_public,
           created_at,
-          updated_at
+          updated_at,
+          preferred_language
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),NOW(),NOW(),$15,$16,$17,FALSE,FALSE,NOW(),NOW())
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),NOW(),NOW(),$15,$16,$17,FALSE,FALSE,NOW(),NOW(),$18)
         RETURNING ${CREATED_USER_FIELDS}
         `,
         [
@@ -139,6 +143,9 @@ const userModel = {
           userData.accepted_terms_version,
           userData.accepted_privacy_version,
           userData.confirmed_age_16_version,
+          // NULL means the user never chose a language, which is what lets the
+          // country rule apply later. An empty string would not.
+          userData.preferred_language || null,
         ],
       );
 
