@@ -2,6 +2,7 @@ const express = require("express");
 const axios = require("axios");
 const { deriveLocationFromPostalCode } = require("../utils/locationDerivation");
 const { geocodingLimiter } = require("../middlewares/rateLimiter");
+const { detectCountryCode } = require("../utils/postalCodeCountry");
 const router = express.Router();
 
 // In-memory cache for postal-code lookups. Reduces duplicate outbound calls to
@@ -35,20 +36,6 @@ function setCachedLocation(key, value) {
 }
 
 // Helper function to detect country from postal code
-function detectCountryCode(postalCode) {
-  if (!postalCode) return "DE";
-
-  const code = postalCode.toString().trim();
-
-  if (/^\d{5}$/.test(code)) return "DE"; // German: 12345
-  if (/^\d{4}$/.test(code)) return "NL"; // Dutch: 1234
-  if (/^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/i.test(code)) return "GB"; // UK: SW1A 1AA
-  if (/^\d{2}-\d{3}$/.test(code)) return "PL"; // Polish: 12-345
-  if (/^\d{5}-\d{3}$/.test(code)) return "PT"; // Portuguese: 12345-123
-  if (/^\d{3}\s\d{2}$/.test(code)) return "SE"; // Swedish: 123 45
-
-  return "DE"; // Default fallback
-}
 
 // Simple postal code to city mapping for common European codes
 const postalCodeMapping = {
@@ -98,6 +85,21 @@ router.get("/postal-code/:code", geocodingLimiter, async (req, res) => {
     const { code } = req.params;
     const requestedCountry = req.query.country || null;
     const detectedCountry = requestedCountry || detectCountryCode(code);
+
+    // The same digits exist in several countries, so without a country there is
+    // nothing to look up - answering anyway would return a confidently wrong
+    // place. Tell the caller what is missing instead.
+    if (!detectedCountry) {
+      return res.json({
+        city: null,
+        state: null,
+        country: null,
+        displayName: code,
+        latitude: null,
+        longitude: null,
+        needsCountry: true,
+      });
+    }
 
     if (process.env.NODE_ENV !== "production") {
       console.log(
