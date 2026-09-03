@@ -2,6 +2,7 @@ const express = require("express");
 const axios = require("axios");
 const { deriveLocationFromPostalCode } = require("../utils/locationDerivation");
 const { geocodingLimiter } = require("../middlewares/rateLimiter");
+const { detectCountryCode } = require("../utils/postalCodeCountry");
 const router = express.Router();
 
 // In-memory cache for postal-code lookups. Reduces duplicate outbound calls to
@@ -35,20 +36,6 @@ function setCachedLocation(key, value) {
 }
 
 // Helper function to detect country from postal code
-function detectCountryCode(postalCode) {
-  if (!postalCode) return "DE";
-
-  const code = postalCode.toString().trim();
-
-  if (/^\d{5}$/.test(code)) return "DE"; // German: 12345
-  if (/^\d{4}$/.test(code)) return "NL"; // Dutch: 1234
-  if (/^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/i.test(code)) return "GB"; // UK: SW1A 1AA
-  if (/^\d{2}-\d{3}$/.test(code)) return "PL"; // Polish: 12-345
-  if (/^\d{5}-\d{3}$/.test(code)) return "PT"; // Portuguese: 12345-123
-  if (/^\d{3}\s\d{2}$/.test(code)) return "SE"; // Swedish: 123 45
-
-  return "DE"; // Default fallback
-}
 
 // Simple postal code to city mapping for common European codes
 const postalCodeMapping = {
@@ -98,6 +85,21 @@ router.get("/postal-code/:code", geocodingLimiter, async (req, res) => {
     const { code } = req.params;
     const requestedCountry = req.query.country || null;
     const detectedCountry = requestedCountry || detectCountryCode(code);
+
+    // The same digits exist in several countries, so without a country there is
+    // nothing to look up - answering anyway would return a confidently wrong
+    // place. Tell the caller what is missing instead.
+    if (!detectedCountry) {
+      return res.json({
+        city: null,
+        state: null,
+        country: null,
+        displayName: code,
+        latitude: null,
+        longitude: null,
+        needsCountry: true,
+      });
+    }
 
     if (process.env.NODE_ENV !== "production") {
       console.log(
@@ -267,5 +269,98 @@ function formatDisplayName(address) {
   }
   return "";
 }
+
+/**
+ * Verify that a town exists in a given country.
+ *
+ * The postal-code endpoint above cannot answer this: without a code there is
+ * nothing to look up, so a city and a country could contradict each other
+ * freely - "Berlin, Austria" was storable. This closes that gap.
+ *
+ * A country is required. Verifying a bare place name against the whole world
+ * would answer "yes" for almost any string and prove nothing.
+ *
+ * Answers 200 in both cases, with `found` saying which it is: a town that
+ * cannot be confirmed is not an error, and the caller decides what to do about
+ * it. For unambiguous places the reply carries the postal code Nominatim
+ * returns, which is what makes a suggestion possible for small towns.
+ */
+router.get("/city/:name", geocodingLimiter, async (req, res) => {
+  try {
+    const name = String(req.params.name || "").trim();
+    const country = String(req.query.country || "").trim();
+
+    if (!name) {
+      return res.status(400).json({ message: "City name is required" });
+    }
+
+    if (!country) {
+      return res.json({ found: null, needsCountry: true });
+    }
+
+    const cacheKey = `city:${name.toLowerCase()}|${country.toLowerCase()}`;
+    const cached = getCachedLocation(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const response = await axios.get(
+      "https://nominatim.openstreetmap.org/search",
+      {
+        params: {
+          city: name,
+          countrycodes: country.toLowerCase(),
+          // Without this, the search matches anything whose name begins with
+          // the query: "Bern" in Austria resolved to BERN-001, an industrial
+          // landuse area near Berndorf, and the town was reported as existing.
+          // Restricting to settlements keeps cities, towns, villages and
+          // hamlets - verified for Berlin, Wien, Sulzbach am Main, the hamlet
+          // Dornau and the umlaut-free spelling "Muenchen" - while dropping
+          // roads, buildings and industrial zones.
+          featureType: "settlement",
+          format: "json",
+          limit: 1,
+          addressdetails: 1,
+        },
+        headers: { "User-Agent": "Lomir-App/1.0" },
+        timeout: 5000,
+      },
+    );
+
+    const result = Array.isArray(response.data) ? response.data[0] : null;
+
+    if (!result) {
+      const notFound = { found: false, city: null };
+      setCachedLocation(cacheKey, notFound);
+      return res.json(notFound);
+    }
+
+    const address = result.address || {};
+    const found = {
+      found: true,
+      city:
+        address.city ||
+        address.town ||
+        address.village ||
+        address.hamlet ||
+        address.municipality ||
+        name,
+      state: address.state || null,
+      district: address.city_district || address.suburb || null,
+      postalCode: address.postcode || null,
+      latitude: parseFloat(result.lat),
+      longitude: parseFloat(result.lon),
+      displayName: result.display_name || null,
+    };
+
+    setCachedLocation(cacheKey, found);
+    return res.json(found);
+  } catch (error) {
+    console.error("City verification error:", error.message);
+    // A failed lookup must not be read as "this town does not exist" - the
+    // caller only warns when `found` is explicitly false.
+    return res.json({ found: null, unavailable: true });
+  }
+});
 
 module.exports = router;
