@@ -154,8 +154,6 @@ async function fetchFirstNominatimResult(params) {
 async function resolveLocationData(locationData = {}) {
   const postal_code = normalizeLocationValue(locationData.postal_code);
   const city = normalizeLocationValue(locationData.city);
-  const state = normalizeLocationValue(locationData.state);
-  const district = normalizeLocationValue(locationData.district);
   const country = normalizeLocationValue(locationData.country);
 
   if (!country) {
@@ -166,11 +164,20 @@ async function resolveLocationData(locationData = {}) {
   }
 
   const derivedLocation = deriveLocationFromPostalCode(postal_code, country);
+
+  // State and district are ALWAYS re-derived and never taken from the request.
+  // No form offers them, so callers fill them in from the stored record when a
+  // request does not mention them - which means an incoming value describes the
+  // *previous* location. Trusting it produced records like "Wien, Bern/Berne,
+  // Austria" after a move from Bern, and "Germany, Bayern" after clearing the
+  // city and postal code entirely. What is left here comes from the postal-code
+  // derivation; anything else is filled from the geocoding result afterwards,
+  // and stays null when the lookup finds nothing.
   const resolved = {
     postal_code,
     city: city || derivedLocation.city || null,
-    state: state || derivedLocation.state || null,
-    district: district || derivedLocation.district || null,
+    state: derivedLocation.state || null,
+    district: derivedLocation.district || null,
     country,
     latitude: null,
     longitude: null,

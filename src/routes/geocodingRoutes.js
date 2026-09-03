@@ -270,4 +270,97 @@ function formatDisplayName(address) {
   return "";
 }
 
+/**
+ * Verify that a town exists in a given country.
+ *
+ * The postal-code endpoint above cannot answer this: without a code there is
+ * nothing to look up, so a city and a country could contradict each other
+ * freely - "Berlin, Austria" was storable. This closes that gap.
+ *
+ * A country is required. Verifying a bare place name against the whole world
+ * would answer "yes" for almost any string and prove nothing.
+ *
+ * Answers 200 in both cases, with `found` saying which it is: a town that
+ * cannot be confirmed is not an error, and the caller decides what to do about
+ * it. For unambiguous places the reply carries the postal code Nominatim
+ * returns, which is what makes a suggestion possible for small towns.
+ */
+router.get("/city/:name", geocodingLimiter, async (req, res) => {
+  try {
+    const name = String(req.params.name || "").trim();
+    const country = String(req.query.country || "").trim();
+
+    if (!name) {
+      return res.status(400).json({ message: "City name is required" });
+    }
+
+    if (!country) {
+      return res.json({ found: null, needsCountry: true });
+    }
+
+    const cacheKey = `city:${name.toLowerCase()}|${country.toLowerCase()}`;
+    const cached = getCachedLocation(cacheKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const response = await axios.get(
+      "https://nominatim.openstreetmap.org/search",
+      {
+        params: {
+          city: name,
+          countrycodes: country.toLowerCase(),
+          // Without this, the search matches anything whose name begins with
+          // the query: "Bern" in Austria resolved to BERN-001, an industrial
+          // landuse area near Berndorf, and the town was reported as existing.
+          // Restricting to settlements keeps cities, towns, villages and
+          // hamlets - verified for Berlin, Wien, Sulzbach am Main, the hamlet
+          // Dornau and the umlaut-free spelling "Muenchen" - while dropping
+          // roads, buildings and industrial zones.
+          featureType: "settlement",
+          format: "json",
+          limit: 1,
+          addressdetails: 1,
+        },
+        headers: { "User-Agent": "Lomir-App/1.0" },
+        timeout: 5000,
+      },
+    );
+
+    const result = Array.isArray(response.data) ? response.data[0] : null;
+
+    if (!result) {
+      const notFound = { found: false, city: null };
+      setCachedLocation(cacheKey, notFound);
+      return res.json(notFound);
+    }
+
+    const address = result.address || {};
+    const found = {
+      found: true,
+      city:
+        address.city ||
+        address.town ||
+        address.village ||
+        address.hamlet ||
+        address.municipality ||
+        name,
+      state: address.state || null,
+      district: address.city_district || address.suburb || null,
+      postalCode: address.postcode || null,
+      latitude: parseFloat(result.lat),
+      longitude: parseFloat(result.lon),
+      displayName: result.display_name || null,
+    };
+
+    setCachedLocation(cacheKey, found);
+    return res.json(found);
+  } catch (error) {
+    console.error("City verification error:", error.message);
+    // A failed lookup must not be read as "this town does not exist" - the
+    // caller only warns when `found` is explicitly false.
+    return res.json({ found: null, unavailable: true });
+  }
+});
+
 module.exports = router;
