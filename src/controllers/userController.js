@@ -7,6 +7,7 @@ const {
 const { deleteImageKitFile } = require("../utils/imagekitUtils");
 const { ensureBadgeVisibilityColumns } = require("../utils/badgeVisibilityUtils");
 const userModel = require("../models/userModel");
+const { isSupportedLanguage } = require("../config/languages");
 
 const PUBLIC_USER_FIELDS = `
   u.id, u.username, u.first_name, u.last_name, u.bio,
@@ -107,6 +108,7 @@ const getUserById = async (req, res) => {
     u.avatar_url,
     u.is_public,
     u.is_synthetic,
+    u.preferred_language,
     COALESCE(u.hide_badges, FALSE) AS hide_badges,
     COALESCE(u.hidden_badge_ids, '{}'::INTEGER[]) AS hidden_badge_ids,
     COALESCE(u.hidden_award_ids, '{}'::INTEGER[]) AS hidden_award_ids,
@@ -350,6 +352,7 @@ const updateUser = async (req, res) => {
       avatar_url,
       avatar_file_id,
       is_public,
+      preferred_language,
     } = req.body;
     const nextAvatarFileId =
       avatar_file_id === "" ? null : (avatar_file_id ?? null);
@@ -449,6 +452,24 @@ const updateUser = async (req, res) => {
       }
     }
 
+    // The UI language, when the user picked one. Clearing it is a real
+    // choice too - an empty value means "no explicit preference", which hands
+    // the decision back to the country rule rather than to English.
+    if (preferred_language !== undefined) {
+      const nextLanguage = preferred_language || null;
+
+      if (nextLanguage !== null && !isSupportedLanguage(nextLanguage)) {
+        return res.status(400).json({
+          success: false,
+          message: "Unsupported language",
+        });
+      }
+
+      updateFields.push(`preferred_language = $${paramPosition}`);
+      queryParams.push(nextLanguage);
+      paramPosition++;
+    }
+
     // Check if location data has changed and trigger geocoding
     const newLocationData = {
       postal_code:
@@ -541,7 +562,7 @@ const updateUser = async (req, res) => {
       UPDATE users 
       SET ${updateFields.join(", ")} 
       WHERE id = $${paramPosition}
-      RETURNING id, username, email, first_name, last_name, bio, postal_code, city, country, state, district, latitude, longitude, avatar_url, is_public, is_synthetic, created_at, updated_at
+      RETURNING id, username, email, first_name, last_name, bio, postal_code, city, country, state, district, latitude, longitude, avatar_url, is_public, is_synthetic, preferred_language, created_at, updated_at
     `;
 
     const result = await pool.query(query, queryParams);
