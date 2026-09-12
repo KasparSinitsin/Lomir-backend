@@ -3,6 +3,7 @@ const emailService = require("../services/emailService");
 const contactReportModel = require("../models/contactReportModel");
 const { verifyTurnstileToken } = require("../utils/turnstileVerify");
 const { validateContactAttachments } = require("../utils/contactAttachments");
+const { DEFAULT_LANGUAGE, isSupportedLanguage } = require("../config/languages");
 
 const REPORT_TOPIC = "Report content or abuse";
 
@@ -12,6 +13,17 @@ const contactSchema = Joi.object({
   topic: Joi.string().trim().max(150).allow("", null),
   message: Joi.string().trim().min(1).max(5000).required(),
   turnstile_token: Joi.string().optional(),
+  // The language the reporter's UI was in, so the receipt email matches the
+  // page they filed from. There is no user row to resolve it from — a DSA
+  // report may be filed without an account — so it has to travel with the
+  // request.
+  //
+  // ⚠️ Deliberately NOT `.valid(...SUPPORTED_LANGUAGES)`, unlike the
+  // registration schema. That rule would turn an unexpected code into a 400 and
+  // reject the whole report over the language of its acknowledgement. This is
+  // the abuse channel: it must accept the report and get the language wrong,
+  // never the reverse. `resolveReceiptLanguage` below drops anything unknown.
+  language: Joi.string().trim().max(35).allow("", null),
 });
 
 const successResponse = {
@@ -46,14 +58,25 @@ const updateReportEmailStatus = async (report, statusUpdate) => {
   }
 };
 
+// An unsupported or absent code becomes the default rather than travelling on
+// as-is. `emailCopy()` would fall back too, but doing it here keeps the choice
+// visible at the point where it is made and is what the tests pin down.
+const resolveReceiptLanguage = (language) =>
+  isSupportedLanguage(language) ? language : DEFAULT_LANGUAGE;
+
 // Acknowledge receipt to the reporter. Best-effort: the report is already
 // persisted and its reference ID shown on screen, so a failed receipt email
 // must never fail the request.
-const sendReportReceipt = async (report, { name, email }) => {
+const sendReportReceipt = async (report, { name, email, language }) => {
   if (!report) return;
 
   try {
-    await emailService.sendReportReceiptEmail(name, email, report.reference_code);
+    await emailService.sendReportReceiptEmail(
+      name,
+      email,
+      report.reference_code,
+      resolveReceiptLanguage(language),
+    );
   } catch (receiptError) {
     console.error("Failed to send report receipt email:", receiptError);
   }
@@ -84,7 +107,7 @@ const contactController = {
         });
       }
 
-      const { name, email, topic, message, turnstile_token } = value;
+      const { name, email, topic, message, turnstile_token, language } = value;
       const shouldPersistReport = isReportTopic(topic || "");
       let report = null;
 
@@ -162,7 +185,7 @@ const contactController = {
         });
       }
 
-      await sendReportReceipt(report, { name, email });
+      await sendReportReceipt(report, { name, email, language });
 
       if (report) {
         return res
