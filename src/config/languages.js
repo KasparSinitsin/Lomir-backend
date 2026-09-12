@@ -4,6 +4,9 @@
  *
  * This list is the single source of truth on the backend: Joi validates
  * against it, and the transactional mail path reads it to pick a template.
+ * (That last clause was aspirational until 2026-09-12 — `resolveUserLanguage`
+ * had no caller at all. It is true now; the five user-facing templates in
+ * `emailService.js` are selected through it.)
  * Adding a language is an entry here plus its translations - deliberately
  * not a Postgres enum, which would need a migration for every addition.
  */
@@ -61,6 +64,52 @@ const resolveUserLanguage = (user) => {
   return getLanguageForCountry(user.country);
 };
 
+/**
+ * The guard for anything that sends mail.
+ *
+ * `resolveUserLanguage` is a pure function with a deliberate fallback chain,
+ * and it cannot tell the difference between the two reasons a field is absent:
+ *
+ *   - the user never chose a language     -> key present, value NULL
+ *   - the row was loaded by a narrow SELECT -> key not present at all
+ *
+ * The first is exactly what the country rule exists for. The second is a bug,
+ * and on 2026-09-12 it was live at **four of the five** mail call sites in
+ * `authController` — `SELECT id, username, email` and friends carry neither
+ * `preferred_language` nor `country`, so the resolver fell through to English
+ * with no error and nothing in a log. A German user resetting their password
+ * got an English mail and nothing anywhere said so.
+ *
+ * ⚠️ This check deliberately lives here rather than inside
+ * `resolveUserLanguage`: two existing tests call that function with objects
+ * that have no language key on purpose, to exercise the fallback chain. A
+ * warning in there would fire on correct calls and stop meaning anything.
+ *
+ * Call it at the point where a user row is about to decide a mail's language.
+ * It never throws — a missing column must not stop a password reset.
+ */
+const warnIfMailLanguageFieldsMissing = (user, where) => {
+  const hasLanguage =
+    !!user && ("preferred_language" in user || "preferredLanguage" in user);
+  const hasCountry = !!user && "country" in user;
+
+  if (hasLanguage && hasCountry) return true;
+
+  const missing = [
+    !hasLanguage && "preferred_language",
+    !hasCountry && "country",
+  ]
+    .filter(Boolean)
+    .join(" and ");
+
+  console.warn(
+    `[i18n] ${where}: the user row is missing ${missing}, so the mail language ` +
+      `falls back to "${DEFAULT_LANGUAGE}" silently. Widen that SELECT.`,
+  );
+
+  return false;
+};
+
 module.exports = {
   DEFAULT_LANGUAGE,
   SUPPORTED_LANGUAGES,
@@ -68,4 +117,5 @@ module.exports = {
   isSupportedLanguage,
   getLanguageForCountry,
   resolveUserLanguage,
+  warnIfMailLanguageFieldsMissing,
 };

@@ -47,7 +47,12 @@ test("changeEmail stores a pending email and sends a verification email", async 
     const query = String(sql);
     calls.push({ sql: query, params });
 
-    if (query.includes("SELECT id, username, password_hash, email FROM users")) {
+    // Matched on the shape, not the column list: this mock used to spell the
+    // SELECT out in full, and adding preferred_language/country to the real
+    // query in 2026-09-12 made it silently stop matching, return no rows, and
+    // turn a 401 into a 500. password_hash + "WHERE id = $1" is unique to the
+    // user fetch in this flow.
+    if (query.includes("password_hash") && query.includes("WHERE id = $1")) {
       return {
         rows: [
           {
@@ -122,7 +127,12 @@ test("changeEmail rejects an incorrect current password", async () => {
   db.query = async (sql) => {
     const query = String(sql);
 
-    if (query.includes("SELECT id, username, password_hash, email FROM users")) {
+    // Matched on the shape, not the column list: this mock used to spell the
+    // SELECT out in full, and adding preferred_language/country to the real
+    // query in 2026-09-12 made it silently stop matching, return no rows, and
+    // turn a 401 into a 500. password_hash + "WHERE id = $1" is unique to the
+    // user fetch in this flow.
+    if (query.includes("password_hash") && query.includes("WHERE id = $1")) {
       return {
         rows: [
           {
