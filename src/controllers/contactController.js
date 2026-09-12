@@ -4,8 +4,11 @@ const contactReportModel = require("../models/contactReportModel");
 const { verifyTurnstileToken } = require("../utils/turnstileVerify");
 const { validateContactAttachments } = require("../utils/contactAttachments");
 const { DEFAULT_LANGUAGE, isSupportedLanguage } = require("../config/languages");
-
-const REPORT_TOPIC = "Report content or abuse";
+const {
+  LEGACY_REPORT_TOPIC,
+  isReportTopic,
+  resolveTopicLabel,
+} = require("../config/contactTopics");
 
 const contactSchema = Joi.object({
   name: Joi.string().trim().min(1).max(120).required(),
@@ -37,8 +40,6 @@ const getAttachmentMetadata = (files = []) =>
     mimeType: file.mimetype,
     size: file.size,
   }));
-
-const isReportTopic = (topic = "") => topic.trim() === REPORT_TOPIC;
 
 const getReportSuccessResponse = (referenceId) => ({
   success: true,
@@ -108,7 +109,10 @@ const contactController = {
       }
 
       const { name, email, topic, message, turnstile_token, language } = value;
-      const shouldPersistReport = isReportTopic(topic || "");
+      // The code decides; the label is only ever written down. Keeping the two
+      // apart is what lets the dropdown be translated - see contactTopics.js.
+      const topicLabel = resolveTopicLabel(topic);
+      const shouldPersistReport = isReportTopic(topic);
       let report = null;
 
       if (process.env.TURNSTILE_SECRET_KEY) {
@@ -138,7 +142,7 @@ const contactController = {
           report = await contactReportModel.createReport({
             name,
             email,
-            topic: topic || REPORT_TOPIC,
+            topic: topicLabel || LEGACY_REPORT_TOPIC,
             message,
             attachments: getAttachmentMetadata(req.files),
           });
@@ -155,8 +159,8 @@ const contactController = {
 
       try {
         const emailTopic = report
-          ? `${topic || REPORT_TOPIC} (${report.reference_code})`
-          : topic;
+          ? `${topicLabel || LEGACY_REPORT_TOPIC} (${report.reference_code})`
+          : topicLabel;
         const emailResult = await emailService.sendContactFormEmail(
           name,
           email,
