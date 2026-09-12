@@ -1,4 +1,5 @@
 const mailProvider = require("./mailProvider");
+const { emailCopy, fill } = require("./emailCopy");
 
 // All transactional email goes out through the provider module (Brevo over the
 // HTTPS API, port 443). Render blocks outbound SMTP, so nodemailer/SMTP is no
@@ -34,59 +35,65 @@ const formatMessage = (value) => escapeHtml(value).replace(/\n/g, "<br/>");
 
 const cleanHeaderValue = (value = "") => String(value).replace(/[\r\n]+/g, " ");
 
+// Shared chrome, so a translated string never has to carry layout with it.
+const layout = (inner) => `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+${inner}
+          </div>
+        `;
+
+const heading = (text) =>
+  `            <h2 style="color: #6366f1; margin-bottom: 24px;">${text}</h2>`;
+
+const para = (text, { size = 16, color = "#333" } = {}) =>
+  `            <p style="font-size: ${size}px; color: ${color}; line-height: 1.6;">${text}</p>`;
+
+const button = (href, text) => `
+            <div style="text-align: center; margin: 32px 0;">
+              <a href="${href}"
+                 style="display: inline-block; background-color: #6366f1; color: white;
+                        padding: 14px 28px; text-decoration: none; border-radius: 8px;
+                        font-weight: bold; font-size: 16px;">
+                ${text}
+              </a>
+            </div>`;
+
+const linkFallback = (href, text) => `
+            <hr style="border: none; border-top: 1px solid #eee; margin: 32px 0;" />
+            <p style="font-size: 12px; color: #999;">
+              ${text}<br/>
+              <a href="${href}" style="color: #6366f1;">${href}</a>
+            </p>`;
+
 const emailService = {
   /**
    * Send verification email to new user
    */
-  async sendVerificationEmail(email, token, username) {
+  async sendVerificationEmail(email, token, username, language) {
     const verificationUrl = `${process.env.FRONTEND_URL}/verify-email?token=${token}`;
+    const t = emailCopy("verification", language);
+    const settingsHref = `${process.env.FRONTEND_URL}/settings`;
 
     try {
       const emailResult = await sendEmail({
         to: email,
-        subject: "Verify your Lomir account",
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <h2 style="color: #6366f1; margin-bottom: 24px;">Welcome to Lomir, ${username}!</h2>
-            
-            <p style="font-size: 16px; color: #333; line-height: 1.6;">
-              Thanks for signing up! Please verify your email address by clicking the button below:
-            </p>
-            
-            <div style="text-align: center; margin: 32px 0;">
-              <a href="${verificationUrl}" 
-                 style="display: inline-block; background-color: #6366f1; color: white; 
-                        padding: 14px 28px; text-decoration: none; border-radius: 8px;
-                        font-weight: bold; font-size: 16px;">
-                Verify Email Address
-              </a>
-            </div>
-            
-            <p style="font-size: 14px; color: #333; line-height: 1.6;">
-              Once verified, your profile will remain <strong>private by default</strong>.
-              Other Lomir users can only find your full profile if you actively make it public in your
-              <a href="${process.env.FRONTEND_URL}/settings" style="color: #6366f1;">account settings</a>
-              after logging in.
-            </p>
-
-            <p style="font-size: 14px; color: #666; line-height: 1.6;">
-              This link will expire in <strong>24 hours</strong>. If you don't verify your account
-              within this time, your registration will be automatically deleted and you'll need
-              to sign up again.
-            </p>
-            <p style="font-size: 14px; color: #666; line-height: 1.6;">
-              If you didn't create a Lomir account, you can safely ignore this email —
-              the unverified account will be removed automatically.
-            </p>
-            
-            <hr style="border: none; border-top: 1px solid #eee; margin: 32px 0;" />
-            
-            <p style="font-size: 12px; color: #999;">
-              If the button doesn't work, copy and paste this link into your browser:<br/>
-              <a href="${verificationUrl}" style="color: #6366f1;">${verificationUrl}</a>
-            </p>
-          </div>
-        `,
+        subject: t.subject,
+        html: layout(
+          [
+            heading(fill(t.heading, { username: escapeHtml(username) })),
+            para(t.intro),
+            button(verificationUrl, t.button),
+            para(
+              fill(t.privacy, {
+                settingsLink: `<a href="${settingsHref}" style="color: #6366f1;">${t.settingsLink}</a>`,
+              }),
+              { size: 14 },
+            ),
+            para(t.expiry, { size: 14, color: "#666" }),
+            para(t.ignore, { size: 14, color: "#666" }),
+            linkFallback(verificationUrl, t.fallback),
+          ].join("\n"),
+        ),
       });
 
       if (!emailResult.success) {
@@ -106,44 +113,25 @@ const emailService = {
   /**
    * Send password reset email
    */
-  async sendPasswordResetEmail(email, token, username) {
+  async sendPasswordResetEmail(email, token, username, language) {
     const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${token}`;
+    const t = emailCopy("passwordReset", language);
+    // Was interpolated unescaped before 2026-09-12.
+    const safeUsername = escapeHtml(username || "there");
 
     try {
       const emailResult = await sendEmail({
         to: email,
-        subject: "Reset your Lomir password",
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <h2 style="color: #6366f1; margin-bottom: 24px;">Password Reset Request</h2>
-            
-            <p style="font-size: 16px; color: #333; line-height: 1.6;">
-              Hi ${username}, we received a request to reset your Lomir password. 
-              Click the button below to create a new password:
-            </p>
-            
-            <div style="text-align: center; margin: 32px 0;">
-              <a href="${resetUrl}" 
-                 style="display: inline-block; background-color: #6366f1; color: white; 
-                        padding: 14px 28px; text-decoration: none; border-radius: 8px;
-                        font-weight: bold; font-size: 16px;">
-                Reset Password
-              </a>
-            </div>
-            
-            <p style="font-size: 14px; color: #666; line-height: 1.6;">
-              This link will expire in 1 hour. If you didn't request a password reset, 
-              you can safely ignore this email - your password will remain unchanged.
-            </p>
-            
-            <hr style="border: none; border-top: 1px solid #eee; margin: 32px 0;" />
-            
-            <p style="font-size: 12px; color: #999;">
-              If the button doesn't work, copy and paste this link into your browser:<br/>
-              <a href="${resetUrl}" style="color: #6366f1;">${resetUrl}</a>
-            </p>
-          </div>
-        `,
+        subject: t.subject,
+        html: layout(
+          [
+            heading(t.heading),
+            para(fill(t.intro, { username: safeUsername })),
+            button(resetUrl, t.button),
+            para(t.expiry, { size: 14, color: "#666" }),
+            linkFallback(resetUrl, t.fallback),
+          ].join("\n"),
+        ),
       });
 
       if (!emailResult.success) {
@@ -163,48 +151,25 @@ const emailService = {
   /**
    * Send verification email before changing an existing account email address
    */
-  async sendEmailChangeVerificationEmail(email, token, username) {
-    const verificationUrl = `${process.env.FRONTEND_URL}/verify-email-change?token=${token}`;
+  async sendEmailChangeVerificationEmail(email, token, username, language) {
+    const confirmUrl = `${process.env.FRONTEND_URL}/verify-email-change?token=${token}`;
+    const t = emailCopy("emailChange", language);
     const safeUsername = escapeHtml(username || "there");
 
     try {
       const emailResult = await sendEmail({
         to: email,
-        subject: "Confirm your new Lomir email address",
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <h2 style="color: #6366f1; margin-bottom: 24px;">Confirm your new email address</h2>
-
-            <p style="font-size: 16px; color: #333; line-height: 1.6;">
-              Hi ${safeUsername}, we received a request to use this email address for your Lomir account.
-              Please confirm the change by clicking the button below:
-            </p>
-
-            <div style="text-align: center; margin: 32px 0;">
-              <a href="${verificationUrl}"
-                 style="display: inline-block; background-color: #6366f1; color: white;
-                        padding: 14px 28px; text-decoration: none; border-radius: 8px;
-                        font-weight: bold; font-size: 16px;">
-                Confirm Email Change
-              </a>
-            </div>
-
-            <p style="font-size: 14px; color: #666; line-height: 1.6;">
-              This link will expire in <strong>24 hours</strong>. Your current email address will stay active
-              until this new address is confirmed.
-            </p>
-            <p style="font-size: 14px; color: #666; line-height: 1.6;">
-              If you did not request this change, you can ignore this email.
-            </p>
-
-            <hr style="border: none; border-top: 1px solid #eee; margin: 32px 0;" />
-
-            <p style="font-size: 12px; color: #999;">
-              If the button doesn't work, copy and paste this link into your browser:<br/>
-              <a href="${verificationUrl}" style="color: #6366f1;">${verificationUrl}</a>
-            </p>
-          </div>
-        `,
+        subject: t.subject,
+        html: layout(
+          [
+            heading(t.heading),
+            para(fill(t.intro, { username: safeUsername })),
+            button(confirmUrl, t.button),
+            para(t.expiry, { size: 14, color: "#666" }),
+            para(t.ignore, { size: 14, color: "#666" }),
+            linkFallback(confirmUrl, t.fallback),
+          ].join("\n"),
+        ),
       });
 
       if (!emailResult.success) {
@@ -212,7 +177,7 @@ const emailService = {
       }
 
       if (process.env.NODE_ENV !== "production") {
-        console.log("Email change verification email sent:", emailResult.messageId);
+        console.log("Email change verification sent:", emailResult.messageId);
       }
       return { success: true, messageId: emailResult.messageId };
     } catch (error) {
@@ -225,59 +190,36 @@ const emailService = {
    * Notify a user that their account password was just changed.
    * Sent after the change succeeds so a compromised user can react quickly.
    */
-  async sendPasswordChangedEmail(email, username) {
+  async sendPasswordChangedEmail(email, username, language) {
     const forgotPasswordUrl = `${process.env.FRONTEND_URL}/forgot-password`;
     const loginUrl = `${process.env.FRONTEND_URL}/login`;
+    const t = emailCopy("passwordChanged", language);
     const safeUsername = escapeHtml(username || "there");
 
     try {
       const emailResult = await sendEmail({
         to: email,
-        subject: "Your Lomir password was changed",
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <h2 style="color: #6366f1; margin-bottom: 24px;">Your password was changed</h2>
-
-            <p style="font-size: 16px; color: #333; line-height: 1.6;">
-              Hi ${safeUsername}, this is a confirmation that the password for your Lomir account
-              was just changed.
-            </p>
-
-            <p style="font-size: 16px; color: #333; line-height: 1.6;">
-              If you made this change, you can safely ignore this email.
-            </p>
-
-            <div style="text-align: center; margin: 32px 0;">
-              <a href="${loginUrl}"
-                 style="display: inline-block; background-color: #6366f1; color: white;
-                        padding: 14px 28px; text-decoration: none; border-radius: 8px;
-                        font-weight: bold; font-size: 16px;">
-                Login to Lomir with new Password
-              </a>
-            </div>
-
-            <p style="font-size: 14px; color: #666; line-height: 1.6;">
-              <strong>If you did not change your password</strong>, your account may be compromised.
-              Please reset your password immediately using the button below:
-            </p>
-
+        subject: t.subject,
+        html: layout(
+          [
+            heading(t.heading),
+            para(fill(t.intro, { username: safeUsername })),
+            para(t.ifYou),
+            button(loginUrl, t.loginButton),
+            para(t.warning, { size: 14, color: "#666" }),
+            // Secondary action: outlined, so the safe path stays the loud one.
+            `
             <div style="text-align: center; margin: 24px 0;">
               <a href="${forgotPasswordUrl}"
-                 style="display: inline-block; background-color: transparent; color: #6366f1;
-                        padding: 11px 24px; text-decoration: none; border-radius: 8px;
+                 style="display: inline-block; background-color: white; color: #6366f1;
+                        padding: 12px 24px; text-decoration: none; border-radius: 8px;
                         border: 1px solid #6366f1; font-weight: bold; font-size: 14px;">
-                Reset Password
+                ${t.resetButton}
               </a>
-            </div>
-
-            <hr style="border: none; border-top: 1px solid #eee; margin: 32px 0;" />
-
-            <p style="font-size: 12px; color: #999;">
-              If the button doesn't work, copy and paste this link into your browser:<br/>
-              <a href="${forgotPasswordUrl}" style="color: #6366f1;">${forgotPasswordUrl}</a>
-            </p>
-          </div>
-        `,
+            </div>`,
+            linkFallback(forgotPasswordUrl, t.fallback),
+          ].join("\n"),
+        ),
       });
 
       if (!emailResult.success) {
@@ -285,7 +227,7 @@ const emailService = {
       }
 
       if (process.env.NODE_ENV !== "production") {
-        console.log("Password changed notification sent:", emailResult.messageId);
+        console.log("Password changed notice sent:", emailResult.messageId);
       }
       return { success: true, messageId: emailResult.messageId };
     } catch (error) {
@@ -297,43 +239,35 @@ const emailService = {
   /**
    * Acknowledge receipt of an abuse / illegal-content report to the reporter
    */
-  async sendReportReceiptEmail(name, email, referenceCode) {
+  async sendReportReceiptEmail(name, email, referenceCode, language) {
+    const t = emailCopy("reportReceipt", language);
     const safeName = escapeHtml(name || "there");
     const safeReference = escapeHtml(referenceCode);
 
     try {
       const emailResult = await sendEmail({
         to: email,
-        subject: `We received your Lomir report (${cleanHeaderValue(referenceCode)})`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-            <h2 style="color: #6366f1; margin-bottom: 24px;">We received your report</h2>
-
-            <p style="font-size: 16px; color: #333; line-height: 1.6;">
-              Hi ${safeName}, thank you for reporting content or abuse on Lomir. This is an
-              automated confirmation that we have received your report and will review it.
-            </p>
-
-            <div style="background-color: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin: 24px 0;">
+        subject: fill(t.subject, {
+          reference: cleanHeaderValue(referenceCode),
+        }),
+        html: layout(
+          [
+            heading(t.heading),
+            para(fill(t.intro, { name: safeName })),
+            `
+            <div style="background-color: #f5f5f5; border-radius: 8px; padding: 16px; margin: 24px 0;">
               <p style="font-size: 14px; color: #333; line-height: 1.6; margin: 0;">
-                <strong>Reference ID:</strong> ${safeReference}
+                <strong>${t.referenceLabel}</strong> ${safeReference}
               </p>
-            </div>
-
-            <p style="font-size: 16px; color: #333; line-height: 1.6;">
-              You do not need to do anything further. Please keep this reference ID in case you
-              want to refer to your report later. If you have more details to add, simply reply
-              to this email.
-            </p>
-
+            </div>`,
+            para(t.nothingFurther),
+            `
             <hr style="border: none; border-top: 1px solid #eee; margin: 32px 0;" />
-
             <p style="font-size: 12px; color: #999;">
-              This is an automated message confirming receipt. We review reports in line with our
-              Terms of Service and will take action where appropriate.
-            </p>
-          </div>
-        `,
+              ${t.footer}
+            </p>`,
+          ].join("\n"),
+        ),
       });
 
       if (!emailResult.success) {
