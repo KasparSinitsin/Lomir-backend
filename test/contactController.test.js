@@ -100,8 +100,8 @@ test("submitContactForm persists abuse reports and returns a reference id", asyn
   };
 
   const receiptCalls = [];
-  emailService.sendReportReceiptEmail = async (name, email, referenceCode) => {
-    receiptCalls.push({ name, email, referenceCode });
+  emailService.sendReportReceiptEmail = async (name, email, referenceCode, language) => {
+    receiptCalls.push({ name, email, referenceCode, language });
     return { success: true, messageId: "receipt-123" };
   };
 
@@ -118,6 +118,7 @@ test("submitContactForm persists abuse reports and returns a reference id", asyn
       name: "Jane Reporter",
       email: "jane@example.com",
       referenceCode: "RPT-20260616-ABCD1234",
+      language: "en",
     },
   ]);
   assert.deepEqual(statusUpdates, [
@@ -249,4 +250,91 @@ test("submitContactForm still confirms the report when the receipt email fails",
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.success, true);
   assert.equal(res.body.data.referenceId, "RPT-20260616-RCPT0001");
+});
+
+// The receipt language. `sendReportReceiptEmail` has taken a `language`
+// argument since BE #321 and nobody passed one, so every reporter got an
+// English acknowledgement — including one who had just filled in a German
+// form. A report needs no account, so the language cannot be resolved from a
+// user row; it travels with the request.
+
+const captureReceiptLanguage = () => {
+  const calls = [];
+  contactReportModel.createReport = async () => ({
+    id: 15,
+    reference_code: "RPT-20260616-LANG0001",
+  });
+  contactReportModel.updateEmailStatus = async () => ({});
+  emailService.sendContactFormEmail = async () => ({
+    success: true,
+    messageId: "mail-lang",
+  });
+  emailService.sendReportReceiptEmail = async (name, email, referenceCode, language) => {
+    calls.push(language);
+    return { success: true, messageId: "receipt-lang" };
+  };
+  return calls;
+};
+
+test("submitContactForm sends the report receipt in the language the form was filed in", async () => {
+  delete process.env.TURNSTILE_SECRET_KEY;
+
+  const languages = captureReceiptLanguage();
+  const res = createResponse();
+
+  await contactController.submitContactForm(
+    createContactRequest({ body: { language: "de" } }),
+    res,
+  );
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(languages, ["de"]);
+});
+
+test("submitContactForm falls back to English when no language is sent", async () => {
+  delete process.env.TURNSTILE_SECRET_KEY;
+
+  const languages = captureReceiptLanguage();
+  const res = createResponse();
+
+  await contactController.submitContactForm(createContactRequest(), res);
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(languages, ["en"]);
+});
+
+test("submitContactForm accepts a report whose language is unsupported", async () => {
+  delete process.env.TURNSTILE_SECRET_KEY;
+
+  const languages = captureReceiptLanguage();
+  const res = createResponse();
+
+  await contactController.submitContactForm(
+    createContactRequest({ body: { language: "fr" } }),
+    res,
+  );
+
+  // The point of the loose Joi rule: an unexpected code costs the reporter a
+  // German acknowledgement, never the report itself. A `.valid(...)` rule here
+  // would answer 400 and drop an abuse report on the floor.
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.referenceId, "RPT-20260616-LANG0001");
+  assert.deepEqual(languages, ["en"]);
+});
+
+test("the receipt language survives the multipart path as a plain string field", async () => {
+  delete process.env.TURNSTILE_SECRET_KEY;
+
+  const languages = captureReceiptLanguage();
+  const res = createResponse();
+
+  // multer's memoryStorage puts every non-file field on req.body as a string,
+  // so a FormData submission reaches the schema exactly like the JSON one.
+  await contactController.submitContactForm(
+    createContactRequest({ body: { language: " de " } }),
+    res,
+  );
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(languages, ["de"], "Joi should trim the field before it is resolved");
 });
