@@ -338,3 +338,139 @@ test("the receipt language survives the multipart path as a plain string field",
   assert.equal(res.statusCode, 200);
   assert.deepEqual(languages, ["de"], "Joi should trim the field before it is resolved");
 });
+
+// The topic code. Until 2026-09-12 the `<option>` label and its value were the
+// same English string and this controller compared against that string to
+// decide whether a submission becomes a DSA report — so translating the
+// dropdown would have switched report persistence off silently. These tests
+// exist to make that failure loud if anyone re-couples the two.
+
+const captureReportPersistence = () => {
+  const captured = { reports: [], subjects: [] };
+  contactReportModel.createReport = async (report) => {
+    captured.reports.push(report);
+    return { id: 16, reference_code: "RPT-20260616-TOPIC001" };
+  };
+  contactReportModel.updateEmailStatus = async () => ({});
+  emailService.sendContactFormEmail = async (name, email, topic) => {
+    captured.subjects.push(topic);
+    return { success: true, messageId: "mail-topic" };
+  };
+  emailService.sendReportReceiptEmail = async () => ({
+    success: true,
+    messageId: "receipt-topic",
+  });
+  return captured;
+};
+
+test("submitContactForm recognises a report by its code, not by its label", async () => {
+  delete process.env.TURNSTILE_SECRET_KEY;
+
+  const captured = captureReportPersistence();
+  const res = createResponse();
+
+  await contactController.submitContactForm(
+    createContactRequest({ body: { topic: "report" } }),
+    res,
+  );
+
+  // Fails against the pre-2026-09-12 controller, which only knew the English
+  // sentence: no report, no reference id, and a 200 that looks like success.
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.data.referenceId, "RPT-20260616-TOPIC001");
+  assert.equal(captured.reports.length, 1);
+});
+
+test("the stored topic and the inbox subject stay English when a code is sent", async () => {
+  delete process.env.TURNSTILE_SECRET_KEY;
+
+  const captured = captureReportPersistence();
+  const res = createResponse();
+
+  await contactController.submitContactForm(
+    createContactRequest({ body: { topic: "report" } }),
+    res,
+  );
+
+  // contact_reports.topic holds English prose for every existing row, and the
+  // inbox mail goes to the Lomir team rather than to a user. Resolving the
+  // label on the way in keeps both true without a migration.
+  assert.equal(captured.reports[0].topic, "Report content or abuse");
+  assert.equal(
+    captured.subjects[0],
+    "Report content or abuse (RPT-20260616-TOPIC001)",
+  );
+});
+
+test("the old English topic value still files a report during the deploy window", async () => {
+  delete process.env.TURNSTILE_SECRET_KEY;
+
+  const captured = captureReportPersistence();
+  const res = createResponse();
+
+  await contactController.submitContactForm(
+    createContactRequest({ body: { topic: "Report content or abuse" } }),
+    res,
+  );
+
+  // ⚠️ Deploy order is migrate -> backend -> frontend, so this backend answers
+  // the previous frontend bundle for a while. Dropping the legacy value before
+  // the frontend ships would lose every report filed in that window.
+  assert.equal(res.statusCode, 200);
+  assert.equal(captured.reports.length, 1);
+});
+
+test("a translated report label is not mistaken for a report", async () => {
+  delete process.env.TURNSTILE_SECRET_KEY;
+
+  const captured = captureReportPersistence();
+  const res = createResponse();
+
+  await contactController.submitContactForm(
+    createContactRequest({
+      body: { topic: "Inhalte oder Missbrauch melden" },
+      files: [],
+    }),
+    res,
+  );
+
+  // Not a regression: it is the reason codes exist. A label is a label in any
+  // language, and only the code decides. The German dropdown will send
+  // "report" and be recognised; its visible text never reaches this comparison.
+  assert.equal(res.statusCode, 200);
+  assert.equal(captured.reports.length, 0);
+  assert.equal(res.body.data, undefined);
+});
+
+test("an ordinary topic code keeps its English label and files nothing", async () => {
+  delete process.env.TURNSTILE_SECRET_KEY;
+
+  const captured = captureReportPersistence();
+  const res = createResponse();
+
+  await contactController.submitContactForm(
+    createContactRequest({ body: { topic: "feedback" }, files: [] }),
+    res,
+  );
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(captured.reports.length, 0);
+  assert.equal(captured.subjects[0], "Feedback");
+});
+
+test("an unknown topic is passed through rather than rejected or replaced", async () => {
+  delete process.env.TURNSTILE_SECRET_KEY;
+
+  const captured = captureReportPersistence();
+  const res = createResponse();
+
+  await contactController.submitContactForm(
+    createContactRequest({ body: { topic: "something else" }, files: [] }),
+    res,
+  );
+
+  // Same reasoning as the loose `language` rule: the contact form must not
+  // start losing messages because a value was not on a list.
+  assert.equal(res.statusCode, 200);
+  assert.equal(captured.subjects[0], "something else");
+});

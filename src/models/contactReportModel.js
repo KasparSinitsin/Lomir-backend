@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const db = require("../config/database");
+const { LEGACY_REPORT_TOPIC } = require("../config/contactTopics");
 
 const MAX_EMAIL_ERROR_LENGTH = 500;
 
@@ -38,7 +39,10 @@ const contactReportModel = {
         referenceCode,
         name,
         email,
-        topic || "Report content or abuse",
+        // The controller resolves the label before it gets here; this is the
+        // last-resort default, kept on the same source so the English sentence
+        // lives in exactly one place.
+        topic || LEGACY_REPORT_TOPIC,
         message,
         JSON.stringify(attachments),
       ],
