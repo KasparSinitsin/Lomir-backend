@@ -9,6 +9,7 @@ const { resolveLocationData } = require("../utils/geocodingUtil");
 const { verifyTurnstileToken } = require("../utils/turnstileVerify");
 const {
   SUPPORTED_LANGUAGES,
+  resolveUserLanguage,
   warnIfMailLanguageFieldsMissing,
 } = require("../config/languages");
 const { uploadToImageKit } = require("../middlewares/uploadMiddleware");
@@ -274,6 +275,7 @@ const authController = {
         user.email,
         verificationToken,
         user.username,
+        resolveUserLanguage(user),
       );
 
       if (!emailResult.success) {
@@ -464,6 +466,7 @@ const authController = {
         user.email,
         verificationToken,
         user.username,
+        resolveUserLanguage(user),
       );
 
       if (!emailResult.success) {
@@ -670,6 +673,7 @@ const authController = {
         user.email,
         resetToken,
         user.username,
+        resolveUserLanguage(user),
       );
 
       if (!emailResult.success) {
@@ -845,6 +849,7 @@ const authController = {
         const notifyResult = await emailService.sendPasswordChangedEmail(
           user.email,
           user.username,
+          resolveUserLanguage(user),
         );
         if (!notifyResult.success) {
           console.error("Failed to send password changed notification email");
@@ -966,6 +971,7 @@ const authController = {
         newEmail,
         verificationToken,
         result.rows[0].username,
+        resolveUserLanguage(result.rows[0]),
       );
 
       if (!emailResult.success) {
