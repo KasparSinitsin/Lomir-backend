@@ -7,7 +7,10 @@ const emailService = require("../services/emailService");
 const db = require("../config/database");
 const { resolveLocationData } = require("../utils/geocodingUtil");
 const { verifyTurnstileToken } = require("../utils/turnstileVerify");
-const { SUPPORTED_LANGUAGES } = require("../config/languages");
+const {
+  SUPPORTED_LANGUAGES,
+  warnIfMailLanguageFieldsMissing,
+} = require("../config/languages");
 const { uploadToImageKit } = require("../middlewares/uploadMiddleware");
 const {
   CURRENT_AGE_CONFIRMATION_VERSION,
@@ -266,6 +269,7 @@ const authController = {
       );
 
       // Send verification email
+      warnIfMailLanguageFieldsMissing(user, "register");
       const emailResult = await emailService.sendVerificationEmail(
         user.email,
         verificationToken,
@@ -425,7 +429,7 @@ const authController = {
 
       // Find user by email
       const result = await db.query(
-        `SELECT id, username, email, email_verified 
+        `SELECT id, username, email, email_verified, preferred_language, country
    FROM users 
    WHERE LOWER(email) = LOWER($1)`,
         [email],
@@ -455,6 +459,7 @@ const authController = {
       );
 
       // Send verification email
+      warnIfMailLanguageFieldsMissing(user, "resend verification");
       const emailResult = await emailService.sendVerificationEmail(
         user.email,
         verificationToken,
@@ -634,7 +639,7 @@ const authController = {
       }
 
       const result = await db.query(
-        `SELECT id, username, email 
+        `SELECT id, username, email, preferred_language, country
    FROM users 
    WHERE LOWER(email) = LOWER($1)`,
         [email],
@@ -660,6 +665,7 @@ const authController = {
         [resetToken, tokenExpires, user.id],
       );
 
+      warnIfMailLanguageFieldsMissing(user, "password reset");
       const emailResult = await emailService.sendPasswordResetEmail(
         user.email,
         resetToken,
@@ -783,7 +789,7 @@ const authController = {
       }
 
       const result = await db.query(
-        "SELECT id, username, email, password_hash FROM users WHERE id = $1",
+        "SELECT id, username, email, password_hash, preferred_language, country FROM users WHERE id = $1",
         [userId],
       );
 
@@ -835,6 +841,7 @@ const authController = {
       // Notify the user so a compromised account can be recovered quickly.
       // A failed notification must not fail the password change itself.
       try {
+        warnIfMailLanguageFieldsMissing(user, "password changed");
         const notifyResult = await emailService.sendPasswordChangedEmail(
           user.email,
           user.username,
@@ -887,7 +894,7 @@ const authController = {
       }
 
       const result = await db.query(
-        "SELECT id, username, password_hash, email FROM users WHERE id = $1",
+        "SELECT id, username, password_hash, email, preferred_language, country FROM users WHERE id = $1",
         [userId],
       );
 
@@ -954,6 +961,7 @@ const authController = {
         [newEmail, verificationToken, tokenExpires, userId],
       );
 
+      warnIfMailLanguageFieldsMissing(result.rows[0], "email change");
       const emailResult = await emailService.sendEmailChangeVerificationEmail(
         newEmail,
         verificationToken,
