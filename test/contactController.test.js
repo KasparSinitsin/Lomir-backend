@@ -474,3 +474,124 @@ test("an unknown topic is passed through rather than rejected or replaced", asyn
   assert.equal(res.statusCode, 200);
   assert.equal(captured.subjects[0], "something else");
 });
+
+// The failure codes. `/api/contact` is the first surface in Lomir to send a
+// code beside its message, so these tests also pin the wire shape down — see
+// `src/config/contactErrors.js` for why it looks the way it does.
+
+const { CONTACT_ERROR_CODES } = require("../src/config/contactErrors");
+const {
+  validateContactAttachments,
+} = require("../src/utils/contactAttachments");
+
+test("a validation failure answers with a code as well as a message", async () => {
+  delete process.env.TURNSTILE_SECRET_KEY;
+
+  const res = createResponse();
+  await contactController.submitContactForm(
+    createContactRequest({ body: { email: "not-an-email" }, files: [] }),
+    res,
+  );
+
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.code, CONTACT_ERROR_CODES.INVALID_INPUT);
+  // ⚠️ `message` must survive. It is what makes this change additive in both
+  // directions and therefore free of any deploy order — the mistake the topic
+  // codes could not avoid.
+  assert.ok(res.body.message, "the prose fallback was dropped");
+});
+
+test("a missing CAPTCHA and a failed one are told apart by code", async () => {
+  process.env.TURNSTILE_SECRET_KEY = "secret";
+
+  const res = createResponse();
+  await contactController.submitContactForm(
+    createContactRequest({ files: [] }),
+    res,
+  );
+
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.code, CONTACT_ERROR_CODES.CAPTCHA_REQUIRED);
+});
+
+test("a rejected attachment names the rule it broke and the file", async () => {
+  delete process.env.TURNSTILE_SECRET_KEY;
+
+  const res = createResponse();
+  await contactController.submitContactForm(
+    createContactRequest({
+      files: [{ originalname: "leer.png", mimetype: "image/png", size: 0 }],
+    }),
+    res,
+  );
+
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.code, CONTACT_ERROR_CODES.ATTACHMENT_EMPTY);
+  // The file name is the one thing the frontend cannot know, so it travels.
+  // Limits like "5 MB" deliberately do not — the frontend has its own.
+  assert.deepEqual(res.body.values, { fileName: "leer.png" });
+});
+
+test("a failed report persist answers with its own code, not the generic one", async () => {
+  delete process.env.TURNSTILE_SECRET_KEY;
+  console.error = () => {};
+
+  contactReportModel.createReport = async () => {
+    throw new Error("database unavailable");
+  };
+
+  const res = createResponse();
+  await contactController.submitContactForm(createContactRequest(), res);
+
+  assert.equal(res.statusCode, 500);
+  assert.equal(res.body.code, CONTACT_ERROR_CODES.REPORT_PERSIST_FAILED);
+});
+
+test("every attachment rejection carries a code", () => {
+  const cases = [
+    [
+      [
+        { originalname: "a.png", mimetype: "image/png", size: 10 },
+        { originalname: "b.png", mimetype: "image/png", size: 10 },
+        { originalname: "c.png", mimetype: "image/png", size: 10 },
+        { originalname: "d.png", mimetype: "image/png", size: 10 },
+      ],
+      CONTACT_ERROR_CODES.ATTACHMENT_TOO_MANY,
+    ],
+    [
+      [{ originalname: "a.zip", mimetype: "application/zip", size: 10 }],
+      CONTACT_ERROR_CODES.ATTACHMENT_TYPE_UNSUPPORTED,
+    ],
+    [
+      [{ originalname: "a.png", mimetype: "image/png", size: 0 }],
+      CONTACT_ERROR_CODES.ATTACHMENT_EMPTY,
+    ],
+    [
+      [
+        { originalname: "a.png", mimetype: "image/png", size: 99 * 1024 * 1024 },
+      ],
+      CONTACT_ERROR_CODES.ATTACHMENT_TOO_LARGE,
+    ],
+  ];
+
+  for (const [files, expected] of cases) {
+    const result = validateContactAttachments(files);
+    assert.equal(result.valid, false, `${expected}: expected a rejection`);
+    assert.equal(result.code, expected);
+    assert.ok(result.error, `${expected}: lost its prose fallback`);
+  }
+});
+
+test("no two contact error codes share a value", () => {
+  const values = Object.values(CONTACT_ERROR_CODES);
+  assert.equal(
+    new Set(values).size,
+    values.length,
+    "a duplicated code would make two different failures indistinguishable",
+  );
+  // Not spellable as a translation key, on purpose: a dotted code invites
+  // `t(code)` at the consumer, which `npm run i18n:check` cannot verify.
+  for (const value of values) {
+    assert.match(value, /^[A-Z][A-Z_]*$/, `${value} is not SCREAMING_SNAKE`);
+  }
+});

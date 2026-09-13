@@ -1,3 +1,4 @@
+const { CONTACT_ERROR_CODES } = require("../config/contactErrors");
 // Contact form attachment rules - keep in sync with the frontend hardening in
 // Lomir-frontend/src/pages/Contact.jsx. These are the server-side enforcement
 // of the same limits so the rules cannot be bypassed by skipping the UI.
@@ -104,6 +105,23 @@ const validateContactAttachmentFile = (file) => {
 };
 
 /**
+ * The same check, as a code. Kept beside the message-returning version rather
+ * than replacing it: multer's `fileFilter` can only reject with an Error, so
+ * that path still needs a sentence. The controller path uses this.
+ */
+const getContactAttachmentFileErrorCode = (file) => {
+  if (hasUnsafeFileName(file.originalname)) {
+    return CONTACT_ERROR_CODES.ATTACHMENT_NAME_UNSUPPORTED;
+  }
+
+  if (!isAllowedAttachmentType(file.originalname, file.mimetype)) {
+    return CONTACT_ERROR_CODES.ATTACHMENT_TYPE_UNSUPPORTED;
+  }
+
+  return "";
+};
+
+/**
  * Full validation of the uploaded files, run in the controller after multer
  * has parsed the request. Enforces count, per-file size, empty files and the
  * combined total size that multer cannot check on its own.
@@ -118,6 +136,7 @@ const validateContactAttachments = (files = []) => {
   if (files.length > CONTACT_ATTACHMENT_LIMITS.maxFiles) {
     return {
       valid: false,
+      code: CONTACT_ERROR_CODES.ATTACHMENT_TOO_MANY,
       error: `You can attach up to ${CONTACT_ATTACHMENT_LIMITS.maxFiles} files.`,
     };
   }
@@ -127,12 +146,19 @@ const validateContactAttachments = (files = []) => {
   for (const file of files) {
     const fileError = validateContactAttachmentFile(file);
     if (fileError) {
-      return { valid: false, error: `${file.originalname}: ${fileError}` };
+      return {
+        valid: false,
+        code: getContactAttachmentFileErrorCode(file),
+        values: { fileName: file.originalname },
+        error: `${file.originalname}: ${fileError}`,
+      };
     }
 
     if (!file.size || file.size <= 0) {
       return {
         valid: false,
+        code: CONTACT_ERROR_CODES.ATTACHMENT_EMPTY,
+        values: { fileName: file.originalname },
         error: `${file.originalname}: File is empty and cannot be attached.`,
       };
     }
@@ -140,6 +166,8 @@ const validateContactAttachments = (files = []) => {
     if (file.size > CONTACT_ATTACHMENT_LIMITS.maxBytesPerFile) {
       return {
         valid: false,
+        code: CONTACT_ERROR_CODES.ATTACHMENT_TOO_LARGE,
+        values: { fileName: file.originalname },
         error: `${file.originalname}: Each file must be ${CONTACT_ATTACHMENT_MAX_MB} MB or smaller.`,
       };
     }
@@ -150,6 +178,7 @@ const validateContactAttachments = (files = []) => {
   if (totalBytes > CONTACT_ATTACHMENT_LIMITS.maxTotalBytes) {
     return {
       valid: false,
+      code: CONTACT_ERROR_CODES.ATTACHMENT_TOTAL_TOO_LARGE,
       error: `Attachments must be ${CONTACT_ATTACHMENT_TOTAL_MAX_MB} MB total or smaller.`,
     };
   }
@@ -158,6 +187,7 @@ const validateContactAttachments = (files = []) => {
 };
 
 module.exports = {
+  getContactAttachmentFileErrorCode,
   CONTACT_ATTACHMENT_LIMITS,
   CONTACT_ATTACHMENT_MAX_MB,
   CONTACT_ATTACHMENT_TOTAL_MAX_MB,

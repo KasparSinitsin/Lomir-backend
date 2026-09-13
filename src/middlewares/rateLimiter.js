@@ -1,6 +1,14 @@
 const rateLimit = require("express-rate-limit");
+const { CONTACT_ERROR_CODES } = require("../config/contactErrors");
 
-const createRateLimiter = ({ windowMs, max, message }) =>
+/**
+ * `code` is optional and additive: a limiter that passes one lets the frontend
+ * translate the refusal, and a limiter that does not keeps sending prose only,
+ * exactly as before. Added for the contact form (the first surface to send
+ * error codes — see `config/contactErrors.js`); the other five limiters are
+ * unchanged and can adopt it one at a time.
+ */
+const createRateLimiter = ({ windowMs, max, message, code }) =>
   rateLimit({
     windowMs,
     max,
@@ -11,6 +19,7 @@ const createRateLimiter = ({ windowMs, max, message }) =>
     handler: (req, res, next, options) => {
       res.status(options.statusCode).json({
         success: false,
+        ...(code ? { code } : {}),
         message: options.message,
       });
     },
@@ -48,6 +57,7 @@ const contactLimiter = createRateLimiter({
   windowMs: 60 * 60 * 1000,
   max: 5,
   message: "Too many messages. Please try again later.",
+  code: CONTACT_ERROR_CODES.RATE_LIMITED,
 });
 
 // Public postal-code lookup. Generous enough for typing-driven autofill, but
