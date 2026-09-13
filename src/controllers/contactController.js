@@ -4,6 +4,7 @@ const contactReportModel = require("../models/contactReportModel");
 const { verifyTurnstileToken } = require("../utils/turnstileVerify");
 const { validateContactAttachments } = require("../utils/contactAttachments");
 const { DEFAULT_LANGUAGE, isSupportedLanguage } = require("../config/languages");
+const { CONTACT_ERROR_CODES } = require("../config/contactErrors");
 const {
   LEGACY_REPORT_TOPIC,
   isReportTopic,
@@ -95,7 +96,11 @@ const contactController = {
 
         return res.status(400).json({
           success: false,
+          code: CONTACT_ERROR_CODES.INVALID_INPUT,
           message: "Invalid input data",
+          // ⚠️ Raw Joi text, and developer-facing. No frontend renders it —
+          // Contact.jsx reads `message` only — so it is deliberately left
+          // untranslated rather than given codes of its own.
           errors: error.details.map((detail) => detail.message),
         });
       }
@@ -104,6 +109,8 @@ const contactController = {
       if (!attachmentValidation.valid) {
         return res.status(400).json({
           success: false,
+          code: attachmentValidation.code,
+          values: attachmentValidation.values,
           message: attachmentValidation.error,
         });
       }
@@ -119,6 +126,7 @@ const contactController = {
         if (!turnstile_token) {
           return res.status(400).json({
             success: false,
+            code: CONTACT_ERROR_CODES.CAPTCHA_REQUIRED,
             message: "CAPTCHA verification is required",
           });
         }
@@ -132,6 +140,7 @@ const contactController = {
 
           return res.status(400).json({
             success: false,
+            code: CONTACT_ERROR_CODES.CAPTCHA_FAILED,
             message: "CAPTCHA verification failed. Please try again.",
           });
         }
@@ -151,6 +160,7 @@ const contactController = {
 
           return res.status(500).json({
             success: false,
+            code: CONTACT_ERROR_CODES.REPORT_PERSIST_FAILED,
             message:
               "Failed to receive your report. Please try again in a few minutes.",
           });
@@ -203,6 +213,7 @@ const contactController = {
 
       return res.status(500).json({
         success: false,
+        code: CONTACT_ERROR_CODES.CONTACT_FAILED,
         message: "Failed to submit contact form",
       });
     }
