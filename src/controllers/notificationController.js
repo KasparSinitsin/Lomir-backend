@@ -221,6 +221,10 @@ const notifyTeamMembers = async ({
 // ============================================================================
 const notifyTeamAdmins = async ({
   teamId,
+  // The person who caused the notification, when they may be an owner/admin
+  // themselves (an admin applying for a role) — nobody is notified of their
+  // own action.
+  excludeUserId = null,
   type,
   title,
   message = null,
@@ -232,8 +236,9 @@ const notifyTeamAdmins = async ({
     // Get team owner and admins
     const adminsResult = await db.query(
       `SELECT user_id FROM team_members 
-       WHERE team_id = $1 AND role IN ('owner', 'admin')`,
-      [teamId],
+       WHERE team_id = $1 AND role IN ('owner', 'admin')
+         AND user_id IS DISTINCT FROM $2`,
+      [teamId, excludeUserId],
     );
 
     const notifications = [];

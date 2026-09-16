@@ -1332,6 +1332,7 @@ const applyToJoinTeam = async (req, res) => {
 
           const adminNotifications = await notifyTeamAdmins({
             teamId: parseInt(teamId),
+            excludeUserId: applicantId,
             type: "application_received",
             title: isAlreadyMember
               ? `${applicantName} applied for a role in ${team.name}`
