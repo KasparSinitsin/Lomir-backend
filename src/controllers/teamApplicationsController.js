@@ -1330,7 +1330,7 @@ const applyToJoinTeam = async (req, res) => {
               ? `${applicant.first_name} ${applicant.last_name}`
               : applicant.username;
 
-          await notifyTeamAdmins({
+          const adminNotifications = await notifyTeamAdmins({
             teamId: parseInt(teamId),
             type: "application_received",
             title: isAlreadyMember
@@ -1342,10 +1342,12 @@ const applyToJoinTeam = async (req, res) => {
             actorId: applicantId,
           });
 
-          // Emit socket events to team admins
+          // Emit to exactly the owners/admins who got the stored notification.
+          // ⚠️ Not `team:${teamId}`: that room holds every member, and plain
+          // members got a "New Application" toast they cannot act on.
           const io = req.app.get("io");
           if (io) {
-            io.to(`team:${teamId}`).emit("notification:new", {
+            const socketPayload = {
               type: "application_received",
               teamId: parseInt(teamId),
               teamName: team.name,
@@ -1356,7 +1358,15 @@ const applyToJoinTeam = async (req, res) => {
                 ? `New role application for ${team.name}`
                 : `New application to join ${team.name}`,
               actorName: applicantName,
-            });
+            };
+            const adminIds = new Set(
+              adminNotifications
+                .map((notification) => notification?.user_id)
+                .filter((id) => id != null),
+            );
+            for (const adminId of adminIds) {
+              io.to(`user:${adminId}`).emit("notification:new", socketPayload);
+            }
           }
         } catch (notificationError) {
           console.error(

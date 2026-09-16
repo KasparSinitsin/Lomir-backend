@@ -300,3 +300,106 @@ test("applyToJoinTeam rejects duplicate internal role application for same role"
   assert.match(res.body.message, /already have a pending application for this role/i);
   assert.equal(connectCalled, false);
 });
+
+// --- notification:new audience -------------------------------------------
+// The stored application_received notification goes to owners/admins only
+// (notifyTeamAdmins). The socket emit used to go to `team:${teamId}`, so every
+// plain member got a "New Application" toast. It must reach exactly the
+// people the notification was stored for.
+
+function createIoRecorder() {
+  const emits = [];
+  return {
+    emits,
+    io: {
+      to(room) {
+        return {
+          emit(event, payload) {
+            emits.push({ room, event, payload });
+          },
+        };
+      },
+    },
+  };
+}
+
+function buildAudienceQueryStub({ isMember }) {
+  return async (sql, params = []) => {
+    if (sql.includes("FROM teams") && sql.includes("archived_at IS NULL")) {
+      return { rows: [{ id: 42, name: "Alpha", owner_id: 2, max_members: 5 }] };
+    }
+    if (sql.includes("FROM team_vacant_roles")) {
+      return { rows: [{ id: 9 }] };
+    }
+    if (sql.includes("FROM team_members WHERE team_id = $1 AND user_id = $2")) {
+      return { rows: isMember ? [{ id: 77 }] : [] };
+    }
+    if (sql.includes("COUNT(*) as count FROM team_members")) {
+      return { rows: [{ count: "3" }] };
+    }
+    if (sql.includes("FROM team_applications") && sql.includes("status = 'pending'")) {
+      return { rows: [] };
+    }
+    if (sql.includes("FROM users WHERE id = $1")) {
+      return { rows: [{ first_name: "Test", last_name: "User", username: "testuser" }] };
+    }
+    if (
+      sql.includes("SELECT user_id FROM team_members") &&
+      sql.includes("role IN ('owner', 'admin')")
+    ) {
+      // Owner 2 and admin 5; plain member 8 is deliberately absent.
+      return { rows: [{ user_id: 2 }, { user_id: 5 }] };
+    }
+    if (sql.includes("INSERT INTO notifications")) {
+      return { rows: [{ id: 500 + params[0], user_id: params[0] }] };
+    }
+    throw new Error(`Unexpected pool SQL in audience stub: ${sql}`);
+  };
+}
+
+for (const { label, isMember, body } of [
+  {
+    label: "an application to join",
+    isMember: false,
+    body: { message: "I'd love to help.", isDraft: false },
+  },
+  {
+    label: "a member's role application",
+    isMember: true,
+    body: { message: "I want to take on this role.", isDraft: false, roleId: 9 },
+  },
+]) {
+  test(`applyToJoinTeam emits application_received only to owners/admins for ${label}`, async () => {
+    const { client } = buildClientStub();
+    const { io, emits } = createIoRecorder();
+
+    db.pool.query = buildAudienceQueryStub({ isMember });
+    db.pool.connect = async () => client;
+
+    const req = createRequest(body);
+    req.app = { get: (key) => (key === "io" ? io : null) };
+    const res = createResponse();
+
+    await teamController.applyToJoinTeam(req, res);
+
+    assert.equal(res.statusCode, 201);
+
+    const received = emits.filter(
+      ({ event, payload }) =>
+        event === "notification:new" && payload?.type === "application_received",
+    );
+
+    assert.deepEqual(
+      received.map(({ room }) => room).sort(),
+      ["user:2", "user:5"],
+    );
+    assert.equal(emits.some(({ room }) => room.startsWith("team:")), false);
+
+    for (const { payload } of received) {
+      assert.equal(payload.teamId, 42);
+      assert.equal(payload.teamName, "Alpha");
+      assert.equal(payload.isRoleApplication, isMember);
+      assert.equal(payload.actorName, "Test User");
+    }
+  });
+}
