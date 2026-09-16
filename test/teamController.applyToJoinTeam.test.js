@@ -323,7 +323,7 @@ function createIoRecorder() {
   };
 }
 
-function buildAudienceQueryStub({ isMember }) {
+function buildAudienceQueryStub({ isMember, adminIds = [2, 5], adminQueries = [] }) {
   return async (sql, params = []) => {
     if (sql.includes("FROM teams") && sql.includes("archived_at IS NULL")) {
       return { rows: [{ id: 42, name: "Alpha", owner_id: 2, max_members: 5 }] };
@@ -347,8 +347,14 @@ function buildAudienceQueryStub({ isMember }) {
       sql.includes("SELECT user_id FROM team_members") &&
       sql.includes("role IN ('owner', 'admin')")
     ) {
-      // Owner 2 and admin 5; plain member 8 is deliberately absent.
-      return { rows: [{ user_id: 2 }, { user_id: 5 }] };
+      // Owner 2 and admin 5 by default; plain member 8 is deliberately absent.
+      // Mirrors the SQL's `user_id IS DISTINCT FROM $2`.
+      adminQueries.push({ sql, params });
+      return {
+        rows: adminIds
+          .filter((id) => params[1] == null || id !== params[1])
+          .map((id) => ({ user_id: id })),
+      };
     }
     if (sql.includes("INSERT INTO notifications")) {
       return { rows: [{ id: 500 + params[0], user_id: params[0] }] };
@@ -403,3 +409,37 @@ for (const { label, isMember, body } of [
     }
   });
 }
+
+test("applyToJoinTeam does not notify or toast an admin about their own role application", async () => {
+  const { client } = buildClientStub();
+  const { io, emits } = createIoRecorder();
+  const adminQueries = [];
+  const insertedFor = [];
+
+  // The applicant (req.user.id = 7) is an admin of team 42.
+  const stub = buildAudienceQueryStub({ isMember: true, adminIds: [2, 7], adminQueries });
+  db.pool.query = async (sql, params = []) => {
+    if (sql.includes("INSERT INTO notifications")) insertedFor.push(params[0]);
+    return stub(sql, params);
+  };
+  db.pool.connect = async () => client;
+
+  const req = createRequest({ message: "I'll take this role.", isDraft: false, roleId: 9 });
+  req.app = { get: (key) => (key === "io" ? io : null) };
+  const res = createResponse();
+
+  await teamController.applyToJoinTeam(req, res);
+
+  assert.equal(res.statusCode, 201);
+  assert.equal(adminQueries.length, 1);
+  assert.equal(adminQueries[0].sql.includes("IS DISTINCT FROM $2"), true);
+  assert.equal(adminQueries[0].params[1], 7);
+  assert.deepEqual(insertedFor, [2]);
+  assert.deepEqual(
+    emits
+      .filter(({ event, payload }) =>
+        event === "notification:new" && payload?.type === "application_received")
+      .map(({ room }) => room),
+    ["user:2"],
+  );
+});
