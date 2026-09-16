@@ -633,6 +633,7 @@ test("respondToInvitation fills the linked vacant role when accepting with fill_
   assert.ok(inviterSocketEvent);
   assert.equal(inviterSocketEvent.payload.roleFilled, true);
   assert.equal(inviterSocketEvent.payload.filledRoleName, "Backend Developer");
+  assert.equal(inviterSocketEvent.payload.teamName, "Alpha");
 });
 
 test("respondToInvitation leaves the linked vacant role open when fill_role is false", async () => {
@@ -775,6 +776,7 @@ test("respondToInvitation keeps the decline flow unchanged", async () => {
       payload.type === "invitation_declined",
   );
   assert.ok(declineSocketEvent);
+  assert.equal(declineSocketEvent.payload.teamName, "Alpha");
 });
 
 test("respondToInvitation clears the invitee's stale invitation notification and refreshes their bell", async () => {
@@ -1131,4 +1133,72 @@ test("respondToInvitation accept for internal role invite with fill_role false s
     teamMessageCall.params[2],
     "🎯 Jamie Doe was assigned the role Backend Developer!",
   );
+});
+
+// The toast renders from these fields in the reader's language; `title` stays
+// English on the wire as the fallback for an older frontend.
+test("sendTeamInvitation emits invitation_received with the team name as data", async () => {
+  const { query } = buildSendInvitationPoolQueryStub();
+  const { io, emits } = createIoRecorder();
+
+  db.pool.query = query;
+  db.query = async (sql) => {
+    if (sql.includes("INSERT INTO notifications")) {
+      return { rows: [{ id: 503 }] };
+    }
+    throw new Error(`Unexpected db SQL: ${sql}`);
+  };
+
+  const req = createRequest({
+    body: { inviteeId: 99, message: "Welcome to the team!" },
+    io,
+  });
+  const res = createResponse();
+
+  await invitationController.sendTeamInvitation(req, res);
+
+  assert.equal(res.statusCode, 201);
+  const event = emits.find(
+    ({ room, event, payload }) =>
+      room === "user:99" &&
+      event === "notification:new" &&
+      payload.type === "invitation_received",
+  );
+  assert.ok(event);
+  assert.equal(event.payload.teamName, "Alpha");
+  assert.equal(event.payload.actorName, "Alice Admin");
+  assert.equal(typeof event.payload.title, "string");
+});
+
+test("sendTeamInvitation emits role_invitation with team and role name as data", async () => {
+  const { query } = buildSendInvitationPoolQueryStub({ isMember: true });
+  const { io, emits } = createIoRecorder();
+
+  db.pool.query = query;
+  db.query = async (sql) => {
+    if (sql.includes("INSERT INTO notifications")) {
+      return { rows: [{ id: 504 }] };
+    }
+    throw new Error(`Unexpected db SQL: ${sql}`);
+  };
+
+  const req = createRequest({
+    body: { inviteeId: 99, message: "Take this role?", roleId: 9 },
+    io,
+  });
+  const res = createResponse();
+
+  await invitationController.sendTeamInvitation(req, res);
+
+  assert.equal(res.statusCode, 201);
+  const event = emits.find(
+    ({ room, event, payload }) =>
+      room === "user:99" &&
+      event === "notification:new" &&
+      payload.type === "role_invitation",
+  );
+  assert.ok(event);
+  assert.equal(event.payload.teamName, "Alpha");
+  assert.equal(event.payload.roleName, "Backend Developer");
+  assert.equal(typeof event.payload.title, "string");
 });

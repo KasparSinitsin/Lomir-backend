@@ -5,6 +5,8 @@ const db = require("../src/config/database");
 const teamController = require("../src/controllers/teamApplicationsController");
 
 const originalQuery = db.pool.query;
+const originalDbQuery = db.query;
+const originalConnect = db.pool.connect;
 
 function createResponse() {
   return {
@@ -23,6 +25,8 @@ function createResponse() {
 
 test.afterEach(() => {
   db.pool.query = originalQuery;
+  db.query = originalDbQuery;
+  db.pool.connect = originalConnect;
 });
 
 test("getTeamApplications includes filled_by and filled_by_user on embedded roles", async () => {
@@ -145,4 +149,102 @@ test("getTeamApplications includes filled_by and filled_by_user on embedded role
       sql.includes("LEFT JOIN users fu ON vr.filled_by = fu.id"),
     ),
   );
+});
+
+// The toast renders from these fields in the reader's language; `title` stays
+// English on the wire as the fallback for an older frontend.
+test("handleTeamApplication decline emits application_rejected with the team name as data", async () => {
+  const emits = [];
+  const io = {
+    to(room) {
+      return {
+        emit(event, payload) {
+          emits.push({ room, event, payload });
+        },
+      };
+    },
+  };
+
+  db.pool.query = async (sql) => {
+    if (sql.includes("FROM team_applications ta")) {
+      return {
+        rows: [
+          {
+            id: 5,
+            team_id: 42,
+            applicant_id: 7,
+            owner_id: 3,
+            max_members: 5,
+            team_name: "Alpha",
+            role: "owner",
+            role_id: null,
+            role_name: null,
+            applicant_first_name: "Jamie",
+            applicant_last_name: "Doe",
+            applicant_username: "jamiedoe",
+          },
+        ],
+      };
+    }
+    if (sql.includes("SELECT first_name, last_name, username FROM users WHERE id = $1")) {
+      return { rows: [{ first_name: "Alice", last_name: "Admin", username: "aliceadmin" }] };
+    }
+    throw new Error(`Unexpected pool SQL in decline test: ${sql}`);
+  };
+
+  db.pool.connect = async () => ({
+    async query(sql, params = []) {
+      if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql.trim())) return { rows: [] };
+      if (sql.includes("DELETE FROM notifications")) return { rows: [] };
+      if (sql.includes("UPDATE team_applications")) return { rows: [] };
+      if (sql.includes("INSERT INTO messages")) {
+        return {
+          rows: [
+            {
+              id: 600,
+              sender_id: 3,
+              receiver_id: 7,
+              content: params[2],
+              sent_at: "2026-09-16T12:00:00.000Z",
+            },
+          ],
+        };
+      }
+      throw new Error(`Unexpected client SQL in decline test: ${sql}`);
+    },
+    release() {},
+  });
+
+  db.query = async (sql) => {
+    if (sql.includes("SELECT username, first_name, last_name FROM users")) {
+      return { rows: [{ username: "aliceadmin", first_name: "Alice", last_name: "Admin" }] };
+    }
+    if (sql.includes("INSERT INTO notifications")) {
+      return { rows: [{ id: 900 }] };
+    }
+    throw new Error(`Unexpected db SQL in decline test: ${sql}`);
+  };
+
+  const req = {
+    params: { applicationId: "5" },
+    user: { id: 3 },
+    body: { action: "decline" },
+    app: { get: () => io },
+  };
+  const res = createResponse();
+
+  await teamController.handleTeamApplication(req, res);
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.success, true);
+  const event = emits.find(
+    ({ room, event, payload }) =>
+      room === "user:7" &&
+      event === "notification:new" &&
+      payload.type === "application_rejected",
+  );
+  assert.ok(event);
+  assert.equal(event.payload.teamName, "Alpha");
+  assert.equal(event.payload.actorName, "Alice Admin");
+  assert.equal(typeof event.payload.title, "string");
 });

@@ -754,6 +754,7 @@ const removeTeamMember = async (req, res) => {
         io?.to(`user:${memberId}`).emit("notification:new", {
           type: "member_removed",
           teamId: parseInt(teamId),
+          teamName,
           title: `You were removed from ${teamName}`,
           actorName: removerName,
         });

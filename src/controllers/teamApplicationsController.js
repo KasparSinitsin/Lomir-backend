@@ -856,6 +856,7 @@ const handleTeamApplication = async (req, res) => {
               io.to(`user:${application.applicant_id}`).emit("notification:new", {
                 type: "application_approved",
                 teamId: application.team_id,
+                teamName: application.team_name,
                 title: approvalTitle,
                 actorName: approverName,
                 ...(application.role_id && application.role_name
@@ -1029,6 +1030,7 @@ const handleTeamApplication = async (req, res) => {
             io.to(`user:${deferredInviteSocketData.applicantId}`).emit("notification:new", {
               type: "role_application_deferred_invite",
               teamId: deferredInviteSocketData.teamId,
+              teamName: deferredInviteSocketData.teamName,
               roleId: deferredInviteSocketData.roleId,
               roleName: deferredInviteSocketData.roleName,
               title: `Your application for ${deferredInviteSocketData.roleName} in ${deferredInviteSocketData.teamName} is now a role offer`,
@@ -1120,6 +1122,7 @@ const handleTeamApplication = async (req, res) => {
             io.to(`user:${application.applicant_id}`).emit("notification:new", {
               type: "application_rejected",
               teamId: application.team_id,
+              teamName: application.team_name,
               title: `Your application to ${application.team_name} was declined`,
               actorName: approverName,
             });
@@ -1345,6 +1348,10 @@ const applyToJoinTeam = async (req, res) => {
             io.to(`team:${teamId}`).emit("notification:new", {
               type: "application_received",
               teamId: parseInt(teamId),
+              teamName: team.name,
+              // The title's two variants: a member applying for a role, or
+              // someone applying to join.
+              isRoleApplication: isAlreadyMember,
               title: isAlreadyMember
                 ? `New role application for ${team.name}`
                 : `New application to join ${team.name}`,
