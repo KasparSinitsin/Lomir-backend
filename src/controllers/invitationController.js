@@ -264,7 +264,9 @@ const sendTeamInvitation = async (req, res) => {
           io.to(`user:${finalInviteeId}`).emit("notification:new", {
             type: "role_invitation",
             teamId: parseInt(teamId),
+            teamName: team.name,
             roleId: finalRoleId,
+            roleName,
             title: `You've been invited to fill the role '${roleName}' in ${team.name}`,
             actorName: inviterName,
           });
@@ -285,6 +287,7 @@ const sendTeamInvitation = async (req, res) => {
           io.to(`user:${finalInviteeId}`).emit("notification:new", {
             type: "invitation_received",
             teamId: parseInt(teamId),
+            teamName: team.name,
             title: finalRoleId && roleName
               ? `You've been invited to join ${team.name} as ${roleName}!`
               : `You've been invited to join ${team.name}!`,
@@ -1225,6 +1228,7 @@ const respondToInvitation = async (req, res) => {
               io.to(`user:${invitation.inviter_id}`).emit("notification:new", {
                 type: "invitation_accepted",
                 teamId: invitation.team_id,
+                teamName: invitation.team_name,
                 roleFilled,
                 filledRoleName,
                 title: filledRoleName
@@ -1313,6 +1317,7 @@ const respondToInvitation = async (req, res) => {
             io.to(`user:${invitation.inviter_id}`).emit("notification:new", {
               type: "invitation_declined",
               teamId: invitation.team_id,
+              teamName: invitation.team_name,
               title: invitation.role_id && invitation.role_name
                 ? `Your invitation to join ${invitation.team_name} as ${invitation.role_name} was declined`
                 : `Your invitation to ${invitation.team_name} was declined`,
@@ -1482,6 +1487,7 @@ const cancelInvitation = async (req, res) => {
         io.to(`user:${invitation.invitee_id}`).emit("notification:new", {
           type: "invitation_cancelled",
           teamId: teamId,
+          teamName: invitation.team_name,
           title: invitation.role_id && invitation.role_name
             ? `Your invitation to join ${invitation.team_name} as ${invitation.role_name} was cancelled`
             : `Your invitation to ${invitation.team_name} was cancelled`,
