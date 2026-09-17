@@ -16,6 +16,8 @@
  * - "full stack" OR backend → phrase OR single term
  */
 
+const { SEARCH_ERROR_CODES } = require("../config/searchErrors");
+
 const OPERATORS = {
   AND: "AND",
   OR: "OR",
@@ -362,14 +364,22 @@ function validateBooleanQuery(query) {
   const tokens = tokenize(query);
 
   if (!tokens.length) {
-    return { valid: false, message: "Search query is empty." };
+    return {
+      valid: false,
+      code: SEARCH_ERROR_CODES.QUERY_EMPTY,
+      message: "Search query is empty.",
+    };
   }
 
   // quick mismatched quotes check
   const doubleQuotes = (query.match(/"/g) || []).length;
   const singleQuotes = (query.match(/'/g) || []).length;
   if (doubleQuotes % 2 !== 0 || singleQuotes % 2 !== 0) {
-    return { valid: false, message: "Unclosed quote in search query." };
+    return {
+      valid: false,
+      code: SEARCH_ERROR_CODES.UNCLOSED_QUOTE,
+      message: "Unclosed quote in search query.",
+    };
   }
 
   const isOp = (t) => t.type === "OPERATOR";
@@ -382,6 +392,8 @@ function validateBooleanQuery(query) {
   ) {
     return {
       valid: false,
+      code: SEARCH_ERROR_CODES.STARTS_WITH_OPERATOR,
+      values: { operator: tokens[0].value },
       message: `Query cannot start with "${tokens[0].value}".`,
     };
   }
@@ -390,6 +402,8 @@ function validateBooleanQuery(query) {
   if (isOp(tokens[tokens.length - 1])) {
     return {
       valid: false,
+      code: SEARCH_ERROR_CODES.ENDS_WITH_OPERATOR,
+      values: { operator: tokens[tokens.length - 1].value },
       message: `Query cannot end with "${tokens[tokens.length - 1].value}".`,
     };
   }
@@ -405,6 +419,7 @@ function validateBooleanQuery(query) {
         if (!next || !isTerm(next)) {
           return {
             valid: false,
+            code: SEARCH_ERROR_CODES.NOT_WITHOUT_TERM,
             message: `NOT must be followed by a search term.`,
           };
         }
@@ -412,6 +427,8 @@ function validateBooleanQuery(query) {
         if (!prev || !isTerm(prev) || !next || !isTerm(next)) {
           return {
             valid: false,
+            code: SEARCH_ERROR_CODES.OPERATOR_WITHOUT_TERMS,
+            values: { operator: t.value },
             message: `${t.value} must be between two search terms.`,
           };
         }
