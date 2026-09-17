@@ -21,6 +21,8 @@
 const TEAM_ERROR_CODES = {
   TEAM_NOT_FOUND: "TEAM_NOT_FOUND",
   TEAM_FULL: "TEAM_FULL",
+  // values: { memberCount } — a new maximum below the current member count
+  MAX_MEMBERS_BELOW_MEMBER_COUNT: "MAX_MEMBERS_BELOW_MEMBER_COUNT",
 
   ROLE_NOT_FOUND: "ROLE_NOT_FOUND",
   ROLE_NOT_OPEN: "ROLE_NOT_OPEN",
