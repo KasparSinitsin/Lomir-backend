@@ -5,6 +5,7 @@ const db = require("../src/config/database");
 const invitationController = require("../src/controllers/invitationController");
 const teamApplicationsController = require("../src/controllers/teamApplicationsController");
 const vacantRoleController = require("../src/controllers/vacantRoleController");
+const teamController = require("../src/controllers/teamController");
 const { TEAM_ERROR_CODES } = require("../src/config/teamErrors");
 
 const originalQuery = db.pool.query;
@@ -63,7 +64,7 @@ test("TEAM_ERROR_CODES are spelled as their own names", () => {
     assert.equal(value, name);
     assert.match(value, /^[A-Z_]+$/);
   }
-  assert.equal(Object.keys(TEAM_ERROR_CODES).length, 14);
+  assert.equal(Object.keys(TEAM_ERROR_CODES).length, 15);
 });
 
 // --- sendTeamInvitation ----------------------------------------------------
@@ -312,5 +313,40 @@ test("updateVacantRole, deleteVacantRole and updateVacantRoleStatus answer a del
     const res = createResponse();
     await handler(request({ params, body }), res);
     assertCoded(res, 404, TEAM_ERROR_CODES.ROLE_NOT_FOUND);
+  }
+});
+
+// --- team settings -------------------------------------------------------------
+
+async function updateTeam(body, memberCount) {
+  const updates = [];
+  db.pool.query = route([
+    [["FROM teams t", "tm.role = 'owner' OR tm.role = 'admin'"], [{ id: 42, role: "owner" }]],
+    [["COUNT(*) AS count FROM team_members"], [{ count: String(memberCount) }]],
+  ]);
+  db.pool.connect = async () => ({
+    query: async (sql) => {
+      updates.push(sql.trim());
+      if (sql.includes("UPDATE teams")) return { rows: [{ id: 42, max_members: body.max_members }] };
+      return { rows: [] };
+    },
+    release() {},
+  });
+  const res = createResponse();
+  await teamController.updateTeam(request({ params: { id: "42" }, body }), res);
+  return { res, updates };
+}
+
+test("updateTeam refuses a maximum below the member count with MAX_MEMBERS_BELOW_MEMBER_COUNT", async () => {
+  const { res, updates } = await updateTeam({ max_members: 7 }, 9);
+  assertCoded(res, 400, TEAM_ERROR_CODES.MAX_MEMBERS_BELOW_MEMBER_COUNT, { memberCount: 9 });
+  assert.equal(updates.length, 0, "nothing is written");
+});
+
+test("updateTeam accepts a maximum equal to the member count, and unlimited", async () => {
+  for (const [body, count] of [[{ max_members: 9 }, 9], [{ max_members: null }, 30]]) {
+    const { res, updates } = await updateTeam(body, count);
+    assert.notEqual(res.body?.code, TEAM_ERROR_CODES.MAX_MEMBERS_BELOW_MEMBER_COUNT);
+    assert.ok(updates.some((sql) => sql.startsWith("UPDATE teams")), JSON.stringify(res.body));
   }
 });

@@ -10,6 +10,7 @@ const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer");
 const { deleteImageKitFile } = require("../utils/imagekitUtils");
 const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
+const { TEAM_ERROR_CODES } = require("../config/teamErrors");
 
 const TEAM_RETURNING_FIELDS = `
   id,
@@ -437,6 +438,26 @@ const updateTeam = async (req, res) => {
         message: "Invalid input data",
         errors: error.details.map((detail) => detail.message),
       });
+    }
+
+    // A maximum below the current member count would leave the team over
+    // capacity ("9/7"). The form prevents it; this answers a stale form, e.g.
+    // someone joined while it was open. `null` (unlimited) is always allowed.
+    if (value.max_members !== undefined && value.max_members !== null) {
+      const memberCountResult = await db.pool.query(
+        `SELECT COUNT(*) AS count FROM team_members WHERE team_id = $1`,
+        [teamId],
+      );
+      const memberCount = parseInt(memberCountResult.rows[0].count, 10);
+
+      if (value.max_members < memberCount) {
+        return res.status(400).json({
+          success: false,
+          code: TEAM_ERROR_CODES.MAX_MEMBERS_BELOW_MEMBER_COUNT,
+          values: { memberCount },
+          message: `This team already has ${memberCount} members. The maximum cannot be lower.`,
+        });
+      }
     }
 
     // Normalize location rules:
