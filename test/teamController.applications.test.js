@@ -312,6 +312,7 @@ test("handleTeamApplication answers 404 for an application that is no longer pen
 
   assert.equal(res.statusCode, 404);
   assert.equal(res.body.success, false);
+  assert.equal(res.body.code, "APPLICATION_UNAVAILABLE");
   assert.match(selects[0].sql, /ta\.status = 'pending'/);
   assert.equal(connected, false);
   assert.equal(emits.length, 0);
@@ -352,6 +353,7 @@ for (const action of ["approve", "decline"]) {
 
     assert.equal(res.statusCode, 404);
     assert.equal(res.body.success, false);
+    assert.equal(res.body.code, "APPLICATION_UNAVAILABLE");
     assert.ok(statements.includes("ROLLBACK"));
     assert.ok(!statements.includes("COMMIT"));
     assert.equal(emits.length, 0);
