@@ -8,6 +8,7 @@ const {
 const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer");
 const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
+const { TEAM_ERROR_CODES } = require("../config/teamErrors");
 
 const buildRoleApplicationDeferredInviteMessage = ({
   teamId,
@@ -308,6 +309,7 @@ const cancelApplication = async (req, res) => {
     if (applicationResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
+        code: TEAM_ERROR_CODES.APPLICATION_UNAVAILABLE,
         message: "Application not found or cannot be canceled",
       });
     }
@@ -669,6 +671,7 @@ const handleTeamApplication = async (req, res) => {
     if (applicationResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
+        code: TEAM_ERROR_CODES.APPLICATION_UNAVAILABLE,
         message: APPLICATION_NOT_PENDING_MESSAGE,
       });
     }
@@ -737,6 +740,7 @@ const handleTeamApplication = async (req, res) => {
             await client.query("ROLLBACK");
             return res.status(400).json({
               success: false,
+              code: TEAM_ERROR_CODES.TEAM_FULL,
               message: "Team is already at maximum capacity",
             });
           }
@@ -772,6 +776,7 @@ const handleTeamApplication = async (req, res) => {
           await client.query("ROLLBACK");
           return res.status(404).json({
             success: false,
+            code: TEAM_ERROR_CODES.APPLICATION_UNAVAILABLE,
             message: APPLICATION_NOT_PENDING_MESSAGE,
           });
         }
@@ -1091,6 +1096,7 @@ const handleTeamApplication = async (req, res) => {
           await client.query("ROLLBACK");
           return res.status(404).json({
             success: false,
+            code: TEAM_ERROR_CODES.APPLICATION_UNAVAILABLE,
             message: APPLICATION_NOT_PENDING_MESSAGE,
           });
         }
@@ -1236,6 +1242,7 @@ const applyToJoinTeam = async (req, res) => {
     if (teamCheck.rows.length === 0) {
       return res.status(404).json({
         success: false,
+        code: TEAM_ERROR_CODES.TEAM_NOT_FOUND,
         message: "Team not found",
       });
     }
@@ -1253,6 +1260,7 @@ const applyToJoinTeam = async (req, res) => {
       if (roleCheck.rows.length === 0) {
         return res.status(400).json({
           success: false,
+          code: TEAM_ERROR_CODES.ROLE_NOT_OPEN,
           message: "Vacant role not found or is no longer open for this team",
         });
       }
@@ -1269,6 +1277,7 @@ const applyToJoinTeam = async (req, res) => {
     if (isAlreadyMember && !normalizedRoleId) {
       return res.status(400).json({
         success: false,
+        code: TEAM_ERROR_CODES.ALREADY_MEMBER,
         message: "You are already a member of this team. To apply for a role, please select a specific vacant role.",
       });
     }
@@ -1286,6 +1295,7 @@ const applyToJoinTeam = async (req, res) => {
       ) {
         return res.status(400).json({
           success: false,
+          code: TEAM_ERROR_CODES.TEAM_FULL,
           message: "Team is already at maximum capacity",
         });
       }
@@ -1302,6 +1312,7 @@ const applyToJoinTeam = async (req, res) => {
       if (existingRoleAppCheck.rows.length > 0) {
         return res.status(400).json({
           success: false,
+          code: TEAM_ERROR_CODES.APPLICATION_ALREADY_PENDING,
           message: "You already have a pending application for this role",
         });
       }
@@ -1316,6 +1327,7 @@ const applyToJoinTeam = async (req, res) => {
       if (existingApplicationCheck.rows.length > 0) {
         return res.status(400).json({
           success: false,
+          code: TEAM_ERROR_CODES.APPLICATION_ALREADY_PENDING,
           message: "You already have a pending application for this team",
         });
       }

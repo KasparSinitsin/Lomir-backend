@@ -4,6 +4,7 @@ const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 const { serializeVacantRole } = require("../utils/vacantRoleSerializer");
 const { createNotification } = require("./notificationController");
 const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
+const { TEAM_ERROR_CODES } = require("../config/teamErrors");
 
 const VACANT_ROLE_FIELDS = `
   id,
@@ -924,6 +925,7 @@ const updateVacantRole = async (req, res) => {
     if (existingRole.rows.length === 0) {
       return res.status(404).json({
         success: false,
+        code: TEAM_ERROR_CODES.ROLE_NOT_FOUND,
         message: "Vacant role not found",
       });
     }
@@ -1184,6 +1186,7 @@ const deleteVacantRole = async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({
         success: false,
+        code: TEAM_ERROR_CODES.ROLE_NOT_FOUND,
         message: "Vacant role not found",
       });
     }
@@ -1331,6 +1334,7 @@ const updateVacantRoleStatus = async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({
         success: false,
+        code: TEAM_ERROR_CODES.ROLE_NOT_FOUND,
         message: "Vacant role not found",
       });
     }
