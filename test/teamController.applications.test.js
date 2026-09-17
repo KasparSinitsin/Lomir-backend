@@ -196,7 +196,7 @@ test("handleTeamApplication decline emits application_rejected with the team nam
     async query(sql, params = []) {
       if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql.trim())) return { rows: [] };
       if (sql.includes("DELETE FROM notifications")) return { rows: [] };
-      if (sql.includes("UPDATE team_applications")) return { rows: [] };
+      if (sql.includes("UPDATE team_applications")) return { rows: [{ id: 5 }] };
       if (sql.includes("INSERT INTO messages")) {
         return {
           rows: [
@@ -248,3 +248,112 @@ test("handleTeamApplication decline emits application_rejected with the team nam
   assert.equal(event.payload.actorName, "Alice Admin");
   assert.equal(typeof event.payload.title, "string");
 });
+
+// An application is handled once. The first guard answers a stale modal (the
+// application was approved, declined or withdrawn meanwhile); the conditional
+// UPDATE answers two admins clicking at the same moment.
+const pendingApplicationRow = {
+  id: 5,
+  team_id: 42,
+  applicant_id: 7,
+  owner_id: 3,
+  max_members: 5,
+  team_name: "Alpha",
+  role: "owner",
+  role_id: null,
+  role_name: null,
+  applicant_first_name: "Jamie",
+  applicant_last_name: "Doe",
+  applicant_username: "jamiedoe",
+};
+
+function mockApplicationLookup(rows) {
+  const selects = [];
+  db.pool.query = async (sql, params = []) => {
+    if (sql.includes("FROM team_applications ta")) {
+      selects.push({ sql, params });
+      return { rows };
+    }
+    if (sql.includes("SELECT first_name, last_name, username FROM users WHERE id = $1")) {
+      return { rows: [{ first_name: "Alice", last_name: "Admin", username: "aliceadmin" }] };
+    }
+    throw new Error(`Unexpected pool SQL: ${sql}`);
+  };
+  return selects;
+}
+
+function handleRequest(action) {
+  const emits = [];
+  const req = {
+    params: { applicationId: "5" },
+    user: { id: 3 },
+    body: { action },
+    app: {
+      get: () => ({
+        to: (room) => ({ emit: (event, payload) => emits.push({ room, event, payload }) }),
+      }),
+    },
+  };
+  return { req, emits };
+}
+
+test("handleTeamApplication answers 404 for an application that is no longer pending", async () => {
+  const selects = mockApplicationLookup([]);
+  let connected = false;
+  db.pool.connect = async () => {
+    connected = true;
+    throw new Error("must not open a transaction");
+  };
+
+  const { req, emits } = handleRequest("approve");
+  const res = createResponse();
+
+  await teamController.handleTeamApplication(req, res);
+
+  assert.equal(res.statusCode, 404);
+  assert.equal(res.body.success, false);
+  assert.match(selects[0].sql, /ta\.status = 'pending'/);
+  assert.equal(connected, false);
+  assert.equal(emits.length, 0);
+});
+
+for (const action of ["approve", "decline"]) {
+  test(`handleTeamApplication ${action} rolls back when another admin handled the application first`, async () => {
+    mockApplicationLookup([pendingApplicationRow]);
+    const statements = [];
+
+    db.pool.connect = async () => ({
+      async query(sql) {
+        statements.push(sql.trim());
+        if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql.trim())) return { rows: [] };
+        if (sql.includes("DELETE FROM notifications")) return { rows: [] };
+        if (sql.includes("SELECT id FROM team_members")) return { rows: [] };
+        if (sql.includes("SELECT COUNT(*) as count FROM team_members")) {
+          return { rows: [{ count: "2" }] };
+        }
+        if (sql.includes("INSERT INTO team_members")) return { rows: [] };
+        if (sql.includes("UPDATE team_invitations")) return { rows: [] };
+        if (sql.includes("UPDATE team_applications")) {
+          assert.match(sql, /status = 'pending'/);
+          return { rows: [] };
+        }
+        throw new Error(`Unexpected client SQL after the lost race: ${sql}`);
+      },
+      release() {},
+    });
+    db.query = async (sql) => {
+      throw new Error(`Unexpected db SQL after the lost race: ${sql}`);
+    };
+
+    const { req, emits } = handleRequest(action);
+    const res = createResponse();
+
+    await teamController.handleTeamApplication(req, res);
+
+    assert.equal(res.statusCode, 404);
+    assert.equal(res.body.success, false);
+    assert.ok(statements.includes("ROLLBACK"));
+    assert.ok(!statements.includes("COMMIT"));
+    assert.equal(emits.length, 0);
+  });
+}

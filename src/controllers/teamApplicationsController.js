@@ -638,6 +638,10 @@ const getTeamApplications = async (req, res) => {
 };
 
 
+// An application is handled once. Approved, declined or withdrawn (a withdrawn
+// application is deleted) all answer the same way.
+const APPLICATION_NOT_PENDING_MESSAGE = "Application not found or already handled";
+
 const handleTeamApplication = async (req, res) => {
   try {
     const applicationId = req.params.applicationId;
@@ -658,14 +662,14 @@ const handleTeamApplication = async (req, res) => {
    LEFT JOIN team_vacant_roles vr ON ta.role_id = vr.id
    JOIN users applicant ON ta.applicant_id = applicant.id
    LEFT JOIN team_members tm ON t.id = tm.team_id AND tm.user_id = $1
-   WHERE ta.id = $2`,
+   WHERE ta.id = $2 AND ta.status = 'pending'`,
       [userId, applicationId],
     );
 
     if (applicationResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "Application not found",
+        message: APPLICATION_NOT_PENDING_MESSAGE,
       });
     }
 
@@ -753,13 +757,24 @@ const handleTeamApplication = async (req, res) => {
           );
         }
 
-        // Update application status — runs for both internal and external
-        await client.query(
+        // Update application status — runs for both internal and external.
+        // Conditional on 'pending': a second admin approving at the same
+        // moment must not add the applicant twice.
+        const approvedResult = await client.query(
           `UPDATE team_applications
    SET status = 'approved', reviewed_at = NOW(), reviewed_by = $1
-   WHERE id = $2`,
+   WHERE id = $2 AND status = 'pending'
+   RETURNING id`,
           [userId, applicationId],
         );
+
+        if (approvedResult.rows.length === 0) {
+          await client.query("ROLLBACK");
+          return res.status(404).json({
+            success: false,
+            message: APPLICATION_NOT_PENDING_MESSAGE,
+          });
+        }
 
         // Add system message to team chat for approved application
         const applicantName =
@@ -1062,13 +1077,23 @@ const handleTeamApplication = async (req, res) => {
             ? `${approver.first_name} ${approver.last_name}`
             : approver.username;
 
-        // Update application status
-        await client.query(
+        // Update application status. Conditional on 'pending': declining an
+        // application another admin just approved must not mark a member rejected.
+        const declinedResult = await client.query(
           `UPDATE team_applications 
            SET status = 'rejected', reviewed_at = NOW(), reviewed_by = $1
-           WHERE id = $2`,
+           WHERE id = $2 AND status = 'pending'
+           RETURNING id`,
           [userId, applicationId],
         );
+
+        if (declinedResult.rows.length === 0) {
+          await client.query("ROLLBACK");
+          return res.status(404).json({
+            success: false,
+            message: APPLICATION_NOT_PENDING_MESSAGE,
+          });
+        }
 
         // Get applicant's name for the message
         const applicantName =
