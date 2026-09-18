@@ -40,18 +40,18 @@ const COPY = {
         "If the button doesn't work, copy and paste this link into your browser:",
     },
     de: {
-      subject: "Bestätige dein Lomir-Konto",
+      subject: "Bestätige deinen Lomir-Account",
       heading: "Willkommen bei Lomir, {username}!",
       intro:
         "Danke für deine Anmeldung! Bitte bestätige deine E-Mail-Adresse über den Button:",
       button: "E-Mail-Adresse bestätigen",
-      settingsLink: "Kontoeinstellungen",
+      settingsLink: "Account-Einstellungen",
       privacy:
         "Nach der Bestätigung bleibt dein Profil <strong>standardmäßig privat</strong>. Andere Lomir-Mitglieder finden dein vollständiges Profil nur, wenn du es nach dem Anmelden in den {settingsLink} aktiv öffentlich machst.",
       expiry:
-        "Dieser Link ist <strong>24 Stunden</strong> gültig. Bestätigst du dein Konto nicht in dieser Zeit, wird die Registrierung automatisch gelöscht und du musst dich erneut anmelden.",
+        "Dieser Link ist <strong>24 Stunden</strong> gültig. Bestätigst du deinen Account nicht in dieser Zeit, wird die Registrierung automatisch gelöscht und du musst dich erneut anmelden.",
       ignore:
-        "Hast du kein Lomir-Konto angelegt, kannst du diese E-Mail einfach ignorieren — das unbestätigte Konto wird automatisch entfernt.",
+        "Hast du keinen Lomir-Account angelegt, kannst du diese E-Mail einfach ignorieren — der unbestätigte Account wird automatisch entfernt.",
       fallback:
         "Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:",
     },
@@ -100,7 +100,7 @@ const COPY = {
       subject: "Bestätige deine neue Lomir-E-Mail-Adresse",
       heading: "Neue E-Mail-Adresse bestätigen",
       intro:
-        "Hallo {username}, wir haben eine Anfrage erhalten, diese E-Mail-Adresse für dein Lomir-Konto zu verwenden. Bitte bestätige die Änderung über den Button:",
+        "Hallo {username}, wir haben eine Anfrage erhalten, diese E-Mail-Adresse für deinen Lomir-Account zu verwenden. Bitte bestätige die Änderung über den Button:",
       button: "Änderung bestätigen",
       expiry:
         "Dieser Link ist <strong>24 Stunden</strong> gültig. Deine bisherige E-Mail-Adresse bleibt aktiv, bis die neue bestätigt ist.",
@@ -129,11 +129,11 @@ const COPY = {
       subject: "Dein Lomir-Passwort wurde geändert",
       heading: "Dein Passwort wurde geändert",
       intro:
-        "Hallo {username}, das Passwort für dein Lomir-Konto wurde gerade geändert. Dies ist die Bestätigung dazu.",
+        "Hallo {username}, das Passwort für deinen Lomir-Account wurde gerade geändert. Dies ist die Bestätigung dazu.",
       ifYou: "Warst du das, kannst du diese E-Mail einfach ignorieren.",
       loginButton: "Mit neuem Passwort bei Lomir anmelden",
       warning:
-        "<strong>Hast du dein Passwort nicht geändert</strong>, ist dein Konto möglicherweise gefährdet. Setze das Passwort bitte sofort über den Button zurück:",
+        "<strong>Hast du dein Passwort nicht geändert</strong>, ist dein Account möglicherweise gefährdet. Setze das Passwort bitte sofort über den Button zurück:",
       resetButton: "Passwort zurücksetzen",
       fallback:
         "Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:",
@@ -157,9 +157,9 @@ const COPY = {
       heading: "Wir haben deine Meldung erhalten",
       intro:
         "Hallo {name}, danke für deine Meldung zu Inhalten oder Missbrauch auf Lomir. Dies ist eine automatische Bestätigung, dass deine Meldung eingegangen ist und geprüft wird.",
-      referenceLabel: "Vorgangsnummer:",
+      referenceLabel: "Vorgangs-ID:",
       nothingFurther:
-        "Du musst nichts weiter tun. Bewahre die Vorgangsnummer auf, falls du später auf deine Meldung Bezug nehmen möchtest. Hast du weitere Angaben, antworte einfach auf diese E-Mail.",
+        "Du musst nichts weiter tun. Bewahre die Vorgangs-ID auf, falls du später auf deine Meldung Bezug nehmen möchtest. Hast du weitere Angaben, antworte einfach auf diese E-Mail.",
       footer:
         "Dies ist eine automatische Eingangsbestätigung. Wir prüfen Meldungen gemäß unseren Nutzungsbedingungen und handeln, wo es angebracht ist.",
     },

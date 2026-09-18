@@ -83,10 +83,10 @@ test("the verification mail renders German for de and English for en", async () 
     emailService.sendVerificationEmail("a@b.test", "tok", "Anna", "de"),
   );
   assert.equal(de.length, 1);
-  assert.equal(de[0].subject, "Bestätige dein Lomir-Konto");
+  assert.equal(de[0].subject, "Bestätige deinen Lomir-Account");
   assert.match(de[0].html, /Willkommen bei Lomir, Anna!/);
   assert.match(de[0].html, /E-Mail-Adresse bestätigen/);
-  assert.match(de[0].html, /Kontoeinstellungen/);
+  assert.match(de[0].html, /Account-Einstellungen/);
   assert.doesNotMatch(de[0].html, /Thanks for signing up/);
 
   const en = await withCapturedMail(() =>
