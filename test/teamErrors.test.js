@@ -6,6 +6,7 @@ const invitationController = require("../src/controllers/invitationController");
 const teamApplicationsController = require("../src/controllers/teamApplicationsController");
 const vacantRoleController = require("../src/controllers/vacantRoleController");
 const teamController = require("../src/controllers/teamController");
+const teamMembersController = require("../src/controllers/teamMembersController");
 const { TEAM_ERROR_CODES } = require("../src/config/teamErrors");
 
 const originalQuery = db.pool.query;
@@ -64,7 +65,7 @@ test("TEAM_ERROR_CODES are spelled as their own names", () => {
     assert.equal(value, name);
     assert.match(value, /^[A-Z_]+$/);
   }
-  assert.equal(Object.keys(TEAM_ERROR_CODES).length, 15);
+  assert.equal(Object.keys(TEAM_ERROR_CODES).length, 18);
 });
 
 // --- sendTeamInvitation ----------------------------------------------------
@@ -349,4 +350,87 @@ test("updateTeam accepts a maximum equal to the member count, and unlimited", as
     assert.notEqual(res.body?.code, TEAM_ERROR_CODES.MAX_MEMBERS_BELOW_MEMBER_COUNT);
     assert.ok(updates.some((sql) => sql.startsWith("UPDATE teams")), JSON.stringify(res.body));
   }
+});
+
+// --- updateMemberRole ------------------------------------------------------
+//
+// Three of the four guards here are reachable by a race, and only those carry
+// a code (plan decision E2). The fourth — an invalid role value — cannot be
+// produced by either surface that changes roles, so it stays prose.
+
+const AUTH_OK = [["SELECT tm.role", "tm.role = 'owner' OR tm.role = 'admin'"], [{ role: "owner" }]];
+const AUTH_IS_ADMIN = [["SELECT tm.role", "tm.role = 'owner' OR tm.role = 'admin'"], [{ role: "admin" }]];
+const MEMBER_EXISTS = [["SELECT role FROM team_members"], [{ role: "member" }]];
+
+async function updateMemberRole(rules, new_role = "admin") {
+  db.pool.query = route(rules);
+  const res = createResponse();
+  await teamMembersController.updateMemberRole(
+    request({ params: { teamId: "42", memberId: "8" }, body: { new_role } }),
+    res,
+  );
+  return res;
+}
+
+test("updateMemberRole answers a caller who may no longer manage roles with ROLE_CHANGE_NOT_ALLOWED", async () => {
+  const res = await updateMemberRole([
+    [["SELECT tm.role", "tm.role = 'owner' OR tm.role = 'admin'"], []],
+  ]);
+  assertCoded(res, 403, TEAM_ERROR_CODES.ROLE_CHANGE_NOT_ALLOWED);
+});
+
+test("updateMemberRole answers a member who left meanwhile with MEMBER_UNAVAILABLE", async () => {
+  const res = await updateMemberRole([
+    AUTH_OK,
+    [["SELECT role FROM team_members"], []],
+  ]);
+  assertCoded(res, 404, TEAM_ERROR_CODES.MEMBER_UNAVAILABLE);
+});
+
+test("updateMemberRole answers an admin transferring ownership with OWNERSHIP_TRANSFER_NOT_ALLOWED", async () => {
+  const res = await updateMemberRole([AUTH_IS_ADMIN, MEMBER_EXISTS], "owner");
+  assertCoded(res, 403, TEAM_ERROR_CODES.OWNERSHIP_TRANSFER_NOT_ALLOWED);
+});
+
+test("updateMemberRole refuses to change the owner's role, whoever asks", async () => {
+  for (const auth of [AUTH_OK, AUTH_IS_ADMIN]) {
+    for (const new_role of ["member", "admin"]) {
+      const res = await updateMemberRole(
+        [auth, [["SELECT role FROM team_members"], [{ role: "owner" }]]],
+        new_role,
+      );
+      assert.equal(res.statusCode, 403, `${auth[1][0].role} -> ${new_role}`);
+      assert.equal(res.body.code, undefined, "unreachable by any UI, so prose");
+      assert.match(res.body.message, /Transfer ownership/);
+    }
+  }
+});
+
+test("updateMemberRole still lets the owner hand ownership on", async () => {
+  db.pool.query = route([AUTH_OK, MEMBER_EXISTS, [["SELECT name FROM teams"], [{ name: "Alpha" }]]]);
+  const updates = [];
+  db.pool.connect = async () => ({
+    query: async (sql) => {
+      updates.push(sql.trim());
+      return { rows: [] };
+    },
+    release() {},
+  });
+  const res = createResponse();
+  await teamMembersController.updateMemberRole(
+    request({ params: { teamId: "42", memberId: "8" }, body: { new_role: "owner" } }),
+    res,
+  );
+  assert.notEqual(res.statusCode, 403, JSON.stringify(res.body));
+  assert.ok(
+    updates.some((sql) => sql.includes("SET role = 'owner'")),
+    "the transfer branch runs",
+  );
+});
+
+test("updateMemberRole keeps the unreachable role validation as prose", async () => {
+  const res = await updateMemberRole([AUTH_OK, MEMBER_EXISTS], "supervisor");
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.code, undefined, "an unreachable guard gets no code");
+  assert.equal(typeof res.body.message, "string");
 });

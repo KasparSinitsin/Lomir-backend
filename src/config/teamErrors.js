@@ -41,6 +41,17 @@ const TEAM_ERROR_CODES = {
 
   APPLICATION_ALREADY_PENDING: "APPLICATION_ALREADY_PENDING",
   APPLICATION_UNAVAILABLE: "APPLICATION_UNAVAILABLE",
+
+  // The person whose role was being changed is no longer in the team: they
+  // left, or someone removed them, while the dialog was open.
+  MEMBER_UNAVAILABLE: "MEMBER_UNAVAILABLE",
+  // The actor may no longer change roles here — demoted to member, removed
+  // from the team, or the team was archived while the panel was open.
+  ROLE_CHANGE_NOT_ALLOWED: "ROLE_CHANGE_NOT_ALLOWED",
+  // Ownership can only be handed on by the current owner. Reachable the same
+  // way: a second owner window transferred it away first, leaving this one an
+  // admin — the role check above still passes for an admin.
+  OWNERSHIP_TRANSFER_NOT_ALLOWED: "OWNERSHIP_TRANSFER_NOT_ALLOWED",
 };
 
 module.exports = { TEAM_ERROR_CODES };
