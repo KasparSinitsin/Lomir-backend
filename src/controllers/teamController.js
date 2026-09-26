@@ -787,6 +787,27 @@ const deleteTeam = async (req, res) => {
 
     if (otherMembersResult.rows[0].count === 0) {
       await permanentlyDeleteTeam(teamId);
+
+      /**
+       * Nobody else needs telling - but the owner's own chat page does.
+       *
+       * This branch used to emit nothing at all. The conversation therefore
+       * stayed in the deleter's list until something happened to hit a 404:
+       * opening it, or the membership poll, which runs every 60s while the
+       * socket is connected and only for the *active* team chat. The archive
+       * branch below has always emitted (`notification:new`); this one never
+       * did, which is why only the solo case looked broken.
+       *
+       * No deploy order: a frontend that does not listen ignores the event,
+       * and a backend that does not send it leaves the old 404 path in place.
+       */
+      const io = req.app.get("io");
+      if (io) {
+        io.to(`user:${userId}`).emit("team:deleted", {
+          teamId: parseInt(teamId, 10),
+        });
+      }
+
       return res.status(200).json({
         success: true,
         message: "Team deleted successfully",
