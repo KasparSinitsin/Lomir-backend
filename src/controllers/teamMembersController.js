@@ -7,6 +7,7 @@ const {
 } = require("./notificationController");
 const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
 const { checkAndCleanupArchivedTeam } = require("./teamController");
+const { DEFAULT_ROLE_NAME } = require("../config/roleDefaults");
 
 const reopenRolesFilledByMember = async (queryRunner, teamId, memberId) => {
   const result = await queryRunner.query(
@@ -32,7 +33,7 @@ const buildRoleReopenedLeaveMessage = ({
   memberId,
   memberName,
 }) =>
-  `🔓 ROLE_REOPENED: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || "Vacant Role"} | ${memberId}:${memberName || "Someone"}`;
+  `🔓 ROLE_REOPENED: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || DEFAULT_ROLE_NAME} | ${memberId}:${memberName || "Someone"}`;
 
 const notifyRemainingMembersOfReopenedRoles = async ({
   req,
@@ -63,8 +64,8 @@ const notifyRemainingMembersOfReopenedRoles = async ({
       await createNotification({
         userId: member.user_id,
         type: "role_reopened",
-        title: `${memberName} left the role ${event.roleName || "Vacant Role"} in ${teamName}`,
-        message: `${event.roleName || "Vacant Role"} is open again to be filled.`,
+        title: `${memberName} left the role ${event.roleName || DEFAULT_ROLE_NAME} in ${teamName}`,
+        message: `${event.roleName || DEFAULT_ROLE_NAME} is open again to be filled.`,
         referenceType: "message",
         referenceId: event.messageRow?.id || event.roleId,
         teamId: parseInt(teamId, 10),

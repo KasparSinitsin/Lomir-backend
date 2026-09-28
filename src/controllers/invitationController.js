@@ -7,6 +7,7 @@ const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer");
 const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
 const { TEAM_ERROR_CODES } = require("../config/teamErrors");
+const { DEFAULT_ROLE_NAME } = require("../config/roleDefaults");
 
 // Remove an invitee's now-stale invitation notifications — the bell entries that
 // pointed at an invitation which has since been accepted, declined, or cancelled.
@@ -32,7 +33,7 @@ const buildRoleReopenedMessage = ({
   userId,
   userName,
 }) =>
-  `🔓 ROLE_REOPENED: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || "Vacant Role"} | ${userId}:${userName || "Someone"}`;
+  `🔓 ROLE_REOPENED: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || DEFAULT_ROLE_NAME} | ${userId}:${userName || "Someone"}`;
 
 const buildRoleInvitationFilledMessage = ({
   teamId,
@@ -42,7 +43,7 @@ const buildRoleInvitationFilledMessage = ({
   userId,
   userName,
 }) =>
-  `✅ ROLE_INVITATION_FILLED: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || "Vacant Role"} | ${userId}:${userName || "Someone"}`;
+  `✅ ROLE_INVITATION_FILLED: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || DEFAULT_ROLE_NAME} | ${userId}:${userName || "Someone"}`;
 
 /**
  * Send a team invitation to a user
