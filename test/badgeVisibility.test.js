@@ -160,3 +160,44 @@ test("a hidden award does not make its owner findable by the badge filter", () =
   assert.match(sql, /hidden_award_ids/);
   assert.match(sql, /hide_badges/);
 });
+
+test("a hidden focus area does not make its owner findable by its name", () => {
+  for (const useBoolean of [false, true]) {
+    const { query } = appendUserSearchClause({
+      userQuery: "SELECT u.id FROM users u WHERE 1=1",
+      userParams: [],
+      query: useBoolean ? "Cooking AND Baking" : "Cooking",
+      searchTerm: "%Cooking%",
+      useBoolean,
+      startParamIndex: 1,
+    });
+
+    // A focus area every hidden award took with it is shown nowhere, so
+    // matching its name would put it back within reach.
+    assert.match(query, /FROM user_tags ut2/);
+    assert.match(query, /ba_link/, `no visibility rule (useBoolean=${useBoolean})`);
+    // The bare column match is what used to let it through.
+    assert.doesNotMatch(query, /\bt\.name ILIKE/);
+  }
+});
+
+test("a hidden focus area does not make its owner findable by the focus-area filter", () => {
+  const { whereFragments } = buildUserFilters(
+    {
+      badgeIds: [],
+      combineTagBadgeWithOr: false,
+      direction: "desc",
+      excludeMatchingUser: false,
+      includeDemoData: true,
+      tagIds: [32],
+      userId: null,
+      userLocation: null,
+    },
+    1,
+  );
+
+  const sql = whereFragments.join("\n");
+  assert.match(sql, /FROM user_tags ut_filter/);
+  assert.match(sql, /JOIN users u_tag_filter/);
+  assert.match(sql, /hidden_award_ids/);
+});

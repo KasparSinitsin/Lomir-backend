@@ -5,7 +5,10 @@ const {
   buildNearestPrioritySQL,
   buildDistanceFilterSQL,
 } = require("../searchQueryBuilder");
-const { visibleAwardCondition } = require("../badgeVisibilityUtils");
+const {
+  visibleAwardCondition,
+  visibleFocusAreaCondition,
+} = require("../badgeVisibilityUtils");
 
 function getRolesSortDir(sort, direction) {
   if (sort === "proximity") {
@@ -317,7 +320,13 @@ function buildUserFilters(config, startParamIndex = 1) {
           AND (
             u.id IN (
               SELECT ut_filter.user_id FROM user_tags ut_filter
+              JOIN users u_tag_filter ON u_tag_filter.id = ut_filter.user_id
+              JOIN tags t_tag_filter ON t_tag_filter.id = ut_filter.tag_id
               WHERE ut_filter.tag_id = ANY(${tagParam}::int[])
+                AND ${visibleFocusAreaCondition({
+                userAlias: "u_tag_filter",
+                tagAlias: "t_tag_filter",
+              })}
             )
             OR u.id IN (
               SELECT DISTINCT ba_filter.awarded_to_user_id
@@ -338,7 +347,13 @@ function buildUserFilters(config, startParamIndex = 1) {
       whereFragments.push(`
           AND u.id IN (
             SELECT ut_filter.user_id FROM user_tags ut_filter
+            JOIN users u_tag_filter ON u_tag_filter.id = ut_filter.user_id
+            JOIN tags t_tag_filter ON t_tag_filter.id = ut_filter.tag_id
             WHERE ut_filter.tag_id = ANY($${nextParamIndex}::int[])
+              AND ${visibleFocusAreaCondition({
+                userAlias: "u_tag_filter",
+                tagAlias: "t_tag_filter",
+              })}
           )
         `);
       params.push(tagIds);

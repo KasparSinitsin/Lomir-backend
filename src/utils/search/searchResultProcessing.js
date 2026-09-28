@@ -5,7 +5,10 @@ const db = require("../../config/database");
 const { scoreUserAgainstRole } = require("../matchingScorer");
 const { parseBooleanSearch } = require("../booleanSearchParser");
 const { deriveLocationFromPostalCode } = require("../locationDerivation");
-const { visibleAwardCondition } = require("../badgeVisibilityUtils");
+const {
+  visibleAwardCondition,
+  visibleFocusAreaCondition,
+} = require("../badgeVisibilityUtils");
 const {
   normalizeRoleSearchRow,
   normalizeNullableNumber,
@@ -229,6 +232,22 @@ const visibleBadgeNameMatchSQL = (param) => `
                   userAlias: "u_name",
                 })}`;
 
+// The same rule for focus areas. A focus area that every hidden award has taken
+// with it is not shown anywhere, so matching on its name would put it back
+// within reach: the row would come up under a search for a focus area the
+// profile does not admit to. Self-declared focus areas with no awards, and ones
+// with a shown award, match as they always did.
+const visibleFocusAreaMatchSQL = (param) => `
+              SELECT 1
+              FROM user_tags ut2
+              JOIN tags t2 ON ut2.tag_id = t2.id
+              WHERE ut2.user_id = u.id
+                AND t2.name ILIKE ${param}
+                AND ${visibleFocusAreaCondition({
+                  userAlias: "u",
+                  tagAlias: "t2",
+                })}`;
+
 function appendUserSearchClause({
   userQuery,
   userParams,
@@ -250,10 +269,8 @@ function appendUserSearchClause({
     ];
     const userTagConfig = {
       tagColumn: "t.name",
-      existsTemplate:
-        "EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
-      notExistsTemplate:
-        "NOT EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
+      existsTemplate: `EXISTS (${visibleFocusAreaMatchSQL("$PARAM")})`,
+      notExistsTemplate: `NOT EXISTS (${visibleFocusAreaMatchSQL("$PARAM")})`,
       extraExistsTemplates: [
         `EXISTS (${visibleBadgeNameMatchSQL("$PARAM")})`,
       ],
@@ -278,7 +295,7 @@ function appendUserSearchClause({
             u.last_name ILIKE $${nextParamIndex} OR
             u.bio ILIKE $${nextParamIndex} OR
             u.city ILIKE $${nextParamIndex} OR
-            t.name ILIKE $${nextParamIndex} OR
+            EXISTS (${visibleFocusAreaMatchSQL(`$${nextParamIndex}`)}) OR
             EXISTS (${visibleBadgeNameMatchSQL(`$${nextParamIndex}`)})
           )
         `;
