@@ -729,6 +729,30 @@ const authController = {
       );
 
       if (result.rows.length === 0) {
+        // The client is told the same thing either way, on purpose: an answer
+        // that distinguished an unknown token from an expired one would confirm
+        // which reset links exist. The server log may distinguish them, and
+        // has to — when a reset failed on 2026-09-27 neither the message nor
+        // the log could tell a stale link from an expired one, and the cause
+        // was only findable by reading the row in the database. Every
+        // `forgotPassword` call overwrites `password_reset_token`, so a link
+        // from an earlier request is unknown rather than expired.
+        const known = await db.query(
+          `SELECT id, password_reset_expires FROM users
+           WHERE password_reset_token = $1`,
+          [token],
+        );
+
+        if (known.rows.length === 0) {
+          console.warn(
+            "Password reset rejected: token not found (superseded by a newer request, already used, or never issued)",
+          );
+        } else {
+          console.warn(
+            `Password reset rejected: token expired at ${known.rows[0].password_reset_expires?.toISOString?.() ?? known.rows[0].password_reset_expires} for user ${known.rows[0].id}`,
+          );
+        }
+
         return res.status(400).json({
           success: false,
           message: "Invalid or expired reset token",
