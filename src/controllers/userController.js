@@ -8,6 +8,7 @@ const { deleteImageKitFile } = require("../utils/imagekitUtils");
 const {
   ensureBadgeVisibilityColumns,
   visibleBadgeCreditsSQL,
+  hiddenBadgeCreditsSQL,
   visibleBadgesJsonSQL,
   visibleFocusAreaCondition,
 } = require("../utils/badgeVisibilityUtils");
@@ -119,10 +120,10 @@ const getUserById = async (req, res) => {
     COALESCE(u.hidden_award_ids, '{}'::INTEGER[]) AS hidden_award_ids,
     u.created_at,
     u.updated_at,
-    ${visibleBadgeCreditsSQL({
-      userAlias: "u",
-      viewerIsOwnerExpr: "$2::BOOLEAN",
-    })} AS total_badge_credits,
+    -- Shown to others, deliberately also for the owner: credits count towards a
+    -- total only once the award is visible. What is waiting comes next to it.
+    ${visibleBadgeCreditsSQL({ userAlias: "u" })} AS total_badge_credits,
+    ${hiddenBadgeCreditsSQL({ userAlias: "u" })} AS hidden_badge_credits,
 
     (
       SELECT STRING_AGG(t.name, ', ')
@@ -201,6 +202,9 @@ const getUserById = async (req, res) => {
         if (user.badges !== undefined) publicData.badges = user.badges;
         if (user.total_badge_credits !== undefined) publicData.total_badge_credits = user.total_badge_credits;
       }
+      // `hidden_badge_credits` is deliberately NOT copied here. It says that this
+      // user has awards waiting to be made visible, which is exactly the thing a
+      // stranger must not be able to infer. Owner-only, by omission.
       if (user.hide_badges !== undefined) publicData.hide_badges = user.hide_badges;
       if (user.updated_at !== undefined) publicData.updated_at = user.updated_at;
 

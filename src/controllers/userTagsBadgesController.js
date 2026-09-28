@@ -61,15 +61,19 @@ const getUserTags = async (req, res) => {
         COALESCE(tag_award_stats.badge_credits, 0)::INT AS badge_credits,
         tag_award_stats.dominant_badge_category,
         COALESCE(tag_award_stats.linked_badge_count, 0)::INT AS linked_badge_count,
-        COALESCE(tag_award_stats.awarder_count, 0)::INT AS awarder_count
+        COALESCE(tag_award_stats.awarder_count, 0)::INT AS awarder_count,
+        COALESCE(tag_award_stats.hidden_badge_credits, 0)::INT AS hidden_badge_credits,
+        COALESCE(tag_award_stats.hidden_linked_badge_count, 0)::INT AS hidden_linked_badge_count
       FROM user_tags ut
       JOIN users u ON u.id = ut.user_id
       JOIN tags t ON ut.tag_id = t.id
       LEFT JOIN LATERAL (
         SELECT
-          COALESCE(SUM(ba.credits), 0)::INT AS badge_credits,
-          COUNT(*)::INT AS linked_badge_count,
-          COUNT(DISTINCT ba.awarded_by_user_id)::INT AS awarder_count,
+          COALESCE(SUM(ba.credits) FILTER (WHERE ba_shown), 0)::INT AS badge_credits,
+          COUNT(*) FILTER (WHERE ba_shown)::INT AS linked_badge_count,
+          COUNT(DISTINCT ba.awarded_by_user_id) FILTER (WHERE ba_shown)::INT AS awarder_count,
+          COALESCE(SUM(ba.credits) FILTER (WHERE NOT ba_shown), 0)::INT AS hidden_badge_credits,
+          COUNT(*) FILTER (WHERE NOT ba_shown)::INT AS hidden_linked_badge_count,
           (
             SELECT b2.category
             FROM badge_awards ba2
@@ -79,13 +83,18 @@ const getUserTags = async (req, res) => {
               AND ${visibleAwardCondition({
                 awardAlias: "ba2",
                 userAlias: "u",
-                viewerIsOwnerExpr: "$2::BOOLEAN",
               })}
             GROUP BY b2.category
             ORDER BY SUM(ba2.credits) DESC, b2.category ASC
             LIMIT 1
           ) AS dominant_badge_category
         FROM badge_awards ba
+        CROSS JOIN LATERAL (
+          SELECT ${visibleAwardCondition({
+            awardAlias: "ba",
+            userAlias: "u",
+          })} AS ba_shown
+        ) shown_flag
         WHERE ba.tag_id = t.id
           AND ba.awarded_to_user_id = ut.user_id
           AND ${visibleAwardCondition({
@@ -113,6 +122,8 @@ const getUserTags = async (req, res) => {
             dominant_badge_category: null,
             linked_badge_count: 0,
             awarder_count: 0,
+            hidden_badge_credits: 0,
+            hidden_linked_badge_count: 0,
           }))
         : result.rows,
     });
