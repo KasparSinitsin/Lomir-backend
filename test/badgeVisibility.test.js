@@ -5,6 +5,7 @@ const db = require("../src/config/database");
 const {
   visibleAwardCondition,
   visibleBadgeCreditsSQL,
+  hiddenBadgeCreditsSQL,
   visibleBadgesJsonSQL,
   visibleFocusAreaCondition,
 } = require("../src/utils/badgeVisibilityUtils");
@@ -200,4 +201,60 @@ test("a hidden focus area does not make its owner findable by the focus-area fil
   assert.match(sql, /FROM user_tags ut_filter/);
   assert.match(sql, /JOIN users u_tag_filter/);
   assert.match(sql, /hidden_award_ids/);
+});
+
+test("credits count only once the award is shown, and what waits comes alongside", () => {
+  const sql = visibleBadgesJsonSQL({ userAlias: "u" });
+
+  // Shown and waiting are split in one pass over the same rows.
+  assert.match(sql, /SUM\(credits\) FILTER \(WHERE shown\)/);
+  assert.match(sql, /SUM\(credits\) FILTER \(WHERE NOT shown\)/);
+  assert.match(sql, /'hidden_credits'/);
+  assert.match(sql, /'hidden_award_count'/);
+  assert.match(sql, /'category_hidden_credits'/);
+
+  // `shown` is visibility to others, not the viewer's own permission: that is
+  // what makes the owner's own total exclude an award still waiting.
+  assert.match(sql, /\(FALSE\) = TRUE[\s\S]*AS shown/);
+});
+
+test("the waiting-credits total is the inverse of the visible one", () => {
+  const sql = hiddenBadgeCreditsSQL({ userAlias: "u" });
+
+  assert.match(sql, /AND NOT \(/);
+  assert.match(sql, /hidden_award_ids/);
+  // No viewer parameter: for a stranger the awards are gone before this is asked,
+  // so it is always 0 and the payload keeps one shape.
+  assert.doesNotMatch(sql, /\$\d/);
+  assert.match(visibleBadgeCreditsSQL(), /hidden_award_ids/);
+});
+
+test("a stranger is never told that awards are waiting", async () => {
+  const badgeRow = {
+    id: 373,
+    username: "benny",
+    is_public: true,
+    hide_badges: false,
+    badges: [],
+    total_badge_credits: 0,
+    hidden_badge_credits: 7,
+    updated_at: new Date().toISOString(),
+  };
+
+  db.pool.query = async (sql) => {
+    if (String(sql).includes("FROM users u")) return { rows: [badgeRow] };
+    return { rows: [] };
+  };
+  const { getUserById } = require("../src/controllers/userController");
+  const res = {
+    statusCode: 200, body: null,
+    status(c) { this.statusCode = c; return this; },
+    json(p) { this.body = p; return this; },
+  };
+
+  await getUserById({ params: { id: "373" }, user: null }, res);
+
+  // It would let a stranger infer that this user has hidden awards, which is the
+  // inference the whole visibility rule exists to prevent.
+  assert.equal(res.body.data.hidden_badge_credits, undefined);
 });
