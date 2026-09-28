@@ -40,23 +40,27 @@ test("the migration reads an existing naive value as UTC", async () => {
     const query = String(sql);
     statements.push(query);
     if (query.includes("information_schema")) {
-      return { rows: [{ data_type: "timestamp without time zone" }] };
+      return {
+        rows: [
+          { column_name: "password_reset_expires", data_type: "timestamp without time zone" },
+          { column_name: "verification_token_expires", data_type: "timestamp without time zone" },
+        ],
+      };
     }
     return { rows: [] };
   };
 
   await fixTokenExpiryTimestamps();
 
+  // Both columns in one ALTER TABLE, so the table is rewritten once.
   const alters = statements.filter((s) => s.includes("ALTER TABLE users"));
-  assert.equal(alters.length, 2);
+  assert.equal(alters.length, 1);
   for (const column of [
     "password_reset_expires",
     "verification_token_expires",
   ]) {
-    const alter = alters.find((s) => s.includes(column));
-    assert.ok(alter, `${column} is not converted`);
-    assert.match(alter, /TYPE TIMESTAMPTZ/);
-    assert.match(alter, new RegExp(`USING ${column} AT TIME ZONE 'UTC'`));
+    assert.match(alters[0], new RegExp(`ALTER COLUMN ${column} TYPE TIMESTAMPTZ`));
+    assert.match(alters[0], new RegExp(`USING ${column} AT TIME ZONE 'UTC'`));
   }
 });
 
@@ -66,7 +70,12 @@ test("the migration leaves an already-converted column alone", async () => {
     const query = String(sql);
     statements.push(query);
     if (query.includes("information_schema")) {
-      return { rows: [{ data_type: "timestamp with time zone" }] };
+      return {
+        rows: [
+          { column_name: "password_reset_expires", data_type: "timestamp with time zone" },
+          { column_name: "verification_token_expires", data_type: "timestamp with time zone" },
+        ],
+      };
     }
     return { rows: [] };
   };

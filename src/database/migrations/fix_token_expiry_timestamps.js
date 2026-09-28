@@ -1,4 +1,4 @@
-const db = require("../../config/database");
+const { convertColumnsToTimestamptz } = require("./_helpers");
 
 /**
  * `password_reset_expires` and `verification_token_expires` were
@@ -23,42 +23,16 @@ const db = require("../../config/database");
  * running in another zone — a developer machine against the shared database —
  * is off by that machine's offset. Both tokens live at most 24 hours, so any
  * row old enough to matter is expired under either reading.
+ *
+ * The guard that makes a second run a no-op is in `_helpers.js`, which this
+ * migration's first version introduced and `fix_messages_timestamps.js` now
+ * shares.
  */
 const fixTokenExpiryTimestamps = async () => {
-  const columns = ["password_reset_expires", "verification_token_expires"];
-
-  for (const column of columns) {
-    const { rows } = await db.query(
-      `SELECT data_type
-       FROM information_schema.columns
-       WHERE table_name = 'users' AND column_name = $1`,
-      [column],
-    );
-
-    if (rows.length === 0) {
-      console.log(`users.${column} not found — skipping`);
-      continue;
-    }
-
-    // Guard the conversion on the current type. `x AT TIME ZONE 'UTC'` reads a
-    // naive timestamp as UTC, but applied to a value that is already
-    // TIMESTAMPTZ it returns a naive wall clock instead, which would be shifted
-    // again by the session timezone on the way back in. Running this migration
-    // twice must not move the data.
-    if (rows[0].data_type !== "timestamp without time zone") {
-      console.log(
-        `users.${column} is already ${rows[0].data_type} — skipping`,
-      );
-      continue;
-    }
-
-    await db.query(
-      `ALTER TABLE users
-         ALTER COLUMN ${column} TYPE TIMESTAMPTZ
-         USING ${column} AT TIME ZONE 'UTC'`,
-    );
-    console.log(`users.${column} converted to TIMESTAMPTZ`);
-  }
+  await convertColumnsToTimestamptz("users", [
+    "password_reset_expires",
+    "verification_token_expires",
+  ]);
 };
 
 module.exports = fixTokenExpiryTimestamps;
