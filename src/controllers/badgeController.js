@@ -375,10 +375,15 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW())
       try {
         await client.query("SAVEPOINT tag_credit_sp");
 
-        // Upsert: add tag to user_tags if not exists, then increment badge_credits
+        // Upsert: add tag to user_tags if not exists, then increment badge_credits.
+        // ⚠️ **`source` is written on INSERT and never on UPDATE, deliberately.**
+        // A focus area this award brings into being is `'award'` and stays
+        // invisible to others until the award is shown; one the user had already
+        // chosen keeps `'user'` and is not demoted by someone else's award. The
+        // `DO UPDATE` branch therefore touches credits only.
         await client.query(
-          `INSERT INTO user_tags (user_id, tag_id, badge_credits)
-           VALUES ($1, $2, $3)
+          `INSERT INTO user_tags (user_id, tag_id, badge_credits, source)
+           VALUES ($1, $2, $3, 'award')
            ON CONFLICT (user_id, tag_id) DO UPDATE
            SET badge_credits = user_tags.badge_credits + $3`,
           [awarded_to_user_id, resolvedTagId, Number(credits)],
@@ -562,6 +567,43 @@ const deleteBadgeAward = async (req, res) => {
       deletedAward.awarded_to_user_id,
       deletedAward.tag_id,
     );
+
+    // The visibility switch outlived the award it pointed at. Harmless, because
+    // serial ids are never reused, but the array only ever grew — measured
+    // 2026-09-29, 7 ids across the database referred to awards that no longer
+    // existed. Every badge read path carries this array, so it is worth keeping
+    // honest.
+    await client.query(
+      `UPDATE users
+          SET hidden_award_ids = ARRAY_REMOVE(
+                COALESCE(hidden_award_ids, '{}'::INTEGER[]), $1::INTEGER
+              )
+        WHERE id = $2`,
+      [deletedAward.id, deletedAward.awarded_to_user_id],
+    );
+
+    // A focus area that only ever existed because of this award goes with it.
+    // ⚠️ **Only a `'award'` row, and only once nothing is left on it.** One the
+    // user chose stays whatever happens to the badges hanging off it — that is
+    // the whole point of `source`. Found by walking the delete path on
+    // 2026-09-29: deleting Anne's only `Testing & QA` award left the focus area
+    // standing, and from that moment it was indistinguishable from one she had
+    // picked herself.
+    if (deletedAward.tag_id) {
+      await client.query(
+        `DELETE FROM user_tags ut
+          WHERE ut.user_id = $1
+            AND ut.tag_id = $2
+            AND ut.source = 'award'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM badge_awards ba
+              WHERE ba.tag_id = ut.tag_id
+                AND ba.awarded_to_user_id = ut.user_id
+            )`,
+        [deletedAward.awarded_to_user_id, deletedAward.tag_id],
+      );
+    }
 
     await client.query("COMMIT");
 

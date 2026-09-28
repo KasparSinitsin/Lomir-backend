@@ -107,6 +107,7 @@ const getUserTags = async (req, res) => {
         AND ${visibleFocusAreaCondition({
           userAlias: "u",
           tagAlias: "t",
+          linkAlias: "ut",
           viewerIsOwnerExpr: "$2::BOOLEAN",
         })}
     `,
@@ -188,16 +189,35 @@ const updateUserTags = async (req, res) => {
       }
     }
 
-    // Delete existing tags for this user
-    await client.query("DELETE FROM user_tags WHERE user_id = $1", [userId]);
+    // Replace the user's OWN focus areas, and only those.
+    // 🔴 **This used to delete every row and re-insert the submitted list**,
+    // which is how the distinction between a chosen focus area and one an award
+    // created was destroyed: the form shows both, so saving the profile silently
+    // adopted the award-created ones as the user's, permanently and with the
+    // default levels stamped on. Measured on user 374, 2026-09-28 — all three of
+    // their focus areas carried `interest 3 / experience 2`.
+    // `'award'` rows are not the user's list and are left where they are;
+    // `badgeController` owns them.
+    await client.query(
+      "DELETE FROM user_tags WHERE user_id = $1 AND source = 'user'",
+      [userId],
+    );
 
     // Insert new tags
     if (tags && tags.length > 0) {
       const tagInserts = tags.map((tag) =>
         client.query(
           `
-          INSERT INTO user_tags (user_id, tag_id, experience_level, interest_level, badge_credits, dominant_badge_category)
-          VALUES ($1, $2, $3, $4, $5, $6)
+          INSERT INTO user_tags (user_id, tag_id, experience_level, interest_level, badge_credits, dominant_badge_category, source)
+          VALUES ($1, $2, $3, $4, $5, $6, 'user')
+          -- A submitted tag that already exists as 'award' becomes the user's.
+          -- The form no longer offers the award-created ones, so putting one in
+          -- the list is a deliberate claim: they are saying this is theirs, and
+          -- it should stop depending on whether that badge is shown.
+          ON CONFLICT (user_id, tag_id) DO UPDATE SET
+            experience_level = EXCLUDED.experience_level,
+            interest_level = EXCLUDED.interest_level,
+            source = 'user'
         `,
           [
             userId,

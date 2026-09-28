@@ -133,6 +133,7 @@ const getUserById = async (req, res) => {
         AND ${visibleFocusAreaCondition({
           userAlias: "u",
           tagAlias: "t",
+          linkAlias: "ut",
           viewerIsOwnerExpr: "$2::BOOLEAN",
         })}
     ) as tags,

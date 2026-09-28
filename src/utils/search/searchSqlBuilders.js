@@ -326,6 +326,7 @@ function buildUserFilters(config, startParamIndex = 1) {
                 AND ${visibleFocusAreaCondition({
                 userAlias: "u_tag_filter",
                 tagAlias: "t_tag_filter",
+                linkAlias: "ut_filter",
               })}
             )
             OR u.id IN (
@@ -353,6 +354,7 @@ function buildUserFilters(config, startParamIndex = 1) {
               AND ${visibleFocusAreaCondition({
                 userAlias: "u_tag_filter",
                 tagAlias: "t_tag_filter",
+                linkAlias: "ut_filter",
               })}
           )
         `);

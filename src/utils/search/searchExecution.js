@@ -457,6 +457,7 @@ ${teamDistanceSelect}
             AND ${visibleFocusAreaCondition({
               userAlias: "u",
               tagAlias: "t",
+              linkAlias: "ut",
             })}) as tags,
           -- The badges a stranger may see. Search has no owner view, so a
           -- user's own row carries exactly what everyone else is served.
