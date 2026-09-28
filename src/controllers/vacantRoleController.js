@@ -5,6 +5,7 @@ const { serializeVacantRole } = require("../utils/vacantRoleSerializer");
 const { createNotification } = require("./notificationController");
 const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
 const { TEAM_ERROR_CODES } = require("../config/teamErrors");
+const { DEFAULT_ROLE_NAME } = require("../config/roleDefaults");
 
 const VACANT_ROLE_FIELDS = `
   id,
@@ -144,7 +145,7 @@ const buildRoleEventMessage = ({
   const config = ROLE_EVENT_MESSAGE_TYPES[type];
   if (!config || !teamId || !roleId) return null;
 
-  const baseMessage = `${config.emoji} ${config.marker}: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || "Vacant Role"}`;
+  const baseMessage = `${config.emoji} ${config.marker}: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || DEFAULT_ROLE_NAME}`;
 
   if (type === "role_filled") {
     const filledToken = `${filledUserId ?? actorId}:${filledUserName || actorName || "Someone"}`;
@@ -853,7 +854,7 @@ const createVacantRole = async (req, res) => {
           [userId],
         );
         const actorName = getUserDisplayName(actorResult.rows[0]);
-        const roleName = role.roleName || role.role_name || "Vacant Role";
+        const roleName = role.roleName || role.role_name || DEFAULT_ROLE_NAME;
         await notifyTeamMembersOfRoleEvent({
           req,
           teamId,
@@ -1104,7 +1105,7 @@ const updateVacantRole = async (req, res) => {
         ]);
         const teamName = teamResult.rows[0]?.name || "your team";
         const actorName = getUserDisplayName(actorResult.rows[0]);
-        const roleName = updatedRole.roleName || updatedRole.role_name || "Vacant Role";
+        const roleName = updatedRole.roleName || updatedRole.role_name || DEFAULT_ROLE_NAME;
         await notifyTeamMembersOfRoleEvent({
           req,
           teamId,
@@ -1201,7 +1202,7 @@ const deleteVacantRole = async (req, res) => {
       ]);
       const teamName = teamResult.rows[0]?.name || "your team";
       const actorName = getUserDisplayName(actorResult.rows[0]);
-      const roleName = result.rows[0].role_name || "Vacant Role";
+      const roleName = result.rows[0].role_name || DEFAULT_ROLE_NAME;
 
       // Remove stale unread notifications about this specific role before sending role_deleted
       await db.pool.query(
@@ -1356,7 +1357,7 @@ const updateVacantRoleStatus = async (req, res) => {
       ]);
       const teamName = teamResult.rows[0]?.name || "your team";
       const actorName = getUserDisplayName(actorResult.rows[0]);
-      const roleName = updatedRole.roleName || updatedRole.role_name || "Vacant Role";
+      const roleName = updatedRole.roleName || updatedRole.role_name || DEFAULT_ROLE_NAME;
       const filledUser = updatedRole.filled_by_user || updatedRole.filledByUser || null;
       const filledUserName = filledUser ? getUserDisplayName(filledUser) : null;
       const notificationByStatus = {

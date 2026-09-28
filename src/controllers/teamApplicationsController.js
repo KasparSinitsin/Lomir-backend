@@ -9,6 +9,7 @@ const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer");
 const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
 const { TEAM_ERROR_CODES } = require("../config/teamErrors");
+const { DEFAULT_ROLE_NAME } = require("../config/roleDefaults");
 
 const buildRoleApplicationDeferredInviteMessage = ({
   teamId,
@@ -22,7 +23,7 @@ const buildRoleApplicationDeferredInviteMessage = ({
   currentRoleId,
   currentRoleName,
 }) =>
-  `📬 ROLE_APPLICATION_DEFERRED_INVITE: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || "Vacant Role"} | ${applicantId}:${applicantName || "Someone"} | ${approverId}:${approverName || "Someone"} | ${currentRoleId}:${currentRoleName || "their current role"}`;
+  `📬 ROLE_APPLICATION_DEFERRED_INVITE: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || DEFAULT_ROLE_NAME} | ${applicantId}:${applicantName || "Someone"} | ${approverId}:${approverName || "Someone"} | ${currentRoleId}:${currentRoleName || "their current role"}`;
 
 const getUserPendingApplications = async (req, res) => {
   try {
