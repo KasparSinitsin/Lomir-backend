@@ -5,7 +5,12 @@ const {
   resolveLocationData,
 } = require("../utils/geocodingUtil");
 const { deleteImageKitFile } = require("../utils/imagekitUtils");
-const { ensureBadgeVisibilityColumns } = require("../utils/badgeVisibilityUtils");
+const {
+  ensureBadgeVisibilityColumns,
+  visibleBadgeCreditsSQL,
+  visibleBadgesJsonSQL,
+  visibleFocusAreaCondition,
+} = require("../utils/badgeVisibilityUtils");
 const userModel = require("../models/userModel");
 const { isSupportedLanguage } = require("../config/languages");
 
@@ -114,99 +119,26 @@ const getUserById = async (req, res) => {
     COALESCE(u.hidden_award_ids, '{}'::INTEGER[]) AS hidden_award_ids,
     u.created_at,
     u.updated_at,
-    COALESCE((
-      SELECT SUM(ba.credits)
-      FROM badge_awards ba
-      WHERE ba.awarded_to_user_id = u.id
-        AND (
-          $2::BOOLEAN = TRUE
-          OR NOT (ba.id = ANY(COALESCE(u.hidden_award_ids, '{}'::INTEGER[])))
-        )
-    ), 0) AS total_badge_credits,
+    ${visibleBadgeCreditsSQL({
+      userAlias: "u",
+      viewerIsOwnerExpr: "$2::BOOLEAN",
+    })} AS total_badge_credits,
 
     (
       SELECT STRING_AGG(t.name, ', ')
       FROM user_tags ut
       JOIN tags t ON ut.tag_id = t.id
       WHERE ut.user_id = u.id
+        AND ${visibleFocusAreaCondition({
+          userAlias: "u",
+          tagAlias: "t",
+          viewerIsOwnerExpr: "$2::BOOLEAN",
+        })}
     ) as tags,
-       (
-      SELECT COALESCE(
-        json_agg(
-          json_build_object(
-            'id', badge_rows.badge_id,
-            'name', badge_rows.badge_name,
-            'category', badge_rows.category,
-            'color', badge_rows.badge_color,
-            'cat_image_url', badge_rows.cat_image_url,
-            'total_credits', badge_rows.total_credits,
-            'award_count', badge_rows.award_count,
-            'awarder_count', badge_rows.awarder_count,
-            'category_total_credits', badge_rows.category_total_credits,
-            'category_award_count', badge_rows.category_award_count,
-            'category_awarder_count', badge_rows.category_awarder_count,
-            'last_awarded_at', badge_rows.last_awarded_at
-          )
-          ORDER BY
-            badge_rows.category_total_credits DESC,
-            badge_rows.category ASC,
-            badge_rows.total_credits DESC,
-            badge_rows.badge_name ASC
-        ),
-        '[]'::json
-      )
-      FROM (
-        WITH visible_awards AS (
-          SELECT
-            ba.id,
-            ba.badge_id,
-            ba.credits,
-            ba.awarded_by_user_id,
-            ba.created_at,
-            b.name AS badge_name,
-            b.category,
-            b.color AS badge_color,
-            b.cat_image_url
-          FROM badge_awards ba
-          JOIN badges b ON b.id = ba.badge_id
-          WHERE ba.awarded_to_user_id = u.id
-            AND (
-              $2::BOOLEAN = TRUE
-              OR NOT (ba.id = ANY(COALESCE(u.hidden_award_ids, '{}'::INTEGER[])))
-            )
-        ),
-        badge_totals AS (
-          SELECT
-            badge_id,
-            badge_name,
-            category,
-            badge_color,
-            cat_image_url,
-            COALESCE(SUM(credits), 0)::INT AS total_credits,
-            COUNT(*)::INT AS award_count,
-            COUNT(DISTINCT awarded_by_user_id)::INT AS awarder_count,
-            MAX(created_at) AS last_awarded_at
-          FROM visible_awards
-          GROUP BY badge_id, badge_name, category, badge_color, cat_image_url
-        ),
-        category_totals AS (
-          SELECT
-            category,
-            COALESCE(SUM(credits), 0)::INT AS category_total_credits,
-            COUNT(*)::INT AS category_award_count,
-            COUNT(DISTINCT awarded_by_user_id)::INT AS category_awarder_count
-          FROM visible_awards
-          GROUP BY category
-        )
-        SELECT
-          bt.*,
-          ct.category_total_credits,
-          ct.category_award_count,
-          ct.category_awarder_count
-        FROM badge_totals bt
-        JOIN category_totals ct ON ct.category = bt.category
-      ) badge_rows
-    ) as badges
+       ${visibleBadgesJsonSQL({
+      userAlias: "u",
+      viewerIsOwnerExpr: "$2::BOOLEAN",
+    })} as badges
 
   FROM users u
   WHERE u.id = $1
