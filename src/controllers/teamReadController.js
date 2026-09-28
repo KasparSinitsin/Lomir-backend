@@ -1,4 +1,5 @@
 const db = require("../config/database");
+const { visibleAwardCondition } = require("../utils/badgeVisibilityUtils");
 
 const PUBLIC_TEAM_FIELDS = `
   t.id, t.name, t.description, t.is_public, t.max_members,
@@ -159,7 +160,15 @@ const getTeamById = async (req, res) => {
       [teamId, viewerIsMember],
     );
 
-    // Get team tags — enriched with aggregated badge credits from team members
+    // Get team tags — enriched with aggregated badge credits from team members.
+    // ⚠️ **The enrichment goes through the badge visibility rule, like every other
+    // badge read path.** A team's focus areas are a shared surface, so there is no
+    // owner exception here either (BE #340): an award its recipient has not made
+    // visible must not reach the pill's credits, its colour or the header total —
+    // otherwise the same team shows different numbers to different people, and a
+    // hidden award is readable by inference from a credit that only it explains.
+    // Found by Julia, 2026-09-28: the modal correctly showed no badge wall while
+    // the focus area above it counted the very award the wall had filtered out.
     const tagsResult = await db.pool.query(
       `
       SELECT
@@ -178,6 +187,15 @@ const getTeamById = async (req, res) => {
             AND ba2.awarded_to_user_id IN (
               SELECT user_id FROM team_members WHERE team_id = $1
             )
+            AND EXISTS (
+              SELECT 1
+              FROM users recipient2
+              WHERE recipient2.id = ba2.awarded_to_user_id
+                AND ${visibleAwardCondition({
+                  awardAlias: "ba2",
+                  userAlias: "recipient2",
+                })}
+            )
           GROUP BY b2.category
           ORDER BY SUM(ba2.credits) DESC
           LIMIT 1
@@ -188,6 +206,15 @@ const getTeamById = async (req, res) => {
         ON ba.tag_id = t.id
         AND ba.awarded_to_user_id IN (
           SELECT user_id FROM team_members WHERE team_id = $1
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM users recipient
+          WHERE recipient.id = ba.awarded_to_user_id
+            AND ${visibleAwardCondition({
+              awardAlias: "ba",
+              userAlias: "recipient",
+            })}
         )
       WHERE tt.team_id = $1
       GROUP BY tt.tag_id, t.id, t.name, t.category, t.supercategory
