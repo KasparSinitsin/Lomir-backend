@@ -19,6 +19,11 @@ const {
   appendTeamSearchClause,
   appendUserSearchClause,
 } = require("./searchResultProcessing");
+const {
+  visibleAwardCondition,
+  visibleBadgesJsonSQL,
+  visibleFocusAreaCondition,
+} = require("../badgeVisibilityUtils");
 
 async function fetchOpenRoleSearchResults({
   query = null,
@@ -421,42 +426,41 @@ ${teamDistanceSelect}
                 'id', t.id,
                 'name', t.name,
                 'supercategory', t.supercategory,
-                'badge_credits', COALESCE(ut.badge_credits, 0),
+                'badge_credits', COALESCE((
+                  SELECT SUM(ba_tag.credits)
+                  FROM badge_awards ba_tag
+                  WHERE ba_tag.tag_id = t.id
+                    AND ba_tag.awarded_to_user_id = u.id
+                    AND ${visibleAwardCondition({
+                      awardAlias: "ba_tag",
+                      userAlias: "u",
+                    })}
+                ), 0),
                 'dominant_badge_category', ut.dominant_badge_category
               )
-              ORDER BY COALESCE(ut.badge_credits, 0) DESC, t.name ASC
+              ORDER BY COALESCE((
+                  SELECT SUM(ba_tag.credits)
+                  FROM badge_awards ba_tag
+                  WHERE ba_tag.tag_id = t.id
+                    AND ba_tag.awarded_to_user_id = u.id
+                    AND ${visibleAwardCondition({
+                      awardAlias: "ba_tag",
+                      userAlias: "u",
+                    })}
+                ), 0) DESC, t.name ASC
             ),
             '[]'::json
           )
           FROM user_tags ut
           JOIN tags t ON ut.tag_id = t.id
-          WHERE ut.user_id = u.id) as tags,
-          (SELECT COALESCE(
-            json_agg(
-              json_build_object(
-                'id', v.badge_id,
-                'name', v.badge_name,
-                'category', v.category,
-                'color', v.badge_color,
-                'cat_image_url', v.cat_image_url,
-                'total_credits', v.total_credits,
-                'award_count', v.award_count,
-                'awarder_count', v.awarder_count,
-                'category_total_credits', v.category_total_credits,
-                'category_award_count', v.category_award_count,
-                'category_awarder_count', v.category_awarder_count,
-                'last_awarded_at', v.last_awarded_at
-              )
-              ORDER BY
-                v.category_total_credits DESC,
-                v.category ASC,
-                v.total_credits DESC,
-                v.badge_name ASC
-            ),
-            '[]'::json
-          )
-          FROM v_user_badges_with_category_totals v
-          WHERE v.user_id = u.id) as badges
+          WHERE ut.user_id = u.id
+            AND ${visibleFocusAreaCondition({
+              userAlias: "u",
+              tagAlias: "t",
+            })}) as tags,
+          -- The badges a stranger may see. Search has no owner view, so a
+          -- user's own row carries exactly what everyone else is served.
+          ${visibleBadgesJsonSQL({ userAlias: "u" })} as badges
           ${userDistanceSelect}
         FROM users u
         ${hasSearchTerm ? "LEFT JOIN user_tags ut ON u.id = ut.user_id\n        LEFT JOIN tags t ON ut.tag_id = t.id" : ""}

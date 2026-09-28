@@ -5,6 +5,7 @@ const {
   buildNearestPrioritySQL,
   buildDistanceFilterSQL,
 } = require("../searchQueryBuilder");
+const { visibleAwardCondition } = require("../badgeVisibilityUtils");
 
 function getRolesSortDir(sort, direction) {
   if (sort === "proximity") {
@@ -190,7 +191,12 @@ function buildTeamFilters(config, startParamIndex = 1) {
             OR t.id IN (
               SELECT DISTINCT tm_badge.team_id FROM team_members tm_badge
               JOIN badge_awards ba_badge ON tm_badge.user_id = ba_badge.awarded_to_user_id
+              JOIN users u_badge ON u_badge.id = ba_badge.awarded_to_user_id
               WHERE ba_badge.badge_id = ANY(${badgeParam}::int[])
+                AND ${visibleAwardCondition({
+                awardAlias: "ba_badge",
+                userAlias: "u_badge",
+              })}
             )
           )
         `);
@@ -213,7 +219,12 @@ function buildTeamFilters(config, startParamIndex = 1) {
           AND t.id IN (
             SELECT DISTINCT tm_badge.team_id FROM team_members tm_badge
             JOIN badge_awards ba_badge ON tm_badge.user_id = ba_badge.awarded_to_user_id
+            JOIN users u_badge ON u_badge.id = ba_badge.awarded_to_user_id
             WHERE ba_badge.badge_id = ANY($${nextParamIndex}::int[])
+              AND ${visibleAwardCondition({
+                awardAlias: "ba_badge",
+                userAlias: "u_badge",
+              })}
           )
         `);
       params.push(badgeIds);
@@ -311,7 +322,12 @@ function buildUserFilters(config, startParamIndex = 1) {
             OR u.id IN (
               SELECT DISTINCT ba_filter.awarded_to_user_id
               FROM badge_awards ba_filter
+              JOIN users u_filter ON u_filter.id = ba_filter.awarded_to_user_id
               WHERE ba_filter.badge_id = ANY(${badgeParam}::int[])
+                AND ${visibleAwardCondition({
+                awardAlias: "ba_filter",
+                userAlias: "u_filter",
+              })}
             )
           )
         `);
@@ -334,7 +350,12 @@ function buildUserFilters(config, startParamIndex = 1) {
           AND u.id IN (
             SELECT DISTINCT ba_filter.awarded_to_user_id
             FROM badge_awards ba_filter
+            JOIN users u_filter ON u_filter.id = ba_filter.awarded_to_user_id
             WHERE ba_filter.badge_id = ANY($${nextParamIndex}::int[])
+              AND ${visibleAwardCondition({
+                awardAlias: "ba_filter",
+                userAlias: "u_filter",
+              })}
           )
         `);
       params.push(badgeIds);

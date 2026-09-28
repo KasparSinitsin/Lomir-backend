@@ -1,5 +1,8 @@
 const { pool } = require("../config/database");
-const { ensureBadgeVisibilityColumns } = require("../utils/badgeVisibilityUtils");
+const {
+  ensureBadgeVisibilityColumns,
+  visibleAwardCondition,
+} = require("../utils/badgeVisibilityUtils");
 
 /**
  * @description Get all badges grouped by category
@@ -688,10 +691,11 @@ const getUserBadges = async (req, res) => {
       LEFT JOIN teams t ON ba.team_id = t.id
       LEFT JOIN tags tag ON ba.tag_id = tag.id
       WHERE ba.awarded_to_user_id = $1
-        AND (
-          $2::BOOLEAN = TRUE
-          OR NOT (ba.id = ANY(COALESCE(awardee.hidden_award_ids, '{}'::INTEGER[])))
-        )
+        AND ${visibleAwardCondition({
+          awardAlias: "ba",
+          userAlias: "awardee",
+          viewerIsOwnerExpr: "$2::BOOLEAN",
+        })}
       ORDER BY ba.created_at DESC, ba.id DESC
       `,
       [userId, canViewHiddenAwards],

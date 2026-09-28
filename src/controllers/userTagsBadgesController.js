@@ -1,6 +1,8 @@
 const { pool } = require("../config/database");
 const {
   ensureBadgeVisibilityColumns,
+  visibleAwardCondition,
+  visibleFocusAreaCondition,
 } = require("../utils/badgeVisibilityUtils");
 
 /**
@@ -74,11 +76,11 @@ const getUserTags = async (req, res) => {
             JOIN badges b2 ON b2.id = ba2.badge_id
             WHERE ba2.tag_id = t.id
               AND ba2.awarded_to_user_id = ut.user_id
-              AND (
-                $2::BOOLEAN = TRUE
-                OR COALESCE(u.hide_badges, FALSE) = TRUE
-                OR NOT (ba2.id = ANY(COALESCE(u.hidden_award_ids, '{}'::INTEGER[])))
-              )
+              AND ${visibleAwardCondition({
+                awardAlias: "ba2",
+                userAlias: "u",
+                viewerIsOwnerExpr: "$2::BOOLEAN",
+              })}
             GROUP BY b2.category
             ORDER BY SUM(ba2.credits) DESC, b2.category ASC
             LIMIT 1
@@ -86,13 +88,18 @@ const getUserTags = async (req, res) => {
         FROM badge_awards ba
         WHERE ba.tag_id = t.id
           AND ba.awarded_to_user_id = ut.user_id
-          AND (
-            $2::BOOLEAN = TRUE
-            OR COALESCE(u.hide_badges, FALSE) = TRUE
-            OR NOT (ba.id = ANY(COALESCE(u.hidden_award_ids, '{}'::INTEGER[])))
-          )
+          AND ${visibleAwardCondition({
+            awardAlias: "ba",
+            userAlias: "u",
+            viewerIsOwnerExpr: "$2::BOOLEAN",
+          })}
       ) tag_award_stats ON TRUE
       WHERE ut.user_id = $1
+        AND ${visibleFocusAreaCondition({
+          userAlias: "u",
+          tagAlias: "t",
+          viewerIsOwnerExpr: "$2::BOOLEAN",
+        })}
     `,
       [userId, canViewHiddenAwards],
     );
@@ -407,10 +414,11 @@ const getUserBadges = async (req, res) => {
       LEFT JOIN tags tag ON ba.tag_id = tag.id
       LEFT JOIN users awardee ON awardee.id = ba.awarded_to_user_id
       WHERE ba.awarded_to_user_id = $1
-        AND (
-          $2::BOOLEAN = TRUE
-          OR NOT (ba.id = ANY(COALESCE(awardee.hidden_award_ids, '{}'::INTEGER[])))
-        )
+        AND ${visibleAwardCondition({
+          awardAlias: "ba",
+          userAlias: "awardee",
+          viewerIsOwnerExpr: "$2::BOOLEAN",
+        })}
       ORDER BY ba.created_at DESC, ba.id DESC
       `,
       [userId, canViewHiddenAwards],

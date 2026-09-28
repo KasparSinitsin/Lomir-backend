@@ -1,4 +1,5 @@
 const db = require("../config/database");
+const { visibleAwardCondition } = require("../utils/badgeVisibilityUtils");
 
 const isTeamVisibleToViewer = async (teamId, viewerId) => {
   const teamResult = await db.pool.query(
@@ -83,10 +84,11 @@ const getTeamBadgeAwards = async (req, res) => {
       LEFT JOIN teams t_ctx ON ba.team_id = t_ctx.id
       LEFT JOIN tags tag ON ba.tag_id = tag.id
       WHERE ba.tag_id IS NOT NULL
-        AND (
-          ba.awarded_to_user_id = $2
-          OR NOT (ba.id = ANY(COALESCE(recipient.hidden_award_ids, '{}'::INTEGER[])))
-        )
+        AND ${visibleAwardCondition({
+          awardAlias: "ba",
+          userAlias: "recipient",
+          viewerIsOwnerExpr: "ba.awarded_to_user_id = $2",
+        })}
       ORDER BY ba.created_at DESC, ba.id DESC
       `,
       [teamId, viewerId || null],
@@ -136,10 +138,11 @@ const getTeamMemberBadges = async (req, res) => {
         JOIN team_members tm  ON ba.awarded_to_user_id = tm.user_id
                              AND tm.team_id = $1
         LEFT JOIN users recipient ON recipient.id = ba.awarded_to_user_id
-        WHERE (
-          ba.awarded_to_user_id = $2
-          OR NOT (ba.id = ANY(COALESCE(recipient.hidden_award_ids, '{}'::INTEGER[])))
-        )
+        WHERE ${visibleAwardCondition({
+          awardAlias: "ba",
+          userAlias: "recipient",
+          viewerIsOwnerExpr: "ba.awarded_to_user_id = $2",
+        })}
         GROUP BY b.id, b.name, b.description, b.category, b.color,
                  b.image_url, b.cat_image_url
       ),
@@ -236,10 +239,11 @@ const getMemberBadgesForTeams = async (req, res) => {
         JOIN team_members tm  ON ba.awarded_to_user_id = tm.user_id
                              AND tm.team_id = ANY($1)
         LEFT JOIN users recipient ON recipient.id = ba.awarded_to_user_id
-        WHERE (
-          ba.awarded_to_user_id = $2
-          OR NOT (ba.id = ANY(COALESCE(recipient.hidden_award_ids, '{}'::INTEGER[])))
-        )
+        WHERE ${visibleAwardCondition({
+          awardAlias: "ba",
+          userAlias: "recipient",
+          viewerIsOwnerExpr: "ba.awarded_to_user_id = $2",
+        })}
         GROUP BY tm.team_id, b.id, b.name, b.description, b.category, b.color,
                  b.image_url, b.cat_image_url
       ),
@@ -347,10 +351,11 @@ const getTeamMemberBadgeAwards = async (req, res) => {
       LEFT JOIN users recipient ON ba.awarded_to_user_id = recipient.id
       LEFT JOIN teams t_ctx ON ba.team_id = t_ctx.id
       LEFT JOIN tags tag ON ba.tag_id = tag.id
-      WHERE (
-        ba.awarded_to_user_id = $2
-        OR NOT (ba.id = ANY(COALESCE(recipient.hidden_award_ids, '{}'::INTEGER[])))
-      )
+      WHERE ${visibleAwardCondition({
+          awardAlias: "ba",
+          userAlias: "recipient",
+          viewerIsOwnerExpr: "ba.awarded_to_user_id = $2",
+        })}
       ORDER BY ba.created_at DESC, ba.id DESC
       `,
       [teamId, viewerId || null],
