@@ -1,4 +1,13 @@
 const db = require("../config/database");
+
+// ⚠️ **No owner exception on these queries, unlike the profile.** A recipient sees
+// their own hidden awards on their own profile, where the closed eye says so and
+// they can act on it. A team's badge wall is a shared surface: showing the
+// awardee their own not-yet-visible award there would put it into the team's
+// statistics for them and nobody else, so the same team would show different
+// totals depending on who is looking. Julia's call, 2026-09-28: the wall shows
+// only what everyone sees. Found because an unconfirmed award appeared on the
+// team modal with its credits counted, right after BE #336 and #339.
 const { visibleAwardCondition } = require("../utils/badgeVisibilityUtils");
 
 const isTeamVisibleToViewer = async (teamId, viewerId) => {
@@ -87,11 +96,10 @@ const getTeamBadgeAwards = async (req, res) => {
         AND ${visibleAwardCondition({
           awardAlias: "ba",
           userAlias: "recipient",
-          viewerIsOwnerExpr: "ba.awarded_to_user_id = $2",
         })}
       ORDER BY ba.created_at DESC, ba.id DESC
       `,
-      [teamId, viewerId || null],
+      [teamId],
     );
 
     res.status(200).json({
@@ -141,7 +149,6 @@ const getTeamMemberBadges = async (req, res) => {
         WHERE ${visibleAwardCondition({
           awardAlias: "ba",
           userAlias: "recipient",
-          viewerIsOwnerExpr: "ba.awarded_to_user_id = $2",
         })}
         GROUP BY b.id, b.name, b.description, b.category, b.color,
                  b.image_url, b.cat_image_url
@@ -164,7 +171,7 @@ const getTeamMemberBadges = async (req, res) => {
       JOIN category_totals ct ON bt.category = ct.category
       ORDER BY bt.category, bt.total_credits DESC, bt.name
       `,
-      [teamId, viewerId || null],
+      [teamId],
     );
 
     const grandTotalCredits = result.rows.reduce(
@@ -242,7 +249,6 @@ const getMemberBadgesForTeams = async (req, res) => {
         WHERE ${visibleAwardCondition({
           awardAlias: "ba",
           userAlias: "recipient",
-          viewerIsOwnerExpr: "ba.awarded_to_user_id = $2",
         })}
         GROUP BY tm.team_id, b.id, b.name, b.description, b.category, b.color,
                  b.image_url, b.cat_image_url
@@ -267,7 +273,7 @@ const getMemberBadgesForTeams = async (req, res) => {
         ON bt.category = ct.category AND bt.team_id = ct.team_id
       ORDER BY bt.team_id, bt.category, bt.total_credits DESC, bt.name
       `,
-      [teamIds, viewerId || null],
+      [teamIds],
     );
 
     const dataByTeam = {};
@@ -354,11 +360,10 @@ const getTeamMemberBadgeAwards = async (req, res) => {
       WHERE ${visibleAwardCondition({
           awardAlias: "ba",
           userAlias: "recipient",
-          viewerIsOwnerExpr: "ba.awarded_to_user_id = $2",
         })}
       ORDER BY ba.created_at DESC, ba.id DESC
       `,
-      [teamId, viewerId || null],
+      [teamId],
     );
 
     res.status(200).json({
