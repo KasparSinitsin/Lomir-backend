@@ -13,6 +13,7 @@ const addEmailChangeFieldsToUsers = require("./add_email_change_fields_to_users"
 const addPasswordChangedAtToUsers = require("./add_password_changed_at_to_users");
 const addPreferredLanguageToUsers = require("./add_preferred_language_to_users");
 const fixTokenExpiryTimestamps = require("./fix_token_expiry_timestamps");
+const addSourceToUserTags = require("./add_source_to_user_tags");
 
 const runMigrations = async () => {
   try {
@@ -29,6 +30,7 @@ const runMigrations = async () => {
     await addPasswordChangedAtToUsers();
     await addPreferredLanguageToUsers();
     await fixTokenExpiryTimestamps();
+    await addSourceToUserTags();
 
     console.log("All migrations completed successfully!");
   } catch (error) {

@@ -215,23 +215,36 @@ const visibleBadgesJsonSQL = ({
  * stays on the profile with its credits missing, which is the same inference
  * the search-list leak allowed.
  *
- * A focus area stays visible when nothing about it is hidden: either it has no
- * linked award at all, or at least one linked award is still shown, which is
- * evidence enough on its own. It disappears only when every award linked to it
- * is hidden. `userAlias` is the `users` row the focus area belongs to.
+ * 🔴 **That rule only ever applied to focus areas the award created.** Until
+ * `user_tags.source` existed this condition could not tell those apart from the
+ * ones their owner had chosen, so it hid both — measured 2026-09-28 on user
+ * 374, whose self-chosen `AI/ML` vanished for strangers the moment its badge
+ * was hidden. Julia's rule, stated in full:
+ *
+ * - `source = 'user'` — **always shown.** The user put it there; a hidden award
+ *   only takes the credits with it, never the focus area.
+ * - `source = 'award'` — shown once at least one linked award is visible, and
+ *   not before. Nothing announces it until its badge does.
+ *
+ * `userAlias` is the `users` row the focus area belongs to, `tagAlias` the
+ * `tags` row, and **`linkAlias` the `user_tags` row that now carries the
+ * answer** — every call site passes it, because a default that has to match an
+ * alias somewhere else in a long query is the kind of thing that silently stops
+ * matching.
+ *
+ * ⚠️ An `'award'` row whose last award was deleted is hidden by this, not
+ * shown. `badgeController` deletes such rows outright, so it should not occur —
+ * this is what happens if one ever survives, and failing closed is the right
+ * direction for a row nobody asked for.
  */
 const visibleFocusAreaCondition = ({
   userAlias = "u",
   tagAlias = "t",
+  linkAlias = "ut",
   viewerIsOwnerExpr = "FALSE",
 } = {}) => `(
           (${viewerIsOwnerExpr}) = TRUE
-          OR NOT EXISTS (
-            SELECT 1
-            FROM badge_awards ba_link
-            WHERE ba_link.tag_id = ${tagAlias}.id
-              AND ba_link.awarded_to_user_id = ${userAlias}.id
-          )
+          OR ${linkAlias}.source <> 'award'
           OR EXISTS (
             SELECT 1
             FROM badge_awards ba_link_vis

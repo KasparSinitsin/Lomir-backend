@@ -91,19 +91,36 @@ test("the badge list is aggregated from awards, not from the badge views", () =>
   assert.match(visibleBadgeCreditsSQL(), /hidden_award_ids/);
 });
 
-test("a focus area survives on its own or on a shown award, and goes with a hidden one", () => {
+test("a self-added focus area is always shown, an award-created one waits", () => {
   const sql = visibleFocusAreaCondition({
     userAlias: "u",
     tagAlias: "t",
+    linkAlias: "ut",
     viewerIsOwnerExpr: "$2::BOOLEAN",
   });
 
-  // No linked award at all: nothing is being hidden, the focus area stays.
-  assert.match(sql, /NOT EXISTS/);
-  // At least one award still shown: that award is evidence enough.
+  // The user put it there. A hidden award takes its credits, never the area.
+  assert.match(sql, /ut\.source <> 'award'/);
+  // One created by an award needs one visible award, and nothing else will do.
   assert.match(sql, /OR EXISTS/);
   assert.match(sql, /hidden_award_ids/);
   assert.match(sql, /\$2::BOOLEAN/);
+
+  // 🔴 The rule this replaces kept any focus area with no linked award, which
+  // is exactly how a self-chosen one disappeared the moment its badge was
+  // hidden — measured on user 374's `AI/ML`, 2026-09-28. Provenance decides it
+  // now, not the presence of awards, so the old branch must be gone.
+  assert.doesNotMatch(sql, /NOT EXISTS/);
+});
+
+test("the focus-area rule reads the user_tags row it was handed", () => {
+  // Every call site passes `linkAlias`, because the alias differs per query
+  // (`ut`, `ut_filter`, `ut2`) and a stale default would compile into SQL that
+  // reads the wrong row — or fails to compile at all.
+  const sql = visibleFocusAreaCondition({ linkAlias: "ut_filter" });
+
+  assert.match(sql, /ut_filter\.source/);
+  assert.doesNotMatch(sql, /\but\.source/);
 });
 
 test("the search result list filters the badges it serves", async () => {

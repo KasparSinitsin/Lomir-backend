@@ -246,6 +246,7 @@ const visibleFocusAreaMatchSQL = (param) => `
                 AND ${visibleFocusAreaCondition({
                   userAlias: "u",
                   tagAlias: "t2",
+                  linkAlias: "ut2",
                 })}`;
 
 function appendUserSearchClause({
