@@ -319,6 +319,21 @@ const updateUserBadgeVisibility = async (req, res) => {
       });
     }
 
+    // ✅ **Visibility does not change `user_tags.source`. Julia, 2026-09-29 —
+    // asked, weighed, decided against.** The obvious-looking improvement is to
+    // promote an award-created focus area to `'user'` when its award is made
+    // visible, on the grounds that showing a badge is how you confirm it. It
+    // was rejected because it breaks the retraction: once promoted, hiding the
+    // award again would leave the focus area standing, and "a hidden award
+    // takes its focus area with it" (BE #336) would no longer hold for that
+    // path. Doing it symmetrically instead — promote on show, demote on hide —
+    // needs a third `source` value, because a plain demotion would also strip
+    // focus areas the user chose themselves, which is the exact defect this
+    // column was added to remove.
+    // ⚠️ The known cost, accepted: an award-created focus area cannot be
+    // removed in the profile editor. It belongs to its award, and the levers
+    // are the award's — hide it, and the focus area goes with it; delete it,
+    // and the row goes too.
     const result = await pool.query(
       hidden
         ? `UPDATE users
