@@ -58,6 +58,12 @@ const getUserTags = async (req, res) => {
         t.supercategory,
         ut.experience_level,
         ut.interest_level,
+        -- Which kind of focus area this is. The owner's own views need it: a
+        -- self-chosen one shows even while its only award is hidden, an
+        -- award-created one does not exist until that award does. A stranger
+        -- never sees the second kind at all, so for them this is redundant —
+        -- it is sent either way to keep one payload shape.
+        ut.source,
         COALESCE(tag_award_stats.badge_credits, 0)::INT AS badge_credits,
         tag_award_stats.dominant_badge_category,
         COALESCE(tag_award_stats.linked_badge_count, 0)::INT AS linked_badge_count,
@@ -245,6 +251,7 @@ const updateUserTags = async (req, res) => {
   t.supercategory,
   ut.experience_level,
   ut.interest_level,
+  ut.source,
   ut.badge_credits,
   ut.dominant_badge_category,
   (SELECT COUNT(*) FROM badge_awards ba WHERE ba.tag_id = t.id AND ba.awarded_to_user_id = ut.user_id) AS linked_badge_count,
