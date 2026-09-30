@@ -260,6 +260,31 @@ const userModel = {
     return result.rows.map((row) => row.id);
   },
 
+  // Id + current name for every user in a block relationship with `userId`,
+  // either direction. Some stored chat events are old prose with a name but
+  // no id ("... by Anna Kowalski"), and the id-only anonymization check
+  // (getBlockRelationshipIds + a live team roster) fails once that person has
+  // since left the team the message is in — there is no id to resolve. This
+  // gives the client a name to match on directly, independent of any roster.
+  async getBlockRelationships(userId) {
+    const result = await db.query(
+      `SELECT u.id, u.first_name, u.last_name, u.username
+       FROM users u
+       WHERE u.id IN (
+         SELECT blocked_id FROM user_blocks WHERE blocker_id = $1
+         UNION
+         SELECT blocker_id FROM user_blocks WHERE blocked_id = $1
+       )`,
+      [userId],
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      username: row.username,
+    }));
+  },
+
   // True when either user has blocked the other.
   async isBlockedBetween(a, b) {
     const result = await db.query(
