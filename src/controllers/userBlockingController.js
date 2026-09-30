@@ -119,9 +119,10 @@ const unblockUser = async (req, res) => {
 };
 
 /**
- * @description Get every user id in a block relationship with the current user
- *              (either direction) — used by the client to mutually anonymize
- *              blocked users in shared teams.
+ * @description Get every user in a block relationship with the current user
+ *              (either direction) — id and current name — used by the client
+ *              to mutually anonymize blocked users, including in stored chat
+ *              events that carry a name but no id and predate the block.
  * @route GET /api/users/:id/block-relationships
  * @access Private (self only)
  */
@@ -130,8 +131,11 @@ const getBlockRelationships = async (req, res) => {
     if (!isSelf(req)) {
       return res.status(403).json({ success: false, message: "Forbidden" });
     }
-    const ids = await userModel.getBlockRelationshipIds(req.user.id);
-    res.status(200).json({ success: true, data: { ids } });
+    const people = await userModel.getBlockRelationships(req.user.id);
+    res.status(200).json({
+      success: true,
+      data: { ids: people.map((p) => p.id), people },
+    });
   } catch (error) {
     console.error("Error fetching block relationships:", error);
     res.status(500).json({
