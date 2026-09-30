@@ -9,6 +9,45 @@ const {
 
 const DELETED_USER_DISPLAY_NAME = "Former Lomir User";
 
+/**
+ * Emoji prefixes of stored system-message formats whose content embeds a
+ * display name, so the name has to be scrubbed when the user is deleted.
+ *
+ * ⚠️ THIS LIST IS MAINTAINED BY HAND AND HAS ROTTED ONCE ALREADY. It held eight
+ * entries while `messageSystemParser.js` (frontend) recognised fourteen
+ * prefixes, so a deleted user's real name stayed in the chat. If you add a
+ * stored format anywhere in this backend, add its prefix here in the same
+ * commit — nothing will fail if you forget.
+ *
+ * ⚠️ `❌` is kept although no current format uses it: old rows may still hold
+ * one, and dropping it from the list can only lose a scrub, never gain one.
+ *
+ * 🔴 An emoji list cannot be the real answer, and this one is not complete:
+ * the `🚫 …` and `🔄 ROLE_CHANGED` formats embed the name of someone who is NOT
+ * the row's `sender_id`, and are stored as DMs — so the two other conditions of
+ * the query below (`sender_id = $1`, `team_id IS NOT NULL`) exclude them no
+ * matter what this list says. The full audit, with every format traced to its
+ * write site, is in `lomir-docs-internal/HANDOVER-Privacy-Security-Hardening.md`.
+ */
+const NAME_BEARING_MESSAGE_PREFIXES = [
+  // Membership and ownership prose, plus the legacy role/application lines.
+  "👋",
+  "🚪",
+  "👑",
+  "🎯",
+  "✅",
+  "❌",
+  "🎉",
+  "🔓",
+  // Role events from `vacantRoleController.ROLE_EVENT_MESSAGE_TYPES`. These are
+  // team messages whose `sender_id` IS the named actor, so the prefix was the
+  // only thing keeping them out. Added 2026-09-30.
+  "🆕",
+  "✏️",
+  "🗑️",
+  "🔒",
+];
+
 const logDeletionPhase = (phase, details) => {
   if (process.env.NODE_ENV === "production") {
     return;
@@ -367,17 +406,12 @@ const deleteUser = async (req, res) => {
       WHERE sender_id = $1
         AND team_id IS NOT NULL
         AND (
-          content LIKE '%👋%'
-          OR content LIKE '%🚪%'
-          OR content LIKE '%👑%'
-          OR content LIKE '%🎯%'
-          OR content LIKE '%✅%'
-          OR content LIKE '%❌%'
-          OR content LIKE '%🎉%'
-          OR content LIKE '%🔓%'
+          ${NAME_BEARING_MESSAGE_PREFIXES.map(
+            (_, index) => `content LIKE '%' || $${index + 4} || '%'`,
+          ).join("\n          OR ")}
         )
       `,
-      [userId, fullName, user.username],
+      [userId, fullName, user.username, ...NAME_BEARING_MESSAGE_PREFIXES],
     );
 
     logDeletionPhase("Phase C - team ownership cleanup", {
