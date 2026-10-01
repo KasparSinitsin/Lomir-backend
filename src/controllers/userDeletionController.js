@@ -10,43 +10,25 @@ const {
 const DELETED_USER_DISPLAY_NAME = "Former Lomir User";
 
 /**
- * Emoji prefixes of stored system-message formats whose content embeds a
- * display name, so the name has to be scrubbed when the user is deleted.
+ * The prefixes the name scrub below matches on, derived from the traced table
+ * of stored formats in `config/nameBearingMessageFormats.js` rather than
+ * maintained by hand here. That table records, per format, its write site, how
+ * the row is stored, and whether the name in the content belongs to the row's
+ * `sender_id` — read it before changing anything about this scrub.
  *
- * ⚠️ THIS LIST IS MAINTAINED BY HAND AND HAS ROTTED ONCE ALREADY. It held eight
- * entries while `messageSystemParser.js` (frontend) recognised fourteen
- * prefixes, so a deleted user's real name stayed in the chat. If you add a
- * stored format anywhere in this backend, add its prefix here in the same
- * commit — nothing will fail if you forget.
+ * ⚠️ Prefixes for DM-stored formats are deliberately NOT in this list: those
+ * rows are deleted outright a few lines below (`team_id IS NULL`), so the name
+ * goes with the row. The derivation filters on `storage === "team"` to keep
+ * that distinction in one place instead of a comment.
  *
- * ⚠️ `❌` is kept although no current format uses it: old rows may still hold
- * one, and dropping it from the list can only lose a scrub, never gain one.
- *
- * 🔴 An emoji list cannot be the real answer, and this one is not complete:
- * the `🚫 …` and `🔄 ROLE_CHANGED` formats embed the name of someone who is NOT
- * the row's `sender_id`, and are stored as DMs — so the two other conditions of
- * the query below (`sender_id = $1`, `team_id IS NOT NULL`) exclude them no
- * matter what this list says. The full audit, with every format traced to its
- * write site, is in `lomir-docs-internal/HANDOVER-Privacy-Security-Hardening.md`.
+ * 🔴 STILL OPEN, and this list cannot fix it: the query's `sender_id = $1`
+ * condition misses every team format that names someone other than its sender.
+ * `FORMATS_NAMING_SOMEONE_OTHER_THAN_SENDER` enumerates them from the same
+ * table. Audit: `lomir-docs-internal/HANDOVER-Privacy-Security-Hardening.md`.
  */
-const NAME_BEARING_MESSAGE_PREFIXES = [
-  // Membership and ownership prose, plus the legacy role/application lines.
-  "👋",
-  "🚪",
-  "👑",
-  "🎯",
-  "✅",
-  "❌",
-  "🎉",
-  "🔓",
-  // Role events from `vacantRoleController.ROLE_EVENT_MESSAGE_TYPES`. These are
-  // team messages whose `sender_id` IS the named actor, so the prefix was the
-  // only thing keeping them out. Added 2026-09-30.
-  "🆕",
-  "✏️",
-  "🗑️",
-  "🔒",
-];
+const {
+  NAME_BEARING_MESSAGE_PREFIXES,
+} = require("../config/nameBearingMessageFormats");
 
 const logDeletionPhase = (phase, details) => {
   if (process.env.NODE_ENV === "production") {
