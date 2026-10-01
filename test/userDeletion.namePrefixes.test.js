@@ -8,6 +8,9 @@ const {
   NAME_BEARING_MESSAGE_PREFIXES,
   FORMATS_NAMING_SOMEONE_OTHER_THAN_SENDER,
   FORMATS_WITH_NULL_SENDER,
+  FORMATS_WRITTEN_BY_THE_FRONTEND,
+  FORMATS_CLEARED_OF_PERSON_NAMES,
+  OBSERVED_ROWS_2026_10_01,
 } = require("../src/config/nameBearingMessageFormats");
 
 /**
@@ -173,17 +176,35 @@ test("every traced format states its storage and whose name it carries", () => {
   }
 });
 
-test("the known sender_id gap is exactly the five formats that were traced", () => {
-  // 🔴 This is a GAP, not a passing state: these five live team formats name
-  // someone other than their sender, and the scrub's `sender_id = $1`
-  // condition cannot reach them. The test pins the set so that a NEW format
-  // with the same flaw fails here loudly instead of joining a known list.
+test("the known sender_id gap is exactly the formats that were traced", () => {
+  // 🔴 A GAP, not a passing state: these team formats name someone other than
+  // their sender, so the scrub's `sender_id = $1` condition cannot reach them.
+  // Pinned so that a NEW format with the same flaw fails here loudly instead
+  // of joining a known list.
+  //
+  // ⚠️ Grew from 5 to 10 on 2026-10-01, and NOT because the code changed.
+  // Three of the additions came out of a database census; two came out of
+  // dropping the `live` filter, because 6 legacy MEMBER_REMOVED team rows leak
+  // exactly like a live format — a stored row does not care that its writer
+  // was deleted. The old list was a list of today's writers pretending to be
+  // a list of what is in the table.
   const expected = [
     "ROLE_FILLED",
+    "ROLE_REOPENED",
+    "ROLE_APPLICATION_FILLED",
     "ROLE_APPLICATION_DEFERRED_INVITE",
+    "ROLE_INVITATION_ACCEPTED",
+    "MEMBER_REMOVED",
     "MEMBER_REMOVED_PUBLIC",
     "OWNERSHIP_TEAM",
     "prose 🎉",
+    "prose ❌",
+    "prose 👋",
+    // ⚠️ `prose 🔓` was here until it was CHECKED: it renders through the
+    // parser's legacy role-only pattern and names no person, so it carries
+    // `carriesPersonName: false` and leaves the gap. Removing an entry from a
+    // gap list is only legitimate with evidence — see its comment in the config
+    // for what was observed and what is still inferred.
   ].sort();
 
   const actual = FORMATS_NAMING_SOMEONE_OTHER_THAN_SENDER.map(identify).sort();
@@ -229,9 +250,14 @@ test("the formats unreachable by any sender condition are exactly the traced one
   // 🔴 A GAP, pinned on purpose. A NULL sender is not a narrower case of
   // "someone other than the sender" — it defeats every sender-based condition,
   // which is why a replacement has to match on the CONTENT instead.
+  // ⚠️ Was ["OWNERSHIP_TEAM"] until 2026-10-01, when the census showed NULL
+  // senders are not a quirk of one format: 5 of the 136 `👋` team rows carry
+  // none either. The `🔓` prose rows have no sender either, but they name
+  // nobody, so they are not a deletion problem — see
+  // `FORMATS_CLEARED_OF_PERSON_NAMES`.
   assert.deepEqual(
-    FORMATS_WITH_NULL_SENDER.map(identify),
-    ["OWNERSHIP_TEAM"],
+    FORMATS_WITH_NULL_SENDER.map(identify).sort(),
+    ["OWNERSHIP_TEAM", "prose 👋"].sort(),
     "the set of name-bearing formats written with sender_id NULL changed. A " +
       "new one means another row that no sender-based scrub can reach.",
   );
@@ -260,13 +286,168 @@ test("a format that records several write sites lists them all", () => {
       sites.length > 0 && sites.every((s) => typeof s === "string" && s.length > 0),
       `${identify(format)} has an unusable writtenBy: ${JSON.stringify(format.writtenBy)}`,
     );
-    if (format.senderCanBeNull) {
-      assert.ok(
-        sites.some((s) => /NULL/i.test(s)),
-        `${identify(format)} is marked senderCanBeNull but no write site says ` +
-          `which one writes the NULL — the next audit would have to grep again`,
-      );
-    }
+  }
+});
+
+test("every NULL-sender format says where the NULL comes from, or says it is unknown", () => {
+  // ⚠️ This assertion used to demand that a write site mention the NULL, and
+  // it was too strict — it assumed a NULL sender always has a findable writer.
+  // On 2026-10-01 two formats turned up whose null-sender rows have NO known
+  // writer: `👋` (5 of 136) and the `🔓` prose form (all 6, no writer at all).
+  //
+  // Weakening it to nothing would have been the wrong repair. Instead
+  // `nullSenderSource` is now required, so "we do not know" has to be written
+  // down rather than left as an absence that reads like an oversight.
+  for (const format of NAME_BEARING_MESSAGE_FORMATS) {
+    if (!format.senderCanBeNull) continue;
+
+    assert.equal(
+      typeof format.nullSenderSource,
+      "string",
+      `${identify(format)} is marked senderCanBeNull without a ` +
+        `nullSenderSource. Name the write site, or write "unknown — <what the ` +
+        `data showed>". An absent field cannot be told apart from a forgotten one.`,
+    );
+    assert.ok(
+      format.nullSenderSource.length > 0,
+      `${identify(format)} has an empty nullSenderSource`,
+    );
+  }
+});
+
+test("every marker seen in the database has an entry in the table", () => {
+  // 🔴 THE test this audit was missing. `TEAM_DELETED` sat in the database
+  // from 2026-01-06 and was absent from the table, because the table was built
+  // from the frontend parser's `// Format:` comments and that format has none.
+  // A census of real rows does not ask the parser, so it found it immediately.
+  //
+  // This binds the two together: a marker observed in `messages` must be
+  // described here. Rows are the authority, not the writers.
+  const tracedMarkers = new Set(
+    NAME_BEARING_MESSAGE_FORMATS.map((f) => f.marker).filter(Boolean),
+  );
+
+  const observedMarkers = Object.keys(OBSERVED_ROWS_2026_10_01)
+    .map((prefix) => prefix.match(/([A-Z_]{4,}):/)?.[1])
+    .filter(Boolean);
+
+  assert.ok(observedMarkers.length >= 20, `only ${observedMarkers.length} markers parsed out of the census — the census keys changed shape`);
+
+  for (const marker of observedMarkers) {
+    assert.ok(
+      tracedMarkers.has(marker),
+      `${marker} has rows in the database (census 2026-10-01) but no entry in ` +
+        `nameBearingMessageFormats.js. Nothing records whose name it carries, ` +
+        `so the scrub cannot be reasoned about for those rows.`,
+    );
+  }
+});
+
+test("a format with legacy rows of the other storage kind keeps its prefix listed", () => {
+  // 🚫 MEMBER_REMOVED writes DMs today but has 6 team rows from a dead path.
+  // Those rows are reachable ONLY through the scrub, so the prefix must be in
+  // the list even though `storage` says "dm". It currently is, but only
+  // because MEMBER_REMOVED_PUBLIC happens to share 🚫 — this asserts the
+  // derivation, not the coincidence.
+  const withLegacyTeamRows = NAME_BEARING_MESSAGE_FORMATS.filter(
+    (f) => f.legacyStorage === "team",
+  );
+
+  assert.ok(
+    withLegacyTeamRows.length > 0,
+    "no format records legacy team rows any more — if that is a real fix, " +
+      "the 6 MEMBER_REMOVED rows must have been migrated; say so in the doc",
+  );
+
+  for (const format of withLegacyTeamRows) {
+    assert.ok(
+      NAME_BEARING_MESSAGE_PREFIXES.includes(format.emoji),
+      `${identify(format)} has legacy team rows but its prefix is not in the ` +
+        `derived list, so those rows can never be scrubbed`,
+    );
+  }
+});
+
+test("the frontend writers are recorded, because searching this repo cannot find them", () => {
+  // 🔴 `ROLE_APPLICATION_FILLED` was recorded as "legacy, no write site" while
+  // 48 live rows existed, because `git log -S` over this repo finds nothing —
+  // the string has never been in this repo. The writer is in the frontend,
+  // which POSTs the system message through the ordinary send-message API.
+  //
+  // This cannot be guarded from here. The least it can do is refuse to forget.
+  const frontendWritten = FORMATS_WRITTEN_BY_THE_FRONTEND.map(identify).sort();
+
+  assert.deepEqual(
+    frontendWritten,
+    ["ROLE_APPLICATION_FILLED", "ROLE_INVITATION_ACCEPTED", "ROLE_REOPENED"].sort(),
+    "the set of frontend-written formats changed. Check " +
+      "Lomir-frontend/src/utils/roleEventMessages.js for callers — it holds " +
+      "builders for further formats that are not currently sent.",
+  );
+
+  for (const format of FORMATS_WRITTEN_BY_THE_FRONTEND) {
+    const sites = Array.isArray(format.writtenBy) ? format.writtenBy : [format.writtenBy];
+    assert.ok(
+      sites.some((s) => /FRONTEND/.test(s)),
+      `${identify(format)} is marked as frontend-written but no write site ` +
+        `says which file in the other repo — the next audit would grep here ` +
+        `and find nothing, exactly as this one did`,
+    );
+  }
+});
+
+test("writtenIn, when present, names a repo the table knows about", () => {
+  for (const format of NAME_BEARING_MESSAGE_FORMATS) {
+    if (format.writtenIn === undefined) continue; // omitted means backend-only
+    assert.ok(
+      ["frontend", "both"].includes(format.writtenIn),
+      `${identify(format)} has writtenIn ${JSON.stringify(format.writtenIn)}; ` +
+        `omit it for backend-only, or use "frontend" or "both"`,
+    );
+  }
+});
+
+test("legacyStorage, when present, is the opposite of storage", () => {
+  for (const format of NAME_BEARING_MESSAGE_FORMATS) {
+    if (format.legacyStorage === undefined) continue;
+    assert.ok(
+      ["team", "dm"].includes(format.legacyStorage),
+      `${identify(format)} has an unusable legacyStorage`,
+    );
+    assert.notEqual(
+      format.legacyStorage,
+      format.storage,
+      `${identify(format)} lists legacyStorage equal to storage, which says ` +
+        `nothing — drop the field or correct it`,
+    );
+  }
+});
+
+test("a format cleared of person names is exactly the one that was checked", () => {
+  // 🔴 `carriesPersonName: false` removes a format from the gap list, so it is
+  // the one field in this table that can make a leak disappear by assertion
+  // rather than by fixing anything. It is pinned for that reason.
+  //
+  // The cleared one is the legacy `🔓 The role <x> is now open again.` prose:
+  // seen rendering in the running app on two of its six rows, and naming only
+  // a role. Four of the six are still inferred from their length — recorded as
+  // such in the config, not laundered into certainty here.
+  assert.deepEqual(
+    FORMATS_CLEARED_OF_PERSON_NAMES.map(identify),
+    ["prose 🔓"],
+    "the set of formats cleared of person names changed. Clearing one takes " +
+      "evidence about STORED ROWS, not a reading of the writer — that " +
+      "shortcut has produced a wrong answer three times in this audit.",
+  );
+
+  // A cleared format must still carry its row ids, because the only way to
+  // re-check it later is to look at those rows again.
+  for (const format of FORMATS_CLEARED_OF_PERSON_NAMES) {
+    assert.ok(
+      Array.isArray(format.knownRowIds) && format.knownRowIds.length > 0,
+      `${identify(format)} is cleared but lists no knownRowIds, so the claim ` +
+        `cannot be re-checked against anything`,
+    );
   }
 });
 
