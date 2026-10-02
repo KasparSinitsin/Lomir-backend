@@ -35,6 +35,8 @@ const DELETED_USER_DISPLAY_NAME = "Former Lomir User";
  * Audit: `lomir-docs-internal/HANDOVER-Privacy-Security-Hardening.md` and
  * `lomir-docs-internal/deletion-audit/`.
  */
+const { escapeForPosixRegex } = require("../utils/escapeForPosixRegex");
+
 const {
   SCRUB_ANCHORED_PREFIXES,
   SCRUB_ID_LESS_TARGETS,
@@ -50,6 +52,7 @@ const {
  */
 const startsWithParam = (placeholder) =>
   `left(content, length(${placeholder})) = ${placeholder}`;
+
 
 const logDeletionPhase = (phase, details) => {
   if (process.env.NODE_ENV === "production") {
@@ -815,6 +818,92 @@ const deleteUser = async (req, res) => {
       `,
       [userId],
     );
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Notifications that name this user are DELETED, not rewritten.
+    //
+    // 🔴 Why deletion rather than the REPLACE the message scrub uses. Measured
+    // 2026-10-02 (`deletion-audit/11`): of 1826 `badge_awarded` rows only 117
+    // still carry the literal the current writer produces, and only 1056 the
+    // `New Badge: ` title prefix. **The stored text shapes are historical and
+    // varied**, so the anchored-prefix approach that makes the message scrub
+    // safe would miss the large majority of rows here. Matching the display
+    // name is the only route that reaches them — and on free prose that is a
+    // blind substring swap with none of the delimiters that bound it in
+    // `messages`. A notification is a transient alert rather than a record, so
+    // removing it loses nothing a rewrite would have preserved. Julia's call.
+    //
+    // 🔴 THIS MUST STAY BEFORE PHASE E, and the reason is invisible in the SQL:
+    // `notifications.actor_id` is `ON DELETE SET NULL`, so the moment the
+    // `users` row goes, every `actor_id` pointing at it becomes NULL and the
+    // first statement below matches nothing. There is no error — it silently
+    // deletes zero rows. ~400 rows in the table already have a NULL actor for
+    // exactly this reason, from deletions that predate this code.
+    //
+    // ⚠️ `user_id` is `ON DELETE CASCADE`, so this user's OWN notifications need
+    // no handling; they go with the `users` row in Phase E.
+    logDeletionPhase("Phase D2 - notifications naming this user", { userId });
+
+    // 1. Everything they were the actor of, whether or not their name is in the
+    //    text.
+    //
+    //    ⚠️ This is BROAD on purpose, and the cost is measured: one user in the
+    //    live data is the actor of 2,514 notifications (dry run 2026-10-02,
+    //    `deletion-audit/12` section A; median 22). Deleting their account
+    //    removes all of them, including rows that never contained their name.
+    //
+    //    🔴 The narrow alternative — delete only actor rows that CONTAIN the
+    //    name — was considered and rejected, because it depends on something
+    //    that is not built yet. A notification stores the display name as it was
+    //    when written, and **renames do not propagate today**: Julia's rename
+    //    rule (a renamed person is renamed everywhere, old name forgotten) is
+    //    decided but unimplemented, order 1 → 3 → 2 in the privacy handover. So
+    //    a person who renamed before deleting leaves rows holding their OLD
+    //    name, which is still their personal data and which no name match can
+    //    ever find. The `actor_id` is the only remaining link to it.
+    //
+    //    ✅ **Narrow this once the rename rule ships, not before.** At that point
+    //    stored text carries the current name, the name match reaches it, and
+    //    the 2,514 can shrink to the rows that actually name someone.
+    //
+    //    ⚠️ Note what this statement does NOT justify: for a row that never held
+    //    the name, deleting it serves no privacy purpose — `actor_id` goes NULL
+    //    by itself through the FK. Those rows are collateral, accepted for the
+    //    rename case alone.
+    const actorNotifications = await client.query(
+      `DELETE FROM notifications WHERE actor_id = $1`,
+      [userId],
+    );
+
+    // 2. The rows that name them without their being the actor. Measured at
+    //    ~1,500, and `role_application_deferred_invite` is 52 of 52 — the
+    //    approver is the actor while the applicant is the one named
+    //    (`teamApplicationsController.js:1022`). An actor condition alone
+    //    leaves all of these behind.
+    //
+    // ⚠️ Matched on WORD BOUNDARIES, not as a bare substring: a deleted "Ana"
+    // must not take out a notification about "Anastasia". The name is escaped
+    // for the regex in JS (`escapeForPosixRegex`) because a display name may
+    // contain `.`, `*`, `(`, `[` and friends, and an unescaped one would either
+    // match the wrong rows or raise.
+    const deletedByName = [];
+
+    for (const name of namesToScrub) {
+      const result = await client.query(
+        `
+        DELETE FROM notifications
+        WHERE title ~ ('(^|[^[:alnum:]])' || $1 || '([^[:alnum:]]|$)')
+           OR COALESCE(message, '') ~ ('(^|[^[:alnum:]])' || $1 || '([^[:alnum:]]|$)')
+        `,
+        [escapeForPosixRegex(name)],
+      );
+      deletedByName.push(result.rowCount);
+    }
+
+    logDeletionPhase("Phase D2 - done", {
+      byActor: actorNotifications.rowCount,
+      byName: deletedByName,
+    });
 
     logDeletionPhase("Phase E - delete user row", { userId });
 
