@@ -10,25 +10,46 @@ const {
 const DELETED_USER_DISPLAY_NAME = "Former Lomir User";
 
 /**
- * The prefixes the name scrub below matches on, derived from the traced table
- * of stored formats in `config/nameBearingMessageFormats.js` rather than
+ * What the name scrub below matches on, all derived from the traced table of
+ * stored formats in `config/nameBearingMessageFormats.js` rather than
  * maintained by hand here. That table records, per format, its write site, how
  * the row is stored, and whether the name in the content belongs to the row's
  * `sender_id` — read it before changing anything about this scrub.
  *
- * ⚠️ Prefixes for DM-stored formats are deliberately NOT in this list: those
- * rows are deleted outright a few lines below (`team_id IS NULL`), so the name
- * goes with the row. The derivation filters on `storage === "team"` to keep
- * that distinction in one place instead of a comment.
+ * ⚠️ DM-stored formats are deliberately absent from all three lists: those rows
+ * are deleted outright a few lines below (`team_id IS NULL`), so the name goes
+ * with the row. The derivations filter on team storage to keep that distinction
+ * in one place instead of a comment.
  *
- * 🔴 STILL OPEN, and this list cannot fix it: the query's `sender_id = $1`
- * condition misses every team format that names someone other than its sender.
- * `FORMATS_NAMING_SOMEONE_OTHER_THAN_SENDER` enumerates them from the same
- * table. Audit: `lomir-docs-internal/HANDOVER-Privacy-Security-Hardening.md`.
+ * 🟡 One DM case is NOT covered by that reasoning and is still open: two
+ * `🚫 INVITATION_CANCELLED` rows have `receiver_id IS NULL` and name a third
+ * party, so the person named is not a party to their own message and the
+ * wholesale DM delete misses them. Bounded at two rows, measured 2026-10-01;
+ * `DM_ROWS_NAMING_A_NON_PARTY_2026_10_01` records their ids. `storage: "dm"`
+ * is a hint, not a guarantee.
+ *
+ * 🔴 What is still open after this scrub: `👋`, `🎉` and `❌` prose rows that
+ * name someone other than their sender —
+ * `FORMATS_STILL_UNREACHABLE_AFTER_ANCHORING` enumerates them. They have no
+ * marker to anchor on and the sender condition does not reach them.
+ * Audit: `lomir-docs-internal/HANDOVER-Privacy-Security-Hardening.md` and
+ * `lomir-docs-internal/deletion-audit/`.
  */
 const {
-  NAME_BEARING_MESSAGE_PREFIXES,
+  SCRUB_ANCHORED_PREFIXES,
+  SCRUB_ID_LESS_TARGETS,
+  SCRUB_PROSE_EMOJI_PREFIXES,
 } = require("../config/nameBearingMessageFormats");
+
+/**
+ * `left(content, length(x)) = x` rather than `content LIKE x || '%'`.
+ *
+ * ⚠️ Every marker contains `_`, which is a LIKE wildcard matching any single
+ * character — so `LIKE '🆕 ROLE_CREATED:%'` would also match `🆕 ROLEXCREATED:`.
+ * Comparing a left-slice needs no escaping and cannot be got wrong.
+ */
+const startsWithParam = (placeholder) =>
+  `left(content, length(${placeholder})) = ${placeholder}`;
 
 const logDeletionPhase = (phase, details) => {
   if (process.env.NODE_ENV === "production") {
@@ -377,24 +398,144 @@ const deleteUser = async (req, res) => {
       );
     }
 
-    await client.query(
-      `
-      UPDATE messages
-      SET content = CASE
-        WHEN $2 <> ''
-          THEN REPLACE(REPLACE(content, $2, 'Former Lomir User'), $3, 'Former Lomir User')
-        ELSE REPLACE(content, $3, 'Former Lomir User')
-      END
-      WHERE sender_id = $1
-        AND team_id IS NOT NULL
-        AND (
-          ${NAME_BEARING_MESSAGE_PREFIXES.map(
-            (_, index) => `content LIKE '%' || $${index + 4} || '%'`,
-          ).join("\n          OR ")}
-        )
-      `,
-      [userId, fullName, user.username, ...NAME_BEARING_MESSAGE_PREFIXES],
+    // ─────────────────────────────────────────────────────────────────────────
+    // The name scrub. Three statements, because the stored formats fall into
+    // three groups that cannot be reached the same way. Audit and row counts:
+    // `lomir-docs-internal/HANDOVER-Privacy-Security-Hardening.md` and
+    // `deletion-audit/`.
+    //
+    // 🔴 It used to be ONE statement, matching `sender_id = $1` plus a bare
+    // emoji anywhere in the content. Both halves of that were wrong:
+    //   · `sender_id = $1` misses every format that names someone OTHER than
+    //     its sender — eleven of them, measured — and cannot ever reach a row
+    //     whose sender is NULL, which `deleteUser` itself creates below.
+    //   · a bare emoji cannot tell a stored format from a message a person
+    //     typed. Users open messages with 👍 (56 rows), ❤️ (14), 🙏 (17).
+    //
+    // ⚠️ The names are scrubbed one value at a time rather than with nested
+    // REPLACEs, so an empty display name cannot turn into a replacement of the
+    // empty string. `fullName` is empty for an account with no first/last name.
+    const namesToScrub = [...new Set([fullName, user.username])].filter(
+      (value) => typeof value === "string" && value.trim() !== "",
     );
+
+    // ── 1. Marker formats that carry `<id>:<name>` tokens ───────────────────
+    // Anchored on the numeric id, so this needs NO sender condition at all and
+    // cannot touch another person's name however their names overlap. This is
+    // what closes the gap for the eight formats that name a non-sender,
+    // including `👑 OWNERSHIP_TEAM` rows with `sender_id = NULL`.
+    for (const name of namesToScrub) {
+      await client.query(
+        `
+        UPDATE messages
+        SET content = REPLACE(content, $1 || ':' || $2, $1 || ':' || $3)
+        WHERE team_id IS NOT NULL
+          AND position($1 || ':' || $2 IN content) > 0
+          AND (
+            ${SCRUB_ANCHORED_PREFIXES.map((_, index) =>
+              startsWithParam(`$${index + 4}`),
+            ).join("\n            OR ")}
+          )
+        `,
+        [
+          String(userId),
+          name,
+          DELETED_USER_DISPLAY_NAME,
+          ...SCRUB_ANCHORED_PREFIXES,
+        ],
+      );
+    }
+
+    // ── 2. Marker formats with NO id tokens ─────────────────────────────────
+    // Only two, and they must be matched on the display name because there is
+    // nothing else in the row. `personSlots` is what keeps that safe: both
+    // formats are `<prefix> <slot> | <slot>`, and in `🗑️ TEAM_DELETED` the
+    // LEADING slot is a team name, never a person. A team name is the worse
+    // half of the substring trap — "Cooking" sits inside "Online Cooking &
+    // Recipe Swap Group" — so it is never rewritten here.
+    //
+    // ⚠️ Both slot rules match the name with its delimiters attached, so a
+    // deleted "Anna Berg" cannot damage an "Anna Bergmann" named in the same
+    // row. That is stricter than the statement this replaces, which would now
+    // have been table-wide rather than limited to the deleted user's own rows.
+    for (const target of SCRUB_ID_LESS_TARGETS) {
+      const trailing = `right(content, length($2) + 3) = ' | ' || $2`;
+      const leading = `position(': ' || $2 || ' | ' IN content) > 0`;
+      const hasLeading = target.personSlots.includes("leading");
+
+      const setExpression = hasLeading
+        ? `CASE
+             WHEN ${trailing}
+               THEN left(content, length(content) - length($2)) || $3
+             ELSE REPLACE(content, ': ' || $2 || ' | ', ': ' || $3 || ' | ')
+           END`
+        : `left(content, length(content) - length($2)) || $3`;
+
+      const matchExpression = hasLeading
+        ? `(${trailing} OR ${leading})`
+        : trailing;
+
+      for (const name of namesToScrub) {
+        await client.query(
+          `
+          UPDATE messages
+          SET content = ${setExpression}
+          WHERE team_id IS NOT NULL
+            AND ${startsWithParam("$1")}
+            AND ${matchExpression}
+          `,
+          [target.prefix, name, DELETED_USER_DISPLAY_NAME],
+        );
+      }
+    }
+
+    // ── 3. Prose formats: the old sender-based path, kept deliberately ──────
+    // 🔴 Do NOT "finish the job" by deleting this. Anchoring cannot replace the
+    // sender condition for prose: those formats have no marker, so there is
+    // nothing to anchor on, and `🎯` and the `🚪` prose form carry
+    // `namedIsSender: true` — they are reached today precisely BECAUSE the
+    // named person is the sender. Removing the condition would scrub them
+    // never instead of sometimes.
+    //
+    // ⚠️ Narrowed in two ways against what it replaced. The prefix list is now
+    // prose-only, and the emoji must be at the START of the content. Without
+    // the first change a `🚪 MEMBER_LEFT:` row would be matched here too and
+    // get the blind name swap that statement 1 exists to avoid; without the
+    // second, any message merely containing the emoji was eligible.
+    //
+    // 🔴 What this still does NOT reach, and it is the remaining gap:
+    // `FORMATS_STILL_UNREACHABLE_AFTER_ANCHORING` — `👋` (136 rows, 5 with no
+    // sender), `🎉` (288) and `❌`. They name a non-sender AND have no marker.
+    // Their fix is an id token in the writer or a one-off migration over known
+    // ids, decided separately. A wider prefix list is not an option.
+    for (const name of namesToScrub) {
+      await client.query(
+        `
+        UPDATE messages
+        SET content = REPLACE(content, $2, $3)
+        WHERE sender_id = $1
+          AND team_id IS NOT NULL
+          AND position($2 IN content) > 0
+          AND (
+            ${SCRUB_PROSE_EMOJI_PREFIXES.map((_, index) =>
+              startsWithParam(`$${index + 4}`),
+            ).join("\n            OR ")}
+          )
+          AND NOT (
+            ${SCRUB_ANCHORED_PREFIXES.map((_, index) =>
+              startsWithParam(`$${index + 4 + SCRUB_PROSE_EMOJI_PREFIXES.length}`),
+            ).join("\n            OR ")}
+          )
+        `,
+        [
+          userId,
+          name,
+          DELETED_USER_DISPLAY_NAME,
+          ...SCRUB_PROSE_EMOJI_PREFIXES,
+          ...SCRUB_ANCHORED_PREFIXES,
+        ],
+      );
+    }
 
     logDeletionPhase("Phase C - team ownership cleanup", {
       teamsToDelete: teamsToDelete.length,

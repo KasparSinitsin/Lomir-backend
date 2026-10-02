@@ -11,6 +11,10 @@ const {
   FORMATS_WRITTEN_BY_THE_FRONTEND,
   FORMATS_CLEARED_OF_PERSON_NAMES,
   OBSERVED_ROWS_2026_10_01,
+  MARKER_FORMATS_WITHOUT_ID_TOKENS,
+  SCRUB_ANCHORED_PREFIXES,
+  SCRUB_PROSE_EMOJI_PREFIXES,
+  FORMATS_STILL_UNREACHABLE_AFTER_ANCHORING,
 } = require("../src/config/nameBearingMessageFormats");
 
 /**
@@ -182,6 +186,18 @@ test("the known sender_id gap is exactly the formats that were traced", () => {
   // Pinned so that a NEW format with the same flaw fails here loudly instead
   // of joining a known list.
   //
+  // ⚠️ Since the anchored scrub this list is NOT the same thing as the gap.
+  // It records which formats NAME a non-sender; eight of them are now reached
+  // by the id-anchored statement, which has no sender condition at all. What is
+  // actually still unreachable is the shorter
+  // `FORMATS_STILL_UNREACHABLE_AFTER_ANCHORING` — the prose three.
+  //
+  // ⚠️ `MEMBER_LEFT` joined on 2026-10-02 and is the clearest case of why the
+  // two lists had to come apart: the dry run found 1 of its 68 team rows with
+  // no sender, so by this table's own rule its `namedIsSender` is false — yet
+  // it carries an id token and is reached. Naming and reachability are
+  // different questions.
+  //
   // ⚠️ Grew from 5 to 10 on 2026-10-01, and NOT because the code changed.
   // Three of the additions came out of a database census; two came out of
   // dropping the `live` filter, because 6 legacy MEMBER_REMOVED team rows leak
@@ -196,6 +212,7 @@ test("the known sender_id gap is exactly the formats that were traced", () => {
     "ROLE_INVITATION_ACCEPTED",
     "MEMBER_REMOVED",
     "MEMBER_REMOVED_PUBLIC",
+    "MEMBER_LEFT",
     "OWNERSHIP_TEAM",
     "prose 🎉",
     "prose ❌",
@@ -257,7 +274,7 @@ test("the formats unreachable by any sender condition are exactly the traced one
   // `FORMATS_CLEARED_OF_PERSON_NAMES`.
   assert.deepEqual(
     FORMATS_WITH_NULL_SENDER.map(identify).sort(),
-    ["OWNERSHIP_TEAM", "prose 👋"].sort(),
+    ["OWNERSHIP_TEAM", "MEMBER_LEFT", "prose 👋"].sort(),
     "the set of name-bearing formats written with sender_id NULL changed. A " +
       "new one means another row that no sender-based scrub can reach.",
   );
@@ -451,22 +468,199 @@ test("a format cleared of person names is exactly the one that was checked", () 
   }
 });
 
-test("the scrub query builds one LIKE per prefix, as bound parameters", () => {
-  // The prefixes used to be inlined into the SQL string. They are bound
-  // parameters now ($4 onward, after userId/fullName/username), so the list
-  // and the query cannot drift apart in length.
+test("the scrub derives every prefix condition from the traced table", () => {
+  // The prefixes used to be inlined into the SQL string, then became bound
+  // parameters from one list. Since the anchored scrub there are three lists,
+  // and each one still has to be mapped into the SQL rather than retyped.
+  const source = readSource("src/controllers/userDeletionController.js");
+
+  for (const list of ["SCRUB_ANCHORED_PREFIXES", "SCRUB_PROSE_EMOJI_PREFIXES"]) {
+    assert.match(
+      source,
+      new RegExp(`${list}\\.map\\(`),
+      `the WHERE clause no longer derives its conditions from ${list}`,
+    );
+    assert.match(
+      source,
+      new RegExp(`\\.\\.\\.${list}`),
+      `${list} is no longer spread into the bound parameters`,
+    );
+  }
+
+  assert.match(
+    source,
+    /for \(const target of SCRUB_ID_LESS_TARGETS\)/,
+    "the id-less formats are no longer driven by the table",
+  );
+});
+
+test("the scrub never uses LIKE with a marker, because _ is a wildcard", () => {
+  // 🔴 Every marker contains an underscore, and `_` matches any single
+  // character in LIKE — so `LIKE '🆕 ROLE_CREATED:%'` also matches
+  // `🆕 ROLEXCREATED:`. The prefix comparisons use `left(content, length(x))`
+  // instead, which needs no escaping. Same family as the U+FE0F trap: a
+  // comparison that looks right and silently matches the wrong set.
+  const source = readSource("src/controllers/userDeletionController.js");
+
+  assert.doesNotMatch(
+    source,
+    /content LIKE \$\{?\s*[^}]*\}?\s*\|\| '%'/,
+    "a prefix is being matched with LIKE again — use left(content, length($n))",
+  );
+  assert.match(
+    source,
+    /left\(content, length\(\$\{placeholder\}\)\) = \$\{placeholder\}/,
+    "the prefix comparison helper changed shape",
+  );
+});
+
+test("the id-less marker formats are exactly the two that have no id token", () => {
+  // 🔴 Pinned, because getting this wrong is SILENT. Every other marker format
+  // carries `<id>:<name>`, so the scrub anonymises it anchored on the numeric
+  // id — precise, and immune to one display name being a substring of another.
+  // A format with no id token does not match that statement at all and would
+  // simply be skipped.
+  //
+  // So: a NEW format added to the table is assumed to carry id tokens. If it
+  // does not, this test fails until it is declared, which is the only reason
+  // the assumption is safe.
+  assert.deepEqual(
+    MARKER_FORMATS_WITHOUT_ID_TOKENS.map((f) => f.marker).sort(),
+    ["OWNERSHIP_TEAM", "TEAM_DELETED"].sort(),
+    "the set of marker formats without id tokens changed. If you ADDED one, " +
+      "check its writer: a bare-name format needs personSlots here or the " +
+      "scrub will skip it. If you gave one ids, remove it from the list.",
+  );
+});
+
+test("TEAM_DELETED never offers its leading slot for a name replacement", () => {
+  // 🔴 The whole point of `personSlots`. `🗑️ TEAM_DELETED: <team> | <owner>`
+  // puts a TEAM NAME in the leading slot, and a team name is the worse half of
+  // the substring trap the privacy handover records: "Cooking" sits inside
+  // "Online Cooking & Recipe Swap Group". `👑 OWNERSHIP_TEAM` has people in
+  // both slots and may use both.
+  const byMarker = new Map(
+    MARKER_FORMATS_WITHOUT_ID_TOKENS.map((f) => [f.marker, f.personSlots]),
+  );
+
+  assert.deepEqual(
+    byMarker.get("TEAM_DELETED"),
+    ["trailing"],
+    "TEAM_DELETED gained a leading person slot — its leading slot is the TEAM " +
+      "name, and rewriting it would corrupt team names that contain the " +
+      "deleted user's name as a substring",
+  );
+  assert.deepEqual(
+    byMarker.get("OWNERSHIP_TEAM").slice().sort(),
+    ["leading", "trailing"],
+    "OWNERSHIP_TEAM names the previous AND the new owner; dropping a slot " +
+      "leaves one of them in place",
+  );
+});
+
+test("the prose path keeps sender_id, because anchoring cannot replace it", () => {
+  // 🔴 A REGRESSION GUARD, and the least obvious assertion in this file.
+  // The recorded plan was "drop `sender_id = $1`". Done literally that loses
+  // coverage: `🎯` and the `🚪` prose form carry `namedIsSender: true`, so they
+  // are reached today precisely BECAUSE the named person is the sender, and
+  // they have no marker to anchor on instead. Removing the condition would
+  // scrub them never rather than sometimes.
   const source = readSource("src/controllers/userDeletionController.js");
 
   assert.match(
     source,
-    /NAME_BEARING_MESSAGE_PREFIXES\.map\(/,
-    "the WHERE clause no longer derives its LIKEs from the prefix list",
+    /WHERE sender_id = \$1\s*\n\s*AND team_id IS NOT NULL/,
+    "the prose statement lost its sender condition — that is a regression for " +
+      "the prose formats whose named person IS the sender, not a cleanup",
   );
+
+  const proseEmojiWithSenderCoverage = NAME_BEARING_MESSAGE_FORMATS.filter(
+    (format) =>
+      !format.marker &&
+      format.carriesPersonName !== false &&
+      format.namedIsSender &&
+      (format.storage === "team" || format.legacyStorage === "team"),
+  ).map((format) => format.emoji);
+
+  assert.ok(
+    proseEmojiWithSenderCoverage.length > 0,
+    "no prose format relies on the sender condition any more — if that is " +
+      "really true, this guard and the third statement can both go",
+  );
+});
+
+test("the prose path excludes rows that a marker prefix already claims", () => {
+  // `🚪` is both a prose emoji and the start of `🚪 MEMBER_LEFT:`, so without
+  // an exclusion a MEMBER_LEFT row would match the prose statement too and get
+  // the blind name swap that statement 1 exists to avoid.
+  const source = readSource("src/controllers/userDeletionController.js");
+
   assert.match(
     source,
-    /\[userId, fullName, user\.username, \.\.\.NAME_BEARING_MESSAGE_PREFIXES\]/,
-    "the prefixes are no longer passed as bound parameters",
+    /AND NOT \(\s*\n\s*\$\{SCRUB_ANCHORED_PREFIXES\.map\(/,
+    "the prose statement no longer excludes anchored marker rows",
   );
+
+  const proseEmoji = new Set(SCRUB_PROSE_EMOJI_PREFIXES);
+  const overlapping = SCRUB_ANCHORED_PREFIXES.filter((prefix) =>
+    proseEmoji.has([...prefix][0]),
+  );
+
+  assert.ok(
+    overlapping.length > 0,
+    "no marker prefix starts with a prose emoji any more, which would make " +
+      "the exclusion dead code — check before removing it",
+  );
+});
+
+test("the anchored prefixes match the writers byte for byte", () => {
+  // The same U+FE0F trap as the old bare-emoji list: `✏️` is U+270F U+FE0F and
+  // `🗑️` is U+1F5D1 U+FE0F. Written without the variation selector the prefix
+  // looks identical in every editor and matches nothing, with no error.
+  for (const prefix of SCRUB_ANCHORED_PREFIXES) {
+    const format = NAME_BEARING_MESSAGE_FORMATS.find(
+      (f) => f.marker && prefix === `${f.emoji} ${f.marker}:`,
+    );
+
+    assert.ok(
+      format,
+      `anchored prefix ${JSON.stringify(prefix)} does not correspond to any ` +
+        `format in the table, byte for byte`,
+    );
+  }
+
+  const withVariationSelector = SCRUB_ANCHORED_PREFIXES.filter((p) =>
+    p.includes("️"),
+  );
+
+  assert.deepEqual(
+    withVariationSelector.sort(),
+    ["✏️ ROLE_UPDATED:", "🗑️ ROLE_DELETED:", "🗑️ TEAM_DELETED:"].sort(),
+    "the set of prefixes carrying U+FE0F changed. If one lost it, its LIKE " +
+      "now matches nothing and the format leaks silently.",
+  );
+});
+
+test("the remaining gap after the anchored scrub is exactly the three prose formats", () => {
+  // 🔴 The gap list this PR shrinks: 11 formats before, 3 after. The eight
+  // marker formats are reached by the anchored statements with no sender
+  // condition at all, including `👑 OWNERSHIP_TEAM` rows whose sender is NULL.
+  // What is left has no marker to anchor on AND names a non-sender.
+  assert.deepEqual(
+    FORMATS_STILL_UNREACHABLE_AFTER_ANCHORING.map((f) => f.emoji).sort(),
+    ["👋", "🎉", "❌"].sort(),
+    "the remaining deletion gap changed. If it GREW, a new format leaks a " +
+      "name. If it shrank, say how it was closed in the audit doc.",
+  );
+
+  // Every one of them is also in the older, wider list; if not, one of the two
+  // derivations is wrong.
+  for (const format of FORMATS_STILL_UNREACHABLE_AFTER_ANCHORING) {
+    assert.ok(
+      FORMATS_NAMING_SOMEONE_OTHER_THAN_SENDER.includes(format),
+      `${format.emoji} is unreachable but not recorded as naming a non-sender`,
+    );
+  }
 });
 
 test("the scrub reads its prefixes from the traced table, not a local array", () => {

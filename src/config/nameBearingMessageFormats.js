@@ -221,10 +221,31 @@ const NAME_BEARING_MESSAGE_FORMATS = [
     live: true,
   },
   {
+    // 🔴 `senderCanBeNull` added 2026-10-02 from the anchored scrub's dry run
+    // (`deletion-audit/10`, section B): 1 of the 68 team rows has no sender.
+    // That is the FIFTH field in this table the data has falsified, and the
+    // same way every time — the entry described the writer, and the writer
+    // always supplies a sender.
+    //
+    // 🟢 It costs nothing here, and the reason is worth keeping: this format
+    // carries an id token (`🚪 MEMBER_LEFT:<id>:<name>`), so the scrub reaches
+    // it through the id-anchored statement, which has no sender condition at
+    // all. Before that statement existed, this row would have leaked silently.
+    // ⚠️ Not an argument that NULL senders stopped mattering: a format with no
+    // id token and no sender is still unreachable, which is why
+    // `👑 OWNERSHIP_TEAM` needed its own delimited statement.
+    // ⚠️ `namedIsSender` is therefore FALSE, by the same rule the `👋` entry
+    // spells out: in a row with no sender the named person is not the sender,
+    // because nobody is. The writer's intent does not get a vote on a field
+    // that describes stored rows. This moves the format into
+    // `FORMATS_NAMING_SOMEONE_OTHER_THAN_SENDER`, which is about naming and not
+    // about reachability — it is reached, by the id-anchored statement.
     marker: "MEMBER_LEFT",
     emoji: "🚪",
     storage: "team",
-    namedIsSender: true,
+    namedIsSender: false,
+    senderCanBeNull: true,
+    nullSenderSource: "unknown — 1 of 68 team rows, dry run 2026-10-02",
     writtenBy: "teamMembersController (self-removal branch)",
     live: true,
   },
@@ -638,6 +659,114 @@ const isTeamStored = (format) =>
   format.storage === "team" || format.legacyStorage === "team";
 
 /**
+ * 🔴 The two marker formats whose content carries NO `<id>:<name>` token, only
+ * bare display names — and therefore the only two the scrub cannot anonymise
+ * precisely.
+ *
+ * Why this matters more than it looks. Every other marker format is written
+ * through `formatIdNameToken` (frontend) or `${id}:${name}` (backend), so the
+ * scrub can replace `<userId>:<name>` and **cannot** collide with anyone else:
+ * the numeric id anchors it. These two have nothing to anchor on, so they need
+ * a replacement keyed on the display name itself — which is a blind substring
+ * swap, the trap recorded in the privacy handover ("Anna" also hits "Annabel").
+ *
+ * `personSlots` is what keeps that swap safe. Both formats are
+ * `<prefix> <slot> | <slot>`, and the slots do NOT both hold people:
+ *
+ *   `👑 OWNERSHIP_TEAM: <previous owner> | <new owner>`  — both are persons
+ *   `🗑️ TEAM_DELETED: <team name> | <owner>`             — the FIRST is a TEAM
+ *
+ * ⚠️ So a name replacement on a `TEAM_DELETED` row must never touch the leading
+ * slot. A team name is the worse case of the same trap: "Cooking" sits inside
+ * "Online Cooking & Recipe Swap Group", and a team name is far more likely to
+ * be a substring of another than a person's full name is.
+ *
+ * ⚠️ Pinned by a test against a literal list, like the gap lists above. A NEW
+ * format added to the table is assumed to carry id tokens; if it does not, the
+ * scrub would miss it **silently**, so the test fails until it is listed here.
+ */
+const MARKER_FORMATS_WITHOUT_ID_TOKENS = [
+  { marker: "OWNERSHIP_TEAM", personSlots: ["leading", "trailing"] },
+  { marker: "TEAM_DELETED", personSlots: ["trailing"] },
+];
+
+const carriesIdTokens = (format) =>
+  !MARKER_FORMATS_WITHOUT_ID_TOKENS.some((f) => f.marker === format.marker);
+
+/**
+ * The anchored prefixes the scrub matches on, replacing the bare-emoji list for
+ * every MARKER format: `✅ ROLE_FILLED:` rather than `%✅%`.
+ *
+ * 🟢 The anchoring is what makes it safe to drop `sender_id = $1` for these.
+ * An anchored marker prefix cannot match prose somebody typed, so widening the
+ * row set cannot start editing people's words — whereas a bare emoji certainly
+ * would have: the 2026-10-01 census found users opening messages with `👍` (56
+ * rows), `❤️` (14), `🙏` (17), `😎`, `🎉✨`, `🔥😎`.
+ *
+ * 🟢 And it is complete, measured rather than assumed: `deletion-audit/07`
+ * section B found **no** marker row stored without its emoji, and section C
+ * none behind an alternative prefix, while section A matched all 23 recorded
+ * marker counts exactly. The frontend parser accepts the emoji as optional, so
+ * this had to be checked rather than reasoned about.
+ */
+const SCRUB_ANCHORED_PREFIXES = [
+  ...new Set(
+    NAME_BEARING_MESSAGE_FORMATS.filter(
+      (format) =>
+        isTeamStored(format) &&
+        format.carriesPersonName !== false &&
+        format.marker,
+    ).map((format) => `${format.emoji} ${format.marker}:`),
+  ),
+];
+
+/**
+ * The id-less marker formats, resolved to what the scrub needs: the anchored
+ * prefix and which slots hold a person.
+ */
+const SCRUB_ID_LESS_TARGETS = MARKER_FORMATS_WITHOUT_ID_TOKENS.map((entry) => {
+  const format = NAME_BEARING_MESSAGE_FORMATS.find(
+    (f) => f.marker === entry.marker,
+  );
+
+  if (!format) {
+    throw new Error(
+      `MARKER_FORMATS_WITHOUT_ID_TOKENS names ${entry.marker}, which is not in ` +
+        `the format table — one of the two is stale`,
+    );
+  }
+
+  return {
+    marker: entry.marker,
+    prefix: `${format.emoji} ${format.marker}:`,
+    personSlots: entry.personSlots,
+  };
+});
+
+/**
+ * 🔴 The bare-emoji prefixes that are STILL matched the old way, with
+ * `sender_id = $1`, because they have no marker to anchor on.
+ *
+ * ⚠️ Read this before "finishing the job" by deleting the sender condition.
+ * The obvious reading of the plan was to drop `sender_id = $1` outright. That
+ * would have been a REGRESSION: `🎯` and the `🚪` prose form carry
+ * `namedIsSender: true`, so today they are reached precisely because the named
+ * person is the sender. Anchoring cannot replace that for them — there is no
+ * marker — so removing the condition would have scrubbed them never instead of
+ * sometimes. The condition stays for prose and is gone for markers.
+ */
+const SCRUB_PROSE_EMOJI_PREFIXES = [
+  ...new Set(
+    NAME_BEARING_MESSAGE_FORMATS.filter(
+      (format) =>
+        isTeamStored(format) &&
+        format.carriesPersonName !== false &&
+        !format.marker,
+    ).map((format) => format.emoji),
+  ),
+];
+
+/**
  * The team formats the scrub's `sender_id = $1` condition cannot reach.
  * Kept as a derived list so the gap is countable from code rather than prose.
  *
@@ -691,6 +820,29 @@ const FORMATS_CLEARED_OF_PERSON_NAMES = NAME_BEARING_MESSAGE_FORMATS.filter(
   (format) => format.carriesPersonName === false,
 );
 
+/**
+ * 🔴 What is STILL unreachable after the anchored scrub — the remaining gap,
+ * kept derived so it stays countable.
+ *
+ * These are the team prose formats that name someone other than their sender.
+ * They have no marker, so they cannot be anchored, and the sender condition
+ * they are left with does not reach them because the named person is not the
+ * sender. `👋` is the largest at 136 rows (5 of them with no sender at all),
+ * then `🎉` at 288; `❌` has never been seen.
+ *
+ * ⚠️ They need their own mechanism, decided separately: an id token added to
+ * the writers, or a one-off migration over known row ids. A wider prefix list
+ * is NOT an option — a bare emoji match would rewrite messages people typed.
+ */
+const FORMATS_STILL_UNREACHABLE_AFTER_ANCHORING =
+  NAME_BEARING_MESSAGE_FORMATS.filter(
+    (format) =>
+      isTeamStored(format) &&
+      format.carriesPersonName !== false &&
+      !format.marker &&
+      !format.namedIsSender,
+  );
+
 module.exports = {
   NAME_BEARING_MESSAGE_FORMATS,
   FORMATS_CLEARED_OF_PERSON_NAMES,
@@ -701,4 +853,10 @@ module.exports = {
   FORMATS_WRITTEN_BY_THE_FRONTEND,
   OBSERVED_ROWS_2026_10_01,
   DM_ROWS_NAMING_A_NON_PARTY_2026_10_01,
+  MARKER_FORMATS_WITHOUT_ID_TOKENS,
+  SCRUB_ANCHORED_PREFIXES,
+  SCRUB_ID_LESS_TARGETS,
+  SCRUB_PROSE_EMOJI_PREFIXES,
+  FORMATS_STILL_UNREACHABLE_AFTER_ANCHORING,
+  carriesIdTokens,
 };
