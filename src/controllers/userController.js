@@ -588,9 +588,74 @@ const deleteAvatar = async (req, res) => {
   }
 };
 
+// The most ids one request may resolve. Display names are already public one
+// at a time (`GET /api/users/:id` is a public route), so the batch exposes no
+// new field - but it does make harvesting them cheaper, so it is bounded and
+// authenticated. A chat page resolves the distinct mention ids of one
+// transcript, which is far below this.
+const MAX_RESOLVE_IDS = 200;
+
+/**
+ * POST /api/users/resolve-names - the names a batch of ids display under today.
+ *
+ * Why it exists: `@[Display Name](userId)` is stored inside ordinary message
+ * content (`MessageInput.jsx` writes it), so a deleted - or renamed - person's
+ * name survives in everyone else's text. Nothing scrubs it. Resolving the id
+ * at display time fixes both without editing a single stored user message.
+ *
+ * 🔴 The response reports `requested` as well as `people`, and the client
+ * NEEDS both to be safe. "Deleted" is inferred from absence, so absence has to
+ * mean exactly one thing:
+ *   - id in `requested`, missing from `people`  -> the account is gone
+ *   - id not in `requested` (non-numeric, or over the cap) -> unknown, and the
+ *     caller must fall back to the stored name
+ * Without `requested`, an id dropped by sanitizing or by the cap would be
+ * indistinguishable from a deleted account, and every living person past the
+ * limit would render as "Former Lomir User". That failure points the wrong way
+ * - it invents a deletion rather than leaking a name - but it is still wrong.
+ */
+const resolveDisplayNames = async (req, res) => {
+  try {
+    const raw = Array.isArray(req.body?.ids) ? req.body.ids : null;
+    if (!raw) {
+      return res.status(400).json({
+        success: false,
+        message: "ids must be an array",
+      });
+    }
+
+    // ⚠️ Mention ids arrive as the strings they were parsed out of message
+    // text, and `@all` stores the literal "all" - a non-numeric id is normal
+    // input here, not an error. They are dropped rather than rejected, which
+    // is why the caller is told what was actually looked up.
+    const ids = [
+      ...new Set(
+        raw
+          .map((value) => Number.parseInt(String(value), 10))
+          .filter((value) => Number.isInteger(value) && value > 0),
+      ),
+    ].slice(0, MAX_RESOLVE_IDS);
+
+    const people = await userModel.resolveDisplayNames(ids);
+
+    res.status(200).json({
+      success: true,
+      data: { requested: ids, people },
+    });
+  } catch (error) {
+    console.error("Error resolving display names:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error resolving display names",
+      ...(process.env.NODE_ENV === "development" && { error: error.message }),
+    });
+  }
+};
+
 module.exports = {
   getUsers,
   getUserById,
   updateUser,
   deleteAvatar,
+  resolveDisplayNames,
 };
