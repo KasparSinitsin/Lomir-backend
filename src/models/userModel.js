@@ -285,6 +285,38 @@ const userModel = {
     }));
   },
 
+  // Resolves a batch of user ids to the names they display under TODAY.
+  //
+  // 🔴 It returns ONE ROW PER SURVIVING id and nothing at all for the rest,
+  // and that asymmetry is the whole point: `deleteUser` hard-deletes the row
+  // (`userDeletionController.js`, Phase E - `DELETE FROM users WHERE id = $1`),
+  // so **absence is the only signal that an account is gone**. There is no
+  // flag to read and no anonymized row left behind.
+  //
+  // ⚠️ Do not "helpfully" return a placeholder row for a missing id. The
+  // caller renders the placeholder as a translated string; a wire-level
+  // English name would be the `DELETED_USER_DISPLAY_NAME` trap again, where a
+  // label that must never be translated travels as data.
+  //
+  // The columns are the three `GET /api/users/:id` already serves publicly,
+  // so nothing here is newly exposed - see the controller for why the batch
+  // size is capped anyway.
+  async resolveDisplayNames(ids) {
+    if (!Array.isArray(ids) || ids.length === 0) return [];
+    const result = await db.query(
+      `SELECT u.id, u.first_name, u.last_name, u.username
+         FROM users u
+        WHERE u.id = ANY($1::int[])`,
+      [ids],
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      username: row.username,
+    }));
+  },
+
   // True when either user has blocked the other.
   async isBlockedBetween(a, b) {
     const result = await db.query(
