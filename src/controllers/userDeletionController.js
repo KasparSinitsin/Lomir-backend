@@ -41,6 +41,7 @@ const {
   SCRUB_ANCHORED_PREFIXES,
   SCRUB_ID_LESS_TARGETS,
   SCRUB_PROSE_EMOJI_PREFIXES,
+  buildScrubNameCandidates,
 } = require("../config/nameBearingMessageFormats");
 
 /**
@@ -415,12 +416,14 @@ const deleteUser = async (req, res) => {
     //   · a bare emoji cannot tell a stored format from a message a person
     //     typed. Users open messages with 👍 (56 rows), ❤️ (14), 🙏 (17).
     //
-    // ⚠️ The names are scrubbed one value at a time rather than with nested
-    // REPLACEs, so an empty display name cannot turn into a replacement of the
-    // empty string. `fullName` is empty for an account with no first/last name.
-    const namesToScrub = [...new Set([fullName, user.username])].filter(
-      (value) => typeof value === "string" && value.trim() !== "",
-    );
+    // 🔴 BOTH spellings of the name, because every statement below matches the
+    // stored text LITERALLY and `fullName` above does not collapse whitespace.
+    // One stray space in a `users` row hid ~1,000 rows from this scrub inside
+    // BE #347 and #348 — measured in `deletion-audit/15` and `16`, bounded by
+    // `17`. The reasoning, the numbers and why the data is not cleaned instead
+    // live with the function, in the config module that has no imports and can
+    // therefore be unit-tested without touching a database.
+    const namesToScrub = buildScrubNameCandidates(user);
 
     // ── 1. Marker formats that carry `<id>:<name>` tokens ───────────────────
     // Anchored on the numeric id, so this needs NO sender condition at all and

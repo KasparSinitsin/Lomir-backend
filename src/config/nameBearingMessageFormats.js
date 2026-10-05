@@ -843,6 +843,52 @@ const FORMATS_STILL_UNREACHABLE_AFTER_ANCHORING =
       !format.namedIsSender,
   );
 
+/**
+ * Every spelling of a person's name that the deletion scrub must look for.
+ *
+ * 🔴 Why this is a function and not `[first, last].join(" ")` at the call site.
+ * Every scrub statement matches the stored text LITERALLY, so a stray space
+ * inside `first_name` or `last_name` produces a needle that no stored row
+ * contains. `deletion-audit/15` found exactly one such row in 177 users - a
+ * trailing space in `first_name` - and `16` measured the cost: of the rows
+ * naming that person, **273** marker rows, **553** notification titles and
+ * **242** notification messages held the other spelling and were unreachable.
+ *
+ * ⚠️ That hole sat inside BE #347 and #348, both merged and both walked,
+ * because the failure is silent: `REPLACE` finds nothing, reports nothing, and
+ * every existing test uses a clean name.
+ *
+ * 🟢 `deletion-audit/17` established two things that bound this fix. There is
+ * no THIRD spelling (`mention_other = 0`), so two candidates are complete. And
+ * the divergence is temporal rather than competing writers - every stored row
+ * up to 2026-07-20 is single-spaced, every row from 2026-09-09 double-spaced,
+ * no overlap - so the old rows are a closed set that will not grow. They are
+ * also never rewritten, which is why both spellings are needed permanently.
+ *
+ * ⚠️ The data is deliberately NOT cleaned instead. Julia decided 2026-10-05
+ * that a stray space in a person's own name is not corrected, because an
+ * accidental space cannot be told from an intentional one ("van der Berg",
+ * "de la Cruz"). `STATUS.md` → *Settled - do not re-raise*.
+ *
+ * An extra candidate can never match less, and the de-duplication keeps it free
+ * for every user whose name is already clean: both spellings collapse to one.
+ *
+ * @param {{ first_name?: string, last_name?: string, username?: string }} user
+ * @returns {string[]} distinct, non-blank needles; the raw spelling first
+ */
+const buildScrubNameCandidates = (user) => {
+  const joinParts = (...parts) => parts.filter(Boolean).join(" ");
+
+  // ⚠️ Mirrors `deleteUser`'s own assembly exactly, including the fact that it
+  // does NOT trim. The whole point is to search what the writers produced.
+  const rawFullName = joinParts(user?.first_name, user?.last_name);
+  const collapsedFullName = rawFullName.replace(/\s+/g, " ").trim();
+
+  return [...new Set([rawFullName, collapsedFullName, user?.username])].filter(
+    (value) => typeof value === "string" && value.trim() !== "",
+  );
+};
+
 module.exports = {
   NAME_BEARING_MESSAGE_FORMATS,
   FORMATS_CLEARED_OF_PERSON_NAMES,
@@ -859,4 +905,5 @@ module.exports = {
   SCRUB_PROSE_EMOJI_PREFIXES,
   FORMATS_STILL_UNREACHABLE_AFTER_ANCHORING,
   carriesIdTokens,
+  buildScrubNameCandidates,
 };
