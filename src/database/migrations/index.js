@@ -14,6 +14,7 @@ const addPasswordChangedAtToUsers = require("./add_password_changed_at_to_users"
 const addPreferredLanguageToUsers = require("./add_preferred_language_to_users");
 const fixTokenExpiryTimestamps = require("./fix_token_expiry_timestamps");
 const addSourceToUserTags = require("./add_source_to_user_tags");
+const addIdTokensToProseEvents = require("./add_id_tokens_to_prose_events");
 
 const runMigrations = async () => {
   try {
@@ -31,9 +32,20 @@ const runMigrations = async () => {
     await addPreferredLanguageToUsers();
     await fixTokenExpiryTimestamps();
     await addSourceToUserTags();
+    // ⚠️ The first DATA migration here: it rewrites stored message
+    // text rather than the schema. Idempotent by guard and wrapped in its
+    // own transaction, because the catch below does not rethrow.
+    await addIdTokensToProseEvents();
 
     console.log("All migrations completed successfully!");
   } catch (error) {
+    // 🔴 This catch does NOT rethrow, so `migrate.js` goes on to print
+    // "Migration completed successfully" after a failure — a failed run is
+    // indistinguishable from a clean one. Noted 2026-10-06 while adding the
+    // first DATA migration; left as it is because changing it affects every
+    // migration and deserves its own change. Until then a data migration must
+    // be idempotent, must own its transaction, and must be verifiable from
+    // OUTSIDE — `deletion-audit/22` is that check for the prose id backfill.
     console.error("Error running migrations:", error);
   }
 };
