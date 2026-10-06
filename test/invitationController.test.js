@@ -610,9 +610,13 @@ test("respondToInvitation fills the linked vacant role when accepting with fill_
     sql.includes("INSERT INTO messages (sender_id, team_id, content, sent_at)"),
   );
   assert.ok(teamMessageCall);
+  // The `7:` prefix is the invitee's id (`invitee_id` in the fixture), carried
+  // so the chat resolves the CURRENT name at display time rather than showing
+  // the one frozen here. Asserting the full string also proves the banner uses
+  // the invitee's id and not the acting user's.
   assert.equal(
     teamMessageCall.params[2],
-    "👋 Jamie Doe joined the team as Backend Developer!",
+    "👋 7:Jamie Doe joined the team as Backend Developer!",
   );
 
   const inviterNotificationCall = notificationCalls.find(
@@ -673,7 +677,7 @@ test("respondToInvitation leaves the linked vacant role open when fill_role is f
     sql.includes("INSERT INTO messages (sender_id, team_id, content, sent_at)"),
   );
   assert.ok(teamMessageCall);
-  assert.equal(teamMessageCall.params[2], "👋 Jamie Doe joined the team!");
+  assert.equal(teamMessageCall.params[2], "👋 7:Jamie Doe joined the team!");
 
   const inviterNotificationCall = notificationCalls.find(
     ({ sql, params }) =>
@@ -725,7 +729,7 @@ test("respondToInvitation still accepts invitations without a linked role even w
     sql.includes("INSERT INTO messages (sender_id, team_id, content, sent_at)"),
   );
   assert.ok(teamMessageCall);
-  assert.equal(teamMessageCall.params[2], "👋 Jamie Doe joined the team!");
+  assert.equal(teamMessageCall.params[2], "👋 7:Jamie Doe joined the team!");
 });
 
 test("respondToInvitation keeps the decline flow unchanged", async () => {
@@ -1076,7 +1080,7 @@ test("respondToInvitation accept for internal role invite does not re-add member
   assert.ok(teamMessageCall);
   assert.equal(
     teamMessageCall.params[2],
-    "🎯 Jamie Doe was assigned the role Backend Developer!",
+    "🎯 7:Jamie Doe was assigned the role Backend Developer!",
   );
 
   // Team notification type should be role_assigned
@@ -1131,7 +1135,7 @@ test("respondToInvitation accept for internal role invite with fill_role false s
   assert.ok(teamMessageCall);
   assert.equal(
     teamMessageCall.params[2],
-    "🎯 Jamie Doe was assigned the role Backend Developer!",
+    "🎯 7:Jamie Doe was assigned the role Backend Developer!",
   );
 });
 

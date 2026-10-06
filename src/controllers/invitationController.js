@@ -6,6 +6,7 @@ const {
 const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer");
 const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
+const { idNameToken } = require("../utils/eventNameToken");
 const { TEAM_ERROR_CODES } = require("../config/teamErrors");
 const { DEFAULT_ROLE_NAME } = require("../config/roleDefaults");
 
@@ -1129,15 +1130,22 @@ const respondToInvitation = async (req, res) => {
             await emitInsertedMessage(req, responseMessageResult.rows[0]);
           }
         } else {
+          // The id travels with the name so the chat can resolve the CURRENT
+          // name at display time; without it these four banners froze whoever
+          // joined under the name they had that day. `idNameToken` falls back
+          // to the bare name if the id is not a positive integer, which is
+          // exactly the old output.
+          const inviteeToken = idNameToken(invitation.invitee_id, inviteeName);
+
           let joinLine;
           if (isInternalAccept && roleFilled) {
-            joinLine = `🎯 ${inviteeName} was assigned the role ${filledRoleName}!`;
+            joinLine = `🎯 ${inviteeToken} was assigned the role ${filledRoleName}!`;
           } else if (isInternalAccept) {
-            joinLine = `🎯 ${inviteeName} accepted a role invitation!`;
+            joinLine = `🎯 ${inviteeToken} accepted a role invitation!`;
           } else if (roleFilled) {
-            joinLine = `👋 ${inviteeName} joined the team as ${filledRoleName}!`;
+            joinLine = `👋 ${inviteeToken} joined the team as ${filledRoleName}!`;
           } else {
-            joinLine = `👋 ${inviteeName} joined the team!`;
+            joinLine = `👋 ${inviteeToken} joined the team!`;
           }
           const formattedMessage =
             response_message && response_message.trim()

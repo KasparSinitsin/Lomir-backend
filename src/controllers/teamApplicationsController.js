@@ -1,5 +1,6 @@
 const db = require("../config/database");
 const Joi = require("joi");
+const { idNameToken } = require("../utils/eventNameToken");
 const {
   createNotification,
   notifyTeamMembers,
@@ -796,7 +797,17 @@ const handleTeamApplication = async (req, res) => {
         let teamMessageResult = null;
 
         if (!isInternalRoleApp) {
-          const systemMessage = `🎉 ${applicantName} has applied successfully to your team and has been added as a team member by ${approverName}. Say hello to them!`;
+          // Both people get an id token, so a later rename or deletion reaches
+          // this banner at display time instead of needing the stored row
+          // rewritten. The approver is the acting user; the applicant comes
+          // off the application row.
+          const applicantToken = idNameToken(
+            application.applicant_id,
+            applicantName,
+          );
+          const approverToken = idNameToken(userId, approverName);
+
+          const systemMessage = `🎉 ${applicantToken} has applied successfully to your team and has been added as a team member by ${approverToken}. Say hello to them!`;
 
           teamMessageResult = await client.query(
             `INSERT INTO messages (sender_id, team_id, content, sent_at)
