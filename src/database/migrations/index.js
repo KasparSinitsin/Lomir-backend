@@ -15,6 +15,9 @@ const addPreferredLanguageToUsers = require("./add_preferred_language_to_users")
 const fixTokenExpiryTimestamps = require("./fix_token_expiry_timestamps");
 const addSourceToUserTags = require("./add_source_to_user_tags");
 const addIdTokensToProseEvents = require("./add_id_tokens_to_prose_events");
+const fixWrongApproverIdsInApplauseEvents = require(
+  "./fix_wrong_approver_ids_in_applause_events"
+);
 
 const runMigrations = async () => {
   try {
@@ -36,6 +39,12 @@ const runMigrations = async () => {
     // text rather than the schema. Idempotent by guard and wrapped in its
     // own transaction, because the catch below does not rethrow.
     await addIdTokensToProseEvents();
+    // 🔴 Runs AFTER the backfill above, and corrects it. That migration wrote
+    // `sender_id` into the 🎉 APPROVER slot on the premise that the sender is
+    // the approver; `deletion-audit/24` measured the premise as false for 203
+    // of 289 rows. Order matters: this one only recognises a row by the wrong
+    // id being present, so it must not run before the id is written.
+    await fixWrongApproverIdsInApplauseEvents();
 
     console.log("All migrations completed successfully!");
   } catch (error) {
