@@ -1017,7 +1017,7 @@ const updateMemberRole = async (req, res) => {
           }
 
           // Team chat message for everyone
-          const teamChatMessage = `👑 OWNERSHIP_TEAM: ${prevOwnerName} | ${newOwnerName}`;
+          const teamChatMessage = `👑 OWNERSHIP_TEAM: ${prevToken} | ${newToken}`;
           const ownershipTeamMessageResult = await db.pool.query(
             `INSERT INTO messages (sender_id, team_id, content, sent_at)
          VALUES ($1, $2, $3, NOW())

@@ -659,39 +659,15 @@ const isTeamStored = (format) =>
   format.storage === "team" || format.legacyStorage === "team";
 
 /**
- * 🔴 The two marker formats whose content carries NO `<id>:<name>` token, only
- * bare display names — and therefore the only two the scrub cannot anonymise
- * precisely.
- *
- * Why this matters more than it looks. Every other marker format is written
- * through `formatIdNameToken` (frontend) or `${id}:${name}` (backend), so the
- * scrub can replace `<userId>:<name>` and **cannot** collide with anyone else:
- * the numeric id anchors it. These two have nothing to anchor on, so they need
- * a replacement keyed on the display name itself — which is a blind substring
- * swap, the trap recorded in the privacy handover ("Anna" also hits "Annabel").
- *
- * `personSlots` is what keeps that swap safe. Both formats are
- * `<prefix> <slot> | <slot>`, and the slots do NOT both hold people:
- *
- *   `👑 OWNERSHIP_TEAM: <previous owner> | <new owner>`  — both are persons
- *   `🗑️ TEAM_DELETED: <team name> | <owner>`             — the FIRST is a TEAM
- *
- * ⚠️ So a name replacement on a `TEAM_DELETED` row must never touch the leading
- * slot. A team name is the worse case of the same trap: "Cooking" sits inside
- * "Online Cooking & Recipe Swap Group", and a team name is far more likely to
- * be a substring of another than a person's full name is.
- *
- * ⚠️ Pinned by a test against a literal list, like the gap lists above. A NEW
- * format added to the table is assumed to carry id tokens; if it does not, the
- * scrub would miss it **silently**, so the test fails until it is listed here.
+ * Marker formats with legacy rows containing bare names. New writers emit
+ * id:name tokens, but stored rows retain their original shape indefinitely.
+ * Both ownership slots hold people; TEAM_DELETED's leading slot is a team.
+ * Keep these entries when a writer gains ids: legacy deletion still needs them.
  */
-const MARKER_FORMATS_WITHOUT_ID_TOKENS = [
+const LEGACY_ID_LESS_MARKER_FORMATS = [
   { marker: "OWNERSHIP_TEAM", personSlots: ["leading", "trailing"] },
   { marker: "TEAM_DELETED", personSlots: ["trailing"] },
 ];
-
-const carriesIdTokens = (format) =>
-  !MARKER_FORMATS_WITHOUT_ID_TOKENS.some((f) => f.marker === format.marker);
 
 /**
  * The anchored prefixes the scrub matches on, replacing the bare-emoji list for
@@ -724,14 +700,14 @@ const SCRUB_ANCHORED_PREFIXES = [
  * The id-less marker formats, resolved to what the scrub needs: the anchored
  * prefix and which slots hold a person.
  */
-const SCRUB_ID_LESS_TARGETS = MARKER_FORMATS_WITHOUT_ID_TOKENS.map((entry) => {
+const SCRUB_ID_LESS_TARGETS = LEGACY_ID_LESS_MARKER_FORMATS.map((entry) => {
   const format = NAME_BEARING_MESSAGE_FORMATS.find(
     (f) => f.marker === entry.marker,
   );
 
   if (!format) {
     throw new Error(
-      `MARKER_FORMATS_WITHOUT_ID_TOKENS names ${entry.marker}, which is not in ` +
+      `LEGACY_ID_LESS_MARKER_FORMATS names ${entry.marker}, which is not in ` +
         `the format table — one of the two is stale`,
     );
   }
@@ -742,6 +718,21 @@ const SCRUB_ID_LESS_TARGETS = MARKER_FORMATS_WITHOUT_ID_TOKENS.map((entry) => {
     personSlots: entry.personSlots,
   };
 });
+
+/**
+ * Use full slot boundaries for tokenized ownership/deletion rows too. They
+ * protect TEAM_DELETED's team token and distinguish ids such as 42 and 142.
+ */
+const SCRUB_ANCHORED_SLOT_TARGETS = SCRUB_ID_LESS_TARGETS;
+
+/**
+ * Other marker formats retain their existing token scrub. Slot-target prefixes
+ * are handled separately so their non-person slots remain untouched.
+ */
+const SCRUB_ANCHORED_GLOBAL_PREFIXES = SCRUB_ANCHORED_PREFIXES.filter(
+  (prefix) =>
+    !SCRUB_ANCHORED_SLOT_TARGETS.some((target) => target.prefix === prefix),
+);
 
 /**
  * 🔴 The bare-emoji prefixes that are STILL matched the old way, with
@@ -899,11 +890,12 @@ module.exports = {
   FORMATS_WRITTEN_BY_THE_FRONTEND,
   OBSERVED_ROWS_2026_10_01,
   DM_ROWS_NAMING_A_NON_PARTY_2026_10_01,
-  MARKER_FORMATS_WITHOUT_ID_TOKENS,
+  LEGACY_ID_LESS_MARKER_FORMATS,
   SCRUB_ANCHORED_PREFIXES,
+  SCRUB_ANCHORED_GLOBAL_PREFIXES,
+  SCRUB_ANCHORED_SLOT_TARGETS,
   SCRUB_ID_LESS_TARGETS,
   SCRUB_PROSE_EMOJI_PREFIXES,
   FORMATS_STILL_UNREACHABLE_AFTER_ANCHORING,
-  carriesIdTokens,
   buildScrubNameCandidates,
 };

@@ -1,4 +1,5 @@
 const db = require("../config/database");
+const { idNameToken } = require("../utils/eventNameToken");
 const Joi = require("joi");
 const { resolveLocationData } = require("../utils/geocodingUtil");
 const {
@@ -855,7 +856,7 @@ const deleteTeam = async (req, res) => {
         );
 
         // Send ONE system message to the team chat (not DM)
-        const deleteMessage = `🗑️ TEAM_DELETED: ${teamName} | ${ownerName}`;
+        const deleteMessage = `🗑️ TEAM_DELETED: ${idNameToken(teamId, teamName)} | ${idNameToken(userId, ownerName)}`;
 
         const deleteMessageResult = await db.pool.query(
           `INSERT INTO messages (sender_id, team_id, content, sent_at)
