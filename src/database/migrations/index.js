@@ -18,6 +18,9 @@ const addIdTokensToProseEvents = require("./add_id_tokens_to_prose_events");
 const fixWrongApproverIdsInApplauseEvents = require(
   "./fix_wrong_approver_ids_in_applause_events"
 );
+const addPersonIdsToLegacyMarkerDms = require(
+  "./add_person_ids_to_legacy_marker_dms"
+);
 
 const runMigrations = async () => {
   try {
@@ -45,6 +48,10 @@ const runMigrations = async () => {
     // of 289 rows. Order matters: this one only recognises a row by the wrong
     // id being present, so it must not run before the id is written.
     await fixWrongApproverIdsInApplauseEvents();
+    // Step 3 of the name bug: the 171 marker DMs of 4–14 January 2026 that
+    // stored two names and no ids. Independent of the two migrations above (it
+    // reads no prose slot). Dry run: `deletion-audit/32`.
+    await addPersonIdsToLegacyMarkerDms();
 
     console.log("All migrations completed successfully!");
   } catch (error) {
