@@ -21,6 +21,9 @@ const fixWrongApproverIdsInApplauseEvents = require(
 const addPersonIdsToLegacyMarkerDms = require(
   "./add_person_ids_to_legacy_marker_dms"
 );
+const addPersonIdToLegacyLeaveRows = require(
+  "./add_person_id_to_legacy_leave_rows"
+);
 
 const runMigrations = async () => {
   try {
@@ -52,6 +55,9 @@ const runMigrations = async () => {
     // stored two names and no ids. Independent of the two migrations above (it
     // reads no prose slot). Dry run: `deletion-audit/32`.
     await addPersonIdsToLegacyMarkerDms();
+    // Step 3 of the name bug, F1: the 16 legacy `🚪 X has left the team.` rows
+    // become `🚪 MEMBER_LEFT:<id>:X`. Dry run: `deletion-audit/33`.
+    await addPersonIdToLegacyLeaveRows();
 
     console.log("All migrations completed successfully!");
   } catch (error) {
