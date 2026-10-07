@@ -24,6 +24,9 @@ const addPersonIdsToLegacyMarkerDms = require(
 const addPersonIdToLegacyLeaveRows = require(
   "./add_person_id_to_legacy_leave_rows"
 );
+const addApplicantIdToApplauseEvents = require(
+  "./add_applicant_id_to_applause_events"
+);
 
 const runMigrations = async () => {
   try {
@@ -58,6 +61,10 @@ const runMigrations = async () => {
     // Step 3 of the name bug, F1: the 16 legacy `🚪 X has left the team.` rows
     // become `🚪 MEMBER_LEFT:<id>:X`. Dry run: `deletion-audit/33`.
     await addPersonIdToLegacyLeaveRows();
+    // Step 4 of the name bug: the 🎉 APPLICANT slot gets its id from the
+    // application, found by `reviewed_at = sent_at`. Touches the applicant slot
+    // only, so it is independent of #352/#353. Dry run: `deletion-audit/35`.
+    await addApplicantIdToApplauseEvents();
 
     console.log("All migrations completed successfully!");
   } catch (error) {
