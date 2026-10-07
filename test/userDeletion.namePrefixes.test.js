@@ -11,8 +11,10 @@ const {
   FORMATS_WRITTEN_BY_THE_FRONTEND,
   FORMATS_CLEARED_OF_PERSON_NAMES,
   OBSERVED_ROWS_2026_10_01,
-  MARKER_FORMATS_WITHOUT_ID_TOKENS,
+  LEGACY_ID_LESS_MARKER_FORMATS,
   SCRUB_ANCHORED_PREFIXES,
+  SCRUB_ANCHORED_GLOBAL_PREFIXES,
+  SCRUB_ANCHORED_SLOT_TARGETS,
   SCRUB_PROSE_EMOJI_PREFIXES,
   FORMATS_STILL_UNREACHABLE_AFTER_ANCHORING,
 } = require("../src/config/nameBearingMessageFormats");
@@ -236,30 +238,20 @@ test("the known sender_id gap is exactly the formats that were traced", () => {
 });
 
 test("deleteUser still writes the successor tombstone with a NULL sender", () => {
-  // 🔴 The worst row in the whole audit, and deleteUser creates it: handing a
-  // team to a successor writes `👑 OWNERSHIP_TEAM: Former Lomir User |
-  // <successor>` with `sender_id = NULL`. The deleted user is anonymised, the
-  // successor is named in full, and no `sender_id = $1` condition can ever
-  // reach a NULL. Deleting the successor later leaves their name in place.
-  //
-  // This is asserted against the WRITER rather than the table, so that fixing
-  // the writer (a real sender, or an id token in the content) makes the table
-  // entry fail as stale instead of quietly outliving its reason.
+  // The predecessor is anonymous; the living successor now has an id.
+  // sender_id remains NULL, so scrubbing must still work without a sender.
+
   const source = readSource("src/controllers/userDeletionController.js");
 
   assert.match(
     source,
     /\[\s*null,\s*team\.teamId,\s*`\u{1F451} OWNERSHIP_TEAM:/u,
-    "the successor tombstone changed shape. If it now has a real sender_id or " +
-      "carries ids instead of bare names, drop `senderCanBeNull` from the " +
-      "OWNERSHIP_TEAM entry in config/nameBearingMessageFormats.js and update " +
-      "the audit doc.",
+    "the successor tombstone must retain its NULL sender",
   );
   assert.match(
     source,
-    /OWNERSHIP_TEAM:[^`]*\$\{successor\.name\}/u,
-    "the successor tombstone no longer interpolates a real display name — if " +
-      "that is deliberate, this format is no longer name-bearing",
+    /OWNERSHIP_TEAM:[^`]*\$\{idNameToken\(successor\.userId, successor\.name\)\}/u,
+    "the successor must retain a resolvable id and name",
   );
 });
 
@@ -470,11 +462,14 @@ test("a format cleared of person names is exactly the one that was checked", () 
 
 test("the scrub derives every prefix condition from the traced table", () => {
   // The prefixes used to be inlined into the SQL string, then became bound
-  // parameters from one list. Since the anchored scrub there are three lists,
-  // and each one still has to be mapped into the SQL rather than retyped.
+  // parameters from one list. The current scrub has global marker prefixes,
+  // prose prefixes, and two slot-target lists; keep each derived from data.
   const source = readSource("src/controllers/userDeletionController.js");
 
-  for (const list of ["SCRUB_ANCHORED_PREFIXES", "SCRUB_PROSE_EMOJI_PREFIXES"]) {
+  for (const list of [
+    "SCRUB_ANCHORED_GLOBAL_PREFIXES",
+    "SCRUB_PROSE_EMOJI_PREFIXES",
+  ]) {
     assert.match(
       source,
       new RegExp(`${list}\\.map\\(`),
@@ -491,6 +486,11 @@ test("the scrub derives every prefix condition from the traced table", () => {
     source,
     /for \(const target of SCRUB_ID_LESS_TARGETS\)/,
     "the id-less formats are no longer driven by the table",
+  );
+  assert.match(
+    source,
+    /for \(const target of SCRUB_ANCHORED_SLOT_TARGETS\)/,
+    "tokenized formats with non-person slots are no longer table-driven",
   );
 });
 
@@ -514,22 +514,10 @@ test("the scrub never uses LIKE with a marker, because _ is a wildcard", () => {
   );
 });
 
-test("the id-less marker formats are exactly the two that have no id token", () => {
-  // 🔴 Pinned, because getting this wrong is SILENT. Every other marker format
-  // carries `<id>:<name>`, so the scrub anonymises it anchored on the numeric
-  // id — precise, and immune to one display name being a substring of another.
-  // A format with no id token does not match that statement at all and would
-  // simply be skipped.
-  //
-  // So: a NEW format added to the table is assumed to carry id tokens. If it
-  // does not, this test fails until it is declared, which is the only reason
-  // the assumption is safe.
+test("legacy bare-name ownership/deletion rows remain covered after writer upgrades", () => {
   assert.deepEqual(
-    MARKER_FORMATS_WITHOUT_ID_TOKENS.map((f) => f.marker).sort(),
-    ["OWNERSHIP_TEAM", "TEAM_DELETED"].sort(),
-    "the set of marker formats without id tokens changed. If you ADDED one, " +
-      "check its writer: a bare-name format needs personSlots here or the " +
-      "scrub will skip it. If you gave one ids, remove it from the list.",
+    LEGACY_ID_LESS_MARKER_FORMATS.map((f) => f.marker).sort(),
+    ["OWNERSHIP_TEAM", "TEAM_DELETED"],
   );
 });
 
@@ -540,7 +528,7 @@ test("TEAM_DELETED never offers its leading slot for a name replacement", () => 
   // "Online Cooking & Recipe Swap Group". `👑 OWNERSHIP_TEAM` has people in
   // both slots and may use both.
   const byMarker = new Map(
-    MARKER_FORMATS_WITHOUT_ID_TOKENS.map((f) => [f.marker, f.personSlots]),
+    LEGACY_ID_LESS_MARKER_FORMATS.map((f) => [f.marker, f.personSlots]),
   );
 
   assert.deepEqual(
@@ -610,6 +598,17 @@ test("the prose path excludes rows that a marker prefix already claims", () => {
     overlapping.length > 0,
     "no marker prefix starts with a prose emoji any more, which would make " +
       "the exclusion dead code — check before removing it",
+  );
+});
+
+test("both tokenized formats bypass the global scrub and retain their person slots", () => {
+  for (const prefix of ["👑 OWNERSHIP_TEAM:", "🗑️ TEAM_DELETED:"]) {
+    assert.ok(SCRUB_ANCHORED_PREFIXES.includes(prefix));
+    assert.ok(!SCRUB_ANCHORED_GLOBAL_PREFIXES.includes(prefix));
+  }
+  assert.deepEqual(
+    SCRUB_ANCHORED_SLOT_TARGETS.map(({ prefix, personSlots }) => [prefix, personSlots]),
+    [["👑 OWNERSHIP_TEAM:", ["leading", "trailing"]], ["🗑️ TEAM_DELETED:", ["trailing"]]],
   );
 });
 

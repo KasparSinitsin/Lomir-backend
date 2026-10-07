@@ -1,4 +1,5 @@
 const db = require("../config/database");
+const { idNameToken } = require("../utils/eventNameToken");
 const { pool } = db;
 const bcrypt = require("bcrypt");
 const { deleteImageKitFile } = require("../utils/imagekitUtils");
@@ -16,7 +17,7 @@ const DELETED_USER_DISPLAY_NAME = "Former Lomir User";
  * the row is stored, and whether the name in the content belongs to the row's
  * `sender_id` — read it before changing anything about this scrub.
  *
- * ⚠️ DM-stored formats are deliberately absent from all three lists: those rows
+ * ⚠️ DM-stored formats are deliberately absent from the scrub match lists: those rows
  * are deleted outright a few lines below (`team_id IS NULL`), so the name goes
  * with the row. The derivations filter on team storage to keep that distinction
  * in one place instead of a comment.
@@ -39,6 +40,8 @@ const { escapeForPosixRegex } = require("../utils/escapeForPosixRegex");
 
 const {
   SCRUB_ANCHORED_PREFIXES,
+  SCRUB_ANCHORED_GLOBAL_PREFIXES,
+  SCRUB_ANCHORED_SLOT_TARGETS,
   SCRUB_ID_LESS_TARGETS,
   SCRUB_PROSE_EMOJI_PREFIXES,
   buildScrubNameCandidates,
@@ -403,8 +406,8 @@ const deleteUser = async (req, res) => {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // The name scrub. Three statements, because the stored formats fall into
-    // three groups that cannot be reached the same way. Audit and row counts:
+    // The name scrub covers other marker tokens, delimited ownership/deletion
+    // tokens, legacy bare-name markers, and prose. Audit and row counts:
     // `lomir-docs-internal/HANDOVER-Privacy-Security-Hardening.md` and
     // `deletion-audit/`.
     //
@@ -424,12 +427,15 @@ const deleteUser = async (req, res) => {
     // live with the function, in the config module that has no imports and can
     // therefore be unit-tested without touching a database.
     const namesToScrub = buildScrubNameCandidates(user);
+    // idNameToken trims outer whitespace but preserves spaces inside names.
+    // Keep the raw spelling too, for writers that interpolate tokens directly.
+    const tokenNamesToScrub = [
+      ...new Set(namesToScrub.flatMap((name) => [name, name.trim()])),
+    ];
 
-    // ── 1. Marker formats that carry `<id>:<name>` tokens ───────────────────
-    // Anchored on the numeric id, so this needs NO sender condition at all and
-    // cannot touch another person's name however their names overlap. This is
-    // what closes the gap for the eight formats that name a non-sender,
-    // including `👑 OWNERSHIP_TEAM` rows with `sender_id = NULL`.
+    // ── 1. Other id-token markers: existing replacement path ───────────────
+    // No sender condition: marker events can name someone other than their
+    // sender. The ownership/deletion formats are excluded and handled below.
     for (const name of namesToScrub) {
       await client.query(
         `
@@ -438,7 +444,7 @@ const deleteUser = async (req, res) => {
         WHERE team_id IS NOT NULL
           AND position($1 || ':' || $2 IN content) > 0
           AND (
-            ${SCRUB_ANCHORED_PREFIXES.map((_, index) =>
+            ${SCRUB_ANCHORED_GLOBAL_PREFIXES.map((_, index) =>
               startsWithParam(`$${index + 4}`),
             ).join("\n            OR ")}
           )
@@ -447,14 +453,48 @@ const deleteUser = async (req, res) => {
           String(userId),
           name,
           DELETED_USER_DISPLAY_NAME,
-          ...SCRUB_ANCHORED_PREFIXES,
+          ...SCRUB_ANCHORED_GLOBAL_PREFIXES,
         ],
       );
     }
 
+    // ── 1b. Tokenized ownership/deletion person slots ──────────────────────
+    // Match the entire token with its field boundaries. A suffix comparison
+    // alone would also match id 42 inside 142; a global replacement could
+    // change TEAM_DELETED's leading team token on an id/name collision.
+    for (const target of SCRUB_ANCHORED_SLOT_TARGETS) {
+      for (const slot of target.personSlots) {
+        const leading = slot === "leading";
+        const boundary = leading
+          ? "$4 || ' ' || $1 || ':' || $2 || ' | '"
+          : "' | ' || $1 || ':' || $2";
+        const replacement = leading
+          ? "$4 || ' ' || $1 || ':' || $3 || ' | '"
+          : "' | ' || $1 || ':' || $3";
+        const updatedContent = leading
+          ? `${replacement} || substring(content FROM length(${boundary}) + 1)`
+          : `left(content, length(content) - length(${boundary})) || ${replacement}`;
+        const query = `
+          UPDATE messages
+          SET content = ${updatedContent}
+          WHERE team_id IS NOT NULL
+            AND ${startsWithParam("$4")}
+            AND ${leading ? "left" : "right"}(content, length(${boundary})) = ${boundary}
+        `;
+        for (const name of tokenNamesToScrub) {
+          await client.query(query, [
+            String(userId),
+            name,
+            DELETED_USER_DISPLAY_NAME,
+            target.prefix,
+          ]);
+        }
+      }
+    }
+
     // ── 2. Marker formats with NO id tokens ─────────────────────────────────
-    // Only two, and they must be matched on the display name because there is
-    // nothing else in the row. `personSlots` is what keeps that safe: both
+    // Legacy rows still need the display name because they have no id token.
+    // `personSlots` restricts the replacement to person fields: both
     // formats are `<prefix> <slot> | <slot>`, and in `🗑️ TEAM_DELETED` the
     // LEADING slot is a team name, never a person. A team name is the worse
     // half of the substring trap — "Cooking" sits inside "Online Cooking &
@@ -713,7 +753,7 @@ const deleteUser = async (req, res) => {
         [
           null,
           team.teamId,
-          `👑 OWNERSHIP_TEAM: ${DELETED_USER_DISPLAY_NAME} | ${successor.name}`,
+          `👑 OWNERSHIP_TEAM: ${DELETED_USER_DISPLAY_NAME} | ${idNameToken(successor.userId, successor.name)}`,
         ],
       );
 
