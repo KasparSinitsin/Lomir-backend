@@ -326,7 +326,7 @@ test("deleteUser completes the transaction flow and emits the expected socket ev
   );
   const ownershipMessageIndex = calls.findIndex(({ sql, params }) =>
     sql.includes("INSERT INTO messages (sender_id, team_id, content, sent_at)") &&
-    params[2] === "👑 OWNERSHIP_TEAM: Former Lomir User | Sam Smith",
+    params[2] === "👑 OWNERSHIP_TEAM: Former Lomir User | 11:Sam Smith",
   );
   const transferRoleIndex = calls.findIndex(({ sql }) =>
     sql.includes("UPDATE team_members") && sql.includes("SET role = 'owner'"),
@@ -432,13 +432,15 @@ test("deleteUser honors a snake_case ownership override for a non-default succes
   // teams: SET owner_id = $1 WHERE id = $2 -> [12, 20]
   assert.deepEqual(transferOwnerCall.params, [12, 20]);
 
-  // The in-chat ownership message names the chosen successor (Mia Ng), not the
-  // default (Sam Smith).
+  // The in-chat ownership message names the chosen successor (Mia Ng, id 12),
+  // not the default (Sam Smith, id 11). Since BE #354 the SUCCESSOR carries an id
+  // token and the departed predecessor stays anonymous: there is nothing to
+  // resolve for an account that no longer exists.
   assert.equal(
     calls.some(
       ({ sql, params }) =>
         sql.includes("INSERT INTO messages (sender_id, team_id, content, sent_at)") &&
-        params[2] === "👑 OWNERSHIP_TEAM: Former Lomir User | Mia Ng",
+        params[2] === "👑 OWNERSHIP_TEAM: Former Lomir User | 12:Mia Ng",
     ),
     true,
   );
