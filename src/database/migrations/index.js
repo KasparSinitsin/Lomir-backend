@@ -31,6 +31,10 @@ const addApplicantIdToRoleApplicationApprovedRows = require(
   "./add_applicant_id_to_role_application_approved_rows"
 );
 
+const addPersonIdsToLegacyOwnerBanners = require(
+  "./add_person_ids_to_legacy_owner_banners"
+);
+
 const runMigrations = async () => {
   try {
     console.log("Running migrations...");
@@ -71,6 +75,9 @@ const runMigrations = async () => {
     // Step 4 of the name bug: the 22 legacy `<name>'s application for <role> was
     // approved` team messages. Dry run: `deletion-audit/38`.
     await addApplicantIdToRoleApplicationApprovedRows();
+
+    // Both owner slots get ids from the unique sibling DM. Dry run: deletion-audit/40.
+    await addPersonIdsToLegacyOwnerBanners();
 
     console.log("All migrations completed successfully!");
   } catch (error) {
