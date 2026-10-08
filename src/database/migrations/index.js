@@ -59,6 +59,10 @@ const scrubDeletedPeopleInApplicationEvents = require(
   "./scrub_deleted_people_in_application_events"
 );
 
+const addTeamIdsToLegacyMarkerDms = require(
+  "./add_team_ids_to_legacy_marker_dms"
+);
+
 const runMigrations = async () => {
   try {
     console.log("Running migrations...");
@@ -124,6 +128,9 @@ const runMigrations = async () => {
     // placeholder; with it, #352's guard ends the #352/#353 churn (item 22).
     // Runs after both of them on purpose. Dry run: deletion-audit/54.
     await scrubDeletedPeopleInApplicationEvents();
+    // Team ids into slot 1 of the legacy marker DMs whose team still exists and
+    // is corroborated beyond its name (item 33). Dry run: deletion-audit/57.
+    await addTeamIdsToLegacyMarkerDms();
 
     console.log("All migrations completed successfully!");
   } catch (error) {
