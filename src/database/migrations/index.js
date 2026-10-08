@@ -27,6 +27,9 @@ const addPersonIdToLegacyLeaveRows = require(
 const addApplicantIdToApplauseEvents = require(
   "./add_applicant_id_to_applause_events"
 );
+const addApplicantIdToRoleApplicationApprovedRows = require(
+  "./add_applicant_id_to_role_application_approved_rows"
+);
 
 const runMigrations = async () => {
   try {
@@ -65,6 +68,9 @@ const runMigrations = async () => {
     // application, found by `reviewed_at = sent_at`. Touches the applicant slot
     // only, so it is independent of #352/#353. Dry run: `deletion-audit/35`.
     await addApplicantIdToApplauseEvents();
+    // Step 4 of the name bug: the 22 legacy `<name>'s application for <role> was
+    // approved` team messages. Dry run: `deletion-audit/38`.
+    await addApplicantIdToRoleApplicationApprovedRows();
 
     console.log("All migrations completed successfully!");
   } catch (error) {
