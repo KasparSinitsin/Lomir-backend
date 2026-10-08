@@ -14,9 +14,10 @@ const db = require("../../config/database");
  * very next owner banner of the team, the owner who was deleted is the new
  * owner of the banner before it. deletion-audit/45 measured all five: deletion
  * form next (70-777 s later), leave message in between, and the stored new-
- * owner name matches no living user. A sixth, 6296, met all of this in 45 but
- * failed the living-name rule in dry run 46 the same day (a living user now
- * carries that name) and is left alone.
+ * owner name matches no living user. A sixth, 6296, looked eligible in 45 but
+ * its new-owner slot already held the placeholder (audit 49); the placeholder
+ * guard below rightly leaves it alone. (An earlier version of this comment
+ * blamed a living namesake - that was wrong.)
  *
  * The rewrite follows the rule decided 2026-10-02 for departed members:
  * the message stays, only the name is replaced by the placeholder. The previous
