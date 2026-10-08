@@ -96,6 +96,10 @@ const STATEMENTS = [
       WHERE u.id = m.sender_id
         AND m.content ~ '^🎉 .+ added as a team member by .+\\. Say hello to them!'
         AND m.content !~ 'added as a team member by \\d+\\s*:'
+        -- A deleted approver reads as the placeholder (scrub_deleted_people_in_
+        -- application_events). Its sender is the APPLICANT, so writing sender_id
+        -- here is wrong - the token #353 stripped on every migrate (item 22).
+        AND m.content !~ 'added as a team member by Former Lomir User\\.'
     `,
   },
 ];
@@ -125,7 +129,8 @@ const addIdTokensToProseEvents = async () => {
       WHERE (m.content ~ '^👋\\s+'  AND m.content !~ '^👋\\s+\\d+\\s*:')
          OR (m.content ~ '^🎯\\s+'  AND m.content !~ '^🎯\\s+\\d+\\s*:')
          OR (m.content ~ '^🎉 .+ added as a team member by .+\\. Say hello to them!'
-             AND m.content !~ 'added as a team member by \\d+\\s*:')
+             AND m.content !~ 'added as a team member by \\d+\\s*:'
+             AND m.content !~ 'added as a team member by Former Lomir User\\.')
     `);
 
     if (rows[0].remaining !== 0) {

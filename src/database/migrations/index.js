@@ -55,6 +55,10 @@ const addSuccessorIdsConfirmedByNextBanner = require(
   "./add_successor_ids_confirmed_by_next_banner"
 );
 
+const scrubDeletedPeopleInApplicationEvents = require(
+  "./scrub_deleted_people_in_application_events"
+);
+
 const runMigrations = async () => {
   try {
     console.log("Running migrations...");
@@ -116,6 +120,10 @@ const runMigrations = async () => {
     // Same banners, second route: the next owner banner, sent by the notified
     // successor and naming it as previous owner. Dry run: deletion-audit/48.
     await addSuccessorIdsConfirmedByNextBanner();
+    // Deleted approvers (🎉) and the deleted applicant of a 4A line get the
+    // placeholder; with it, #352's guard ends the #352/#353 churn (item 22).
+    // Runs after both of them on purpose. Dry run: deletion-audit/54.
+    await scrubDeletedPeopleInApplicationEvents();
 
     console.log("All migrations completed successfully!");
   } catch (error) {
