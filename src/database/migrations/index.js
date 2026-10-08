@@ -47,6 +47,10 @@ const addSuccessorIdsToDeletionOwnerBanners = require(
   "./add_successor_ids_to_deletion_owner_banners"
 );
 
+const addSuccessorIdsConfirmedByNextBanner = require(
+  "./add_successor_ids_confirmed_by_next_banner"
+);
+
 const runMigrations = async () => {
   try {
     console.log("Running migrations...");
@@ -101,6 +105,9 @@ const runMigrations = async () => {
     // The successor of a legacy deletion-form banner gets its id from the
     // notification and teams.owner_id of the same deletion. Dry run: 46.
     await addSuccessorIdsToDeletionOwnerBanners();
+    // Same banners, second route: the next owner banner, sent by the notified
+    // successor and naming it as previous owner. Dry run: deletion-audit/48.
+    await addSuccessorIdsConfirmedByNextBanner();
 
     console.log("All migrations completed successfully!");
   } catch (error) {
