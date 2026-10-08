@@ -43,6 +43,10 @@ const scrubDeletedNewOwnersInOwnerBanners = require(
   "./scrub_deleted_new_owners_in_owner_banners"
 );
 
+const scrubRealNamesFromDeletionMessages = require(
+  "./scrub_real_names_from_deletion_messages"
+);
+
 const addSuccessorIdsToDeletionOwnerBanners = require(
   "./add_successor_ids_to_deletion_owner_banners"
 );
@@ -102,6 +106,10 @@ const runMigrations = async () => {
     // account and the row had no id to find; the sender gets its id too.
     // Proof: the deletion-form banner follows. Dry run: deletion-audit/46.
     await scrubDeletedNewOwnersInOwnerBanners();
+    // The deletion writer of 2026-04-02..06-15 stored the deleted person's real
+    // name; replace it with the placeholder. BEFORE the successor migrations, so
+    // 3653/3695 reach them in the same run. Dry run: deletion-audit/51.
+    await scrubRealNamesFromDeletionMessages();
     // The successor of a legacy deletion-form banner gets its id from the
     // notification and teams.owner_id of the same deletion. Dry run: 46.
     await addSuccessorIdsToDeletionOwnerBanners();
