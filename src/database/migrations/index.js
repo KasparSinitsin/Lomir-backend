@@ -35,6 +35,10 @@ const addPersonIdsToLegacyOwnerBanners = require(
   "./add_person_ids_to_legacy_owner_banners"
 );
 
+const addPersonIdsToDuplicateOwnerBanners = require(
+  "./add_person_ids_to_duplicate_owner_banners"
+);
+
 const runMigrations = async () => {
   try {
     console.log("Running migrations...");
@@ -78,6 +82,10 @@ const runMigrations = async () => {
 
     // Both owner slots get ids from the unique sibling DM. Dry run: deletion-audit/40.
     await addPersonIdsToLegacyOwnerBanners();
+    // The four banners it left: two double transfers whose DMs carry a renamed
+    // team. Disjoint from the above (no DM with a matching team slot), so the
+    // order is only for reading. Dry run: deletion-audit/44.
+    await addPersonIdsToDuplicateOwnerBanners();
 
     console.log("All migrations completed successfully!");
   } catch (error) {
