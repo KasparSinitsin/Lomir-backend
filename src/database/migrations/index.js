@@ -35,6 +35,18 @@ const addPersonIdsToLegacyOwnerBanners = require(
   "./add_person_ids_to_legacy_owner_banners"
 );
 
+const addPersonIdsToDuplicateOwnerBanners = require(
+  "./add_person_ids_to_duplicate_owner_banners"
+);
+
+const scrubDeletedNewOwnersInOwnerBanners = require(
+  "./scrub_deleted_new_owners_in_owner_banners"
+);
+
+const addSuccessorIdsToDeletionOwnerBanners = require(
+  "./add_successor_ids_to_deletion_owner_banners"
+);
+
 const runMigrations = async () => {
   try {
     console.log("Running migrations...");
@@ -78,6 +90,17 @@ const runMigrations = async () => {
 
     // Both owner slots get ids from the unique sibling DM. Dry run: deletion-audit/40.
     await addPersonIdsToLegacyOwnerBanners();
+    // The four banners it left: two double transfers whose DMs carry a renamed
+    // team. Disjoint from the above (no DM with a matching team slot), so the
+    // order is only for reading. Dry run: deletion-audit/44.
+    await addPersonIdsToDuplicateOwnerBanners();
+    // Completes the deletion scrub where a banner's NEW owner deleted the
+    // account and the row had no id to find; the sender gets its id too.
+    // Proof: the deletion-form banner follows. Dry run: deletion-audit/46.
+    await scrubDeletedNewOwnersInOwnerBanners();
+    // The successor of a legacy deletion-form banner gets its id from the
+    // notification and teams.owner_id of the same deletion. Dry run: 46.
+    await addSuccessorIdsToDeletionOwnerBanners();
 
     console.log("All migrations completed successfully!");
   } catch (error) {
