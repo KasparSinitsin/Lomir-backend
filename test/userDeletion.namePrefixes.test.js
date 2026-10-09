@@ -255,6 +255,25 @@ test("deleteUser still writes the successor tombstone with a NULL sender", () =>
   );
 });
 
+test("deleteUser reopens the deleted user's roles with their role id", () => {
+  // Item 37: the id-less prose `🔓 The role <name> is now open again.` left the
+  // chat unable to tell a deleted role from a living one. The reopen now uses
+  // the ordinary marker with team and role tokens; the deleted person is the
+  // bare placeholder, so no id of theirs is stored.
+  const source = readSource("src/controllers/userDeletionController.js");
+
+  assert.doesNotMatch(
+    source,
+    /\$\{role\.roleName\} is now open again\.`/u,
+    "the id-less reopen prose is back in the deletion writer",
+  );
+  assert.match(
+    source,
+    /null,\s*role\.teamId,\s*`\u{1F513} ROLE_REOPENED: \$\{idNameToken\(role\.teamId, [^`]*\)\} \| \$\{idNameToken\(role\.roleId, [^`]*\)\} \| \$\{DELETED_USER_DISPLAY_NAME\}`/u,
+    "the deletion reopen must carry team and role ids and the bare placeholder",
+  );
+});
+
 test("the formats unreachable by any sender condition are exactly the traced one", () => {
   // 🔴 A GAP, pinned on purpose. A NULL sender is not a narrower case of
   // "someone other than the sender" — it defeats every sender-based condition,
@@ -266,7 +285,11 @@ test("the formats unreachable by any sender condition are exactly the traced one
   // `FORMATS_CLEARED_OF_PERSON_NAMES`.
   assert.deepEqual(
     FORMATS_WITH_NULL_SENDER.map(identify).sort(),
-    ["OWNERSHIP_TEAM", "MEMBER_LEFT", "prose 👋"].sort(),
+    // `ROLE_REOPENED` joined on 2026-10-09 (item 37): the deletion writer
+    // moved from id-less 🔓 prose to this marker, still with no sender. Its
+    // rows name only the placeholder, and the marker is id-anchored, so the
+    // scrub reaches the format regardless.
+    ["OWNERSHIP_TEAM", "MEMBER_LEFT", "ROLE_REOPENED", "prose 👋"].sort(),
     "the set of name-bearing formats written with sender_id NULL changed. A " +
       "new one means another row that no sender-based scrub can reach.",
   );

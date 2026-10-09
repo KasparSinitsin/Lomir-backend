@@ -169,7 +169,15 @@ const NAME_BEARING_MESSAGE_FORMATS = [
         ":442 with sender_id = memberId (names the member = sender)",
       "FRONTEND services/teamMemberRoleReopenService.js:87 via " +
         "messageService.sendMessage (names the vacating user, NOT the sender)",
+      "userDeletionController (roles the deleted user filled, sender_id NULL; " +
+        "slot 3 is the bare placeholder, no id — since item 37, 2026-10-09)",
     ],
+    // Since item 37 the deletion writer uses this marker instead of the 🔓
+    // prose below, with no sender. Its rows name nobody but the placeholder,
+    // yet the flag is about rows, not intent, so it is set.
+    senderCanBeNull: true,
+    nullSenderSource:
+      "userDeletionController reopen of the deleted user's roles, inserted with sender_id NULL",
     live: true,
   },
   {
@@ -497,6 +505,11 @@ const NAME_BEARING_MESSAGE_FORMATS = [
     live: false,
   },
   {
+    // ✅ Writer found 2026-10-08 (item 37): `userDeletionController`, which
+    // wrote this prose for every role a deleted user had filled, with no role
+    // id and no sender. Since 2026-10-09 it writes `🔓 ROLE_REOPENED:` instead,
+    // so no new rows appear; the six below stay as they are (`58`: only one of
+    // them could be resolved to a role id). The original note follows.
     // 🔴 Found in the data on 2026-10-01 and NOT traceable to any writer.
     // 6 team rows whose content starts with `🔓` but carries no marker, so
     // every marker-based census missed them — including the two the assistant
@@ -548,8 +561,8 @@ const NAME_BEARING_MESSAGE_FORMATS = [
     carriesPersonName: false,
     namedIsSender: false,
     senderCanBeNull: true,
-    nullSenderSource: "unknown — all 6 rows, census 2026-10-01",
-    writtenBy: null,
+    nullSenderSource: "userDeletionController (until 2026-10-09) — all 6 rows, census 2026-10-01",
+    writtenBy: "userDeletionController, until item 37 (2026-10-09); no live writer",
     live: false,
     knownRowIds: [3654, 3655, 3656, 3708, 5912, 5943],
   },
