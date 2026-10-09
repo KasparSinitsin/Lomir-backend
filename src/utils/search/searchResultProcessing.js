@@ -14,6 +14,9 @@ const {
   normalizeNullableNumber,
   roundOverlapScore,
 } = require("./searchSqlBuilders");
+const {
+  BADGE_NAME_TRANSLATIONS_VALUES_SQL,
+} = require("./badgeNameTranslations");
 
 function computeJaccardOverlap(baseSet, candidateIds) {
   const candidateSet = new Set(
@@ -220,13 +223,24 @@ function appendTeamSearchClause({
 // Without it, searching a badge name returned the people who had switched that
 // badge off, with an empty badge list on the row: the hidden award was still
 // there to be inferred (found 2026-09-28, alongside the search display leak).
+//
+// A term is matched against the English name AND the German one, so a German
+// "Empathisch" finds "Empathetic". `param` appears ONCE: the boolean parser
+// substitutes its `$PARAM` placeholder with `String.replace`, which replaces
+// the first occurrence only, and a second one would reach postgres as text.
 const visibleBadgeNameMatchSQL = (param) => `
               SELECT 1
               FROM badge_awards ba_name
               JOIN badges b_name ON b_name.id = ba_name.badge_id
+              LEFT JOIN (VALUES ${BADGE_NAME_TRANSLATIONS_VALUES_SQL})
+                AS m_name(en, de) ON m_name.en = b_name.name
               JOIN users u_name ON u_name.id = ba_name.awarded_to_user_id
               WHERE ba_name.awarded_to_user_id = u.id
-                AND b_name.name ILIKE ${param}
+                AND EXISTS (
+                  SELECT 1
+                  FROM unnest(ARRAY[b_name.name, m_name.de]) AS cand(label)
+                  WHERE cand.label ILIKE ${param}
+                )
                 AND ${visibleAwardCondition({
                   awardAlias: "ba_name",
                   userAlias: "u_name",
