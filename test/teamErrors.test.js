@@ -65,7 +65,7 @@ test("TEAM_ERROR_CODES are spelled as their own names", () => {
     assert.equal(value, name);
     assert.match(value, /^[A-Z_]+$/);
   }
-  assert.equal(Object.keys(TEAM_ERROR_CODES).length, 18);
+  assert.equal(Object.keys(TEAM_ERROR_CODES).length, 19);
 });
 
 // --- sendTeamInvitation ----------------------------------------------------
