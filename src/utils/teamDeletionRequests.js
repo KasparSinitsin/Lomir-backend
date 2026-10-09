@@ -12,7 +12,9 @@
  *
  *   🗑️ REQUEST_VOID: <teamId>:<team> | <ownerId>:<owner> | <kind> | <mode> | <hasPersonalMessage>
  *
- *   kind  `application` | `invitation`
+ *   kind  `application` | `invitation` for someone outside the team, and
+ *         `role_application` | `role_invitation` for a MEMBER who applied
+ *         for, or was invited to, a role inside it
  *   mode  `archived` (scheduled for deletion) | `deleted` (removed at once)
  *
  * and, when the owner wrote one, the personal message as a SEPARATE ordinary
@@ -23,8 +25,11 @@
  * receiver of the DM, so a name would only add a third person's name to a
  * stored row for no reader's benefit.
  *
- * Internal role applications (the applicant is already a member) get no DM;
- * they see the team-chat message every member sees.
+ * A member can hold an internal role application or role invitation. They
+ * are told too, in words that say it is about a role: "Your invitation can no
+ * longer be considered" read wrongly to someone who is already in the team.
+ * (Julia, 2026-10-09: found when Anna Lena Albers got the plain invitation
+ * sentence in the demo team.)
  */
 
 const { idNameToken } = require("./eventNameToken");
@@ -40,16 +45,20 @@ const MAX_PERSONAL_MESSAGE_LENGTH = 2000;
  */
 const collectOpenRequests = async (queryable, teamId) => {
   const result = await queryable.query(
-    `SELECT 'application' AS kind, ta.applicant_id AS user_id
+    `SELECT CASE WHEN EXISTS (
+                      SELECT 1 FROM team_members tm
+                       WHERE tm.team_id = ta.team_id AND tm.user_id = ta.applicant_id
+                    ) THEN 'role_application' ELSE 'application' END AS kind,
+            ta.applicant_id AS user_id
        FROM team_applications ta
       WHERE ta.team_id = $1
         AND ta.status = 'pending'
-        AND NOT EXISTS (
-          SELECT 1 FROM team_members tm
-           WHERE tm.team_id = ta.team_id AND tm.user_id = ta.applicant_id
-        )
      UNION ALL
-     SELECT 'invitation' AS kind, ti.invitee_id AS user_id
+     SELECT CASE WHEN EXISTS (
+                      SELECT 1 FROM team_members tm
+                       WHERE tm.team_id = ti.team_id AND tm.user_id = ti.invitee_id
+                    ) THEN 'role_invitation' ELSE 'invitation' END AS kind,
+            ti.invitee_id AS user_id
        FROM team_invitations ti
       WHERE ti.team_id = $1
         AND ti.status = 'pending'`,
@@ -77,7 +86,8 @@ const collectOpenRequests = async (queryable, teamId) => {
  * - Invitations end as `canceled`, exactly what withdrawing one does today.
  * - Applications are DELETED, exactly what withdrawing one does today - there
  *   is no "withdrawn" status, and `rejected` would read as a refusal. Drafts
- *   (never sent) go with them. Internal role applications are left alone.
+ *   (never sent) go with them, and so do members' role applications: they are
+ *   told they can no longer be considered, so they must not stay pending.
  */
 const closeOpenRequests = async (client, teamId) => {
   await client.query(
@@ -87,13 +97,8 @@ const closeOpenRequests = async (client, teamId) => {
     [teamId],
   );
   await client.query(
-    `DELETE FROM team_applications ta
-      WHERE ta.team_id = $1
-        AND ta.status IN ('pending', 'draft')
-        AND NOT EXISTS (
-          SELECT 1 FROM team_members tm
-           WHERE tm.team_id = ta.team_id AND tm.user_id = ta.applicant_id
-        )`,
+    `DELETE FROM team_applications
+      WHERE team_id = $1 AND status IN ('pending', 'draft')`,
     [teamId],
   );
 };

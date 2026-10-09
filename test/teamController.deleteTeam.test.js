@@ -60,7 +60,7 @@ test("deleteTeam permanently deletes a solo team (owner is the only member) inst
       return { rows: [{ count: 0 }] };
     }
 
-    if (sql.includes("SELECT 'application' AS kind")) {
+    if ((sql.includes("UNION ALL") && sql.includes("FROM team_applications ta"))) {
       // Nobody has an open application or invitation
       return { rows: [] };
     }

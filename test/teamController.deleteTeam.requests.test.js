@@ -48,6 +48,7 @@ const OPEN_REQUESTS = [
 function setup({ otherMembers, openRequests = OPEN_REQUESTS }) {
   const dms = [];
   const clientSql = [];
+  const collectSql = [];
 
   db.pool.query = async (sql, params = []) => {
     if (sql.includes("tm.role = 'owner'") && sql.includes("FROM teams t")) {
@@ -56,7 +57,8 @@ function setup({ otherMembers, openRequests = OPEN_REQUESTS }) {
     if (sql.includes("COUNT(*)::int AS count") && sql.includes("user_id != $2")) {
       return { rows: [{ count: otherMembers }] };
     }
-    if (sql.includes("SELECT 'application' AS kind")) {
+    if ((sql.includes("UNION ALL") && sql.includes("FROM team_applications ta"))) {
+      collectSql.push(sql);
       return { rows: openRequests };
     }
     if (sql.includes("SELECT first_name, last_name, username FROM users")) {
@@ -90,7 +92,7 @@ function setup({ otherMembers, openRequests = OPEN_REQUESTS }) {
     release() {},
   });
 
-  return { dms, clientSql };
+  return { dms, clientSql, collectSql };
 }
 
 test("archiving DMs each applicant once and each invitee, and closes their requests", async () => {
@@ -183,4 +185,44 @@ test("a message over the limit is refused before anything is written", async () 
   assert.equal(res.statusCode, 400);
   assert.equal(dms.length, 0);
   assert.equal(clientSql.length, 0);
+});
+
+// A member can hold an open role application or role invitation. They are
+// told too, with words about a role - "your invitation" alone read wrongly to
+// someone already in the team (Anna Lena Albers, demo team, 2026-10-09). The
+// mock cannot run SQL, so the CASE itself is verified against a throwaway
+// Postgres; this pins that both selects distinguish members.
+test("the selects tell members' role requests apart from outsiders'", async () => {
+  process.env.NODE_ENV = "production";
+  const { collectSql } = setup({ otherMembers: 2 });
+
+  await teamController.deleteTeam(createRequest(), createResponse());
+
+  assert.equal(collectSql.length, 1);
+  const [applications, invitations] = collectSql[0].split("UNION ALL");
+  assert.match(applications, /team_members[\s\S]*'role_application'[\s\S]*'application'/);
+  assert.match(invitations, /team_members[\s\S]*'role_invitation'[\s\S]*'invitation'/);
+});
+
+test("a member's role invitation and role application get their own DM kinds", async () => {
+  process.env.NODE_ENV = "production";
+  const { dms } = setup({
+    otherMembers: 2,
+    openRequests: [
+      { kind: "role_invitation", user_id: 31 },
+      { kind: "role_application", user_id: 32 },
+    ],
+  });
+
+  const res = createResponse();
+  await teamController.deleteTeam(createRequest(), res);
+
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(
+    dms.map((m) => [m.receiver_id, m.content.split(" | ").slice(2, 4).join(" | ")]),
+    [
+      [31, "role_invitation | archived"],
+      [32, "role_application | archived"],
+    ],
+  );
 });
