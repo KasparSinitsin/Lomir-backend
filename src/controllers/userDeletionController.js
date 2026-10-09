@@ -1,5 +1,6 @@
 const db = require("../config/database");
 const { idNameToken } = require("../utils/eventNameToken");
+const { DEFAULT_ROLE_NAME } = require("../config/roleDefaults");
 const { pool } = db;
 const bcrypt = require("bcrypt");
 const { deleteImageKitFile } = require("../utils/imagekitUtils");
@@ -812,7 +813,16 @@ const deleteUser = async (req, res) => {
         await client.query(
           `INSERT INTO messages (sender_id, team_id, content, sent_at)
            VALUES ($1, $2, $3, NOW())`,
-          [null, role.teamId, `🔓 The role ${role.roleName} is now open again.`],
+          // The ordinary ROLE_REOPENED marker, so the role keeps its id: the
+          // chat can then tell a deleted role from a living one. Until item 37
+          // this wrote id-less prose (`🔓 The role <name> is now open again.`),
+          // which no reader could resolve. The deleted person is the bare
+          // placeholder, as in the successor tombstone above — no id survives.
+          [
+            null,
+            role.teamId,
+            `🔓 ROLE_REOPENED: ${idNameToken(role.teamId, role.teamName || "your team")} | ${idNameToken(role.roleId, role.roleName || DEFAULT_ROLE_NAME)} | ${DELETED_USER_DISPLAY_NAME}`,
+          ],
         );
 
         const recipients = roleRecipientsByTeamId.get(role.teamId) || [];
