@@ -376,6 +376,18 @@ const NAME_BEARING_MESSAGE_FORMATS = [
     live: true,
   },
   {
+    // The owner deleting a team tells everyone whose application or invitation
+    // that voids (item 40b). The owner is the sender and the only person
+    // named; the recipient is deliberately not named at all. A DM, so the
+    // wholesale DM delete of either party's account covers it.
+    marker: "REQUEST_VOID",
+    emoji: "🗑️",
+    storage: "dm",
+    namedIsSender: true,
+    writtenBy: "utils/teamDeletionRequests.js (sendRequestVoidMessages)",
+    live: true,
+  },
+  {
     marker: "APPLICATION_DECLINED",
     emoji: "🚫",
     storage: "dm",

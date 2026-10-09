@@ -12,6 +12,12 @@ const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer")
 const { deleteImageKitFile } = require("../utils/imagekitUtils");
 const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
 const { TEAM_ERROR_CODES } = require("../config/teamErrors");
+const {
+  MAX_PERSONAL_MESSAGE_LENGTH,
+  collectOpenRequests,
+  closeOpenRequests,
+  sendRequestVoidMessages,
+} = require("../utils/teamDeletionRequests");
 
 const TEAM_RETURNING_FIELDS = `
   id,
@@ -774,6 +780,32 @@ const deleteTeam = async (req, res) => {
       });
     }
 
+    // Optional note from the owner to everyone whose application or
+    // invitation this deletion voids (STATUS item 40b).
+    const personalMessage =
+      typeof req.body?.message === "string" ? req.body.message.trim() : "";
+    if (personalMessage.length > MAX_PERSONAL_MESSAGE_LENGTH) {
+      return res.status(400).json({
+        success: false,
+        message: `The message must be at most ${MAX_PERSONAL_MESSAGE_LENGTH} characters`,
+      });
+    }
+
+    // Before anything is touched: a permanent delete takes these rows along.
+    const { recipients } = await collectOpenRequests(db.pool, teamId);
+    const requestOwner = { id: userId, name: null };
+    const loadOwnerName = async () => {
+      const ownerRow = (
+        await db.pool.query(
+          `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+          [userId],
+        )
+      ).rows[0];
+      return ownerRow?.first_name && ownerRow?.last_name
+        ? `${ownerRow.first_name} ${ownerRow.last_name}`
+        : ownerRow?.username || null;
+    };
+
     // If the owner is the only remaining member, there is no one left to be
     // notified or to read a "team deleted" message — skip the soft-delete/archive
     // path and permanently remove the team right away. This also purges the team
@@ -788,6 +820,19 @@ const deleteTeam = async (req, res) => {
 
     if (otherMembersResult.rows[0].count === 0) {
       await permanentlyDeleteTeam(teamId);
+
+      if (recipients.length > 0) {
+        requestOwner.name = await loadOwnerName();
+        await sendRequestVoidMessages({
+          req,
+          queryable: db.pool,
+          team: { id: teamCheck.rows[0].id, name: teamCheck.rows[0].name },
+          owner: requestOwner,
+          recipients,
+          mode: "deleted",
+          personalMessage,
+        });
+      }
 
       /**
        * Nobody else needs telling - but the owner's own chat page does.
@@ -832,7 +877,31 @@ const deleteTeam = async (req, res) => {
         [teamId],
       );
 
+      await closeOpenRequests(client, teamId);
+
       await client.query("COMMIT");
+
+      // The people whose application or invitation was just closed hear it
+      // from the owner, in a DM of their own.
+      if (recipients.length > 0) {
+        try {
+          requestOwner.name = await loadOwnerName();
+          await sendRequestVoidMessages({
+            req,
+            queryable: db.pool,
+            team: { id: teamCheck.rows[0].id, name: teamCheck.rows[0].name },
+            owner: requestOwner,
+            recipients,
+            mode: "archived",
+            personalMessage,
+          });
+        } catch (requestNoticeError) {
+          console.error(
+            "Error notifying applicants and invitees of the deleted team:",
+            requestNoticeError,
+          );
+        }
+      }
 
       // === CREATE NOTIFICATIONS FOR ALL TEAM MEMBERS ===
       try {

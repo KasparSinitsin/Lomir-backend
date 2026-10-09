@@ -60,6 +60,11 @@ test("deleteTeam permanently deletes a solo team (owner is the only member) inst
       return { rows: [{ count: 0 }] };
     }
 
+    if (sql.includes("SELECT 'application' AS kind")) {
+      // Nobody has an open application or invitation
+      return { rows: [] };
+    }
+
     throw new Error(`Unexpected pool SQL in solo delete test: ${sql}`);
   };
 
