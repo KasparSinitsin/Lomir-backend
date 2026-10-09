@@ -42,7 +42,10 @@ const VACANT_ROLE_SELECT = `SELECT vr.*,
               fu.is_public AS filled_by_user_is_public
        FROM team_vacant_roles vr
        JOIN teams t ON t.id = vr.team_id
-       JOIN users u ON vr.created_by = u.id
+       -- LEFT: account deletion sets created_by NULL, and an INNER join made
+       -- the role vanish from every endpoint (item 39; 6 of 150 roles,
+       -- deletion-audit 59). The creator fields are then NULL.
+       LEFT JOIN users u ON vr.created_by = u.id
        LEFT JOIN users fu ON vr.filled_by = fu.id`;
 
 const VACANT_ROLE_STATUS_SELECT = `SELECT vr.*,
