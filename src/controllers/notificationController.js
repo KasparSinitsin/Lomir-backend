@@ -1,10 +1,30 @@
 const db = require("../config/database");
 
+// The badge a `badge_awarded` notification is about, read through the reference
+// the writer stores rather than from the English title. Measured 2026-10-09
+// (deletion-audit rounds 67 and 68): a row written today has
+// reference_type 'badge' and the badges.id; an older row has 'badge_award' and a
+// badge_awards.id (887 of 887 prefixed rows agree with their title). The
+// unprefixed rows (770) point at awards that no longer exist, so for them the
+// subquery is NULL and the link carries no highlight.
+const badgeNameSql = (alias) => `(
+  SELECT b_ref.name
+  FROM badges b_ref
+  WHERE b_ref.id = CASE ${alias}.reference_type
+    WHEN 'badge' THEN ${alias}.reference_id
+    WHEN 'badge_award' THEN (
+      SELECT ba_ref.badge_id FROM badge_awards ba_ref WHERE ba_ref.id = ${alias}.reference_id
+    )
+  END
+)`;
+
+const BADGE_TITLE_PREFIX = "New Badge: ";
+
 // ============================================================================
 // HELPER: Generate navigation URL based on notification type
 // ============================================================================
 const getNavigationUrl = (notification) => {
-  const { type, team_id, reference_type, reference_id, actor_id, title } = notification;
+  const { type, team_id, reference_type, reference_id, actor_id, title, badge_name } = notification;
   const messageHighlight =
     reference_type === "message" && reference_id != null
       ? `&highlightMessage=${reference_id}`
@@ -122,10 +142,19 @@ const getNavigationUrl = (notification) => {
       return `/teams/my-teams?openInvitation=${reference_id}`;
 
     case "badge_awarded": {
-      // Navigate to own profile, scroll to badges, highlight the awarded badge
-      // title format: "New Badge: Quick Learner"
-      const badgeName = title ? title.replace("New Badge: ", "") : "";
-      return `/profile?scrollTo=badges&highlightBadge=${encodeURIComponent(badgeName)}`;
+      // Navigate to own profile, scroll to badges, highlight the awarded badge.
+      // The name comes from the reference (see badgeNameSql); only a row whose
+      // reference no longer resolves falls back to the title, and only when it
+      // really is of the form "New Badge: Quick Learner". With no name at all
+      // the link still goes to the badges, without a highlight.
+      const badgeName =
+        badge_name ||
+        (typeof title === "string" && title.startsWith(BADGE_TITLE_PREFIX)
+          ? title.slice(BADGE_TITLE_PREFIX.length)
+          : "");
+      return badgeName
+        ? `/profile?scrollTo=badges&highlightBadge=${encodeURIComponent(badgeName)}`
+        : "/profile?scrollTo=badges";
     }
 
     case "message_mention":
@@ -281,7 +310,8 @@ const getUnreadCount = async (req, res) => {
             'reference_type', n2.reference_type,
             'reference_id', n2.reference_id,
             'actor_id', n2.actor_id,
-            'title', n2.title
+            'title', n2.title,
+            'badge_name', ${badgeNameSql("n2")}
            )
            FROM notifications n2
            WHERE n2.user_id = $1 AND n2.read_at IS NULL
@@ -335,10 +365,11 @@ const getUnreadCount = async (req, res) => {
     // to fetch and page the whole notification list on the client.
     const typeFirstUnreadResult = await db.query(
       `SELECT DISTINCT ON (type)
-         id, type, team_id, reference_type, reference_id, actor_id, title, created_at
-       FROM notifications
-       WHERE user_id = $1 AND read_at IS NULL
-       ORDER BY type, created_at ASC`,
+         n.id, n.type, n.team_id, n.reference_type, n.reference_id, n.actor_id, n.title, n.created_at,
+         ${badgeNameSql("n")} AS badge_name
+       FROM notifications n
+       WHERE n.user_id = $1 AND n.read_at IS NULL
+       ORDER BY type, n.created_at ASC`,
       [userId],
     );
 
