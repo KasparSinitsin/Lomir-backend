@@ -666,10 +666,15 @@ const handleTeamApplication = async (req, res) => {
    LEFT JOIN team_vacant_roles vr ON ta.role_id = vr.id
    JOIN users applicant ON ta.applicant_id = applicant.id
    LEFT JOIN team_members tm ON t.id = tm.team_id AND tm.user_id = $1
-   WHERE ta.id = $2 AND ta.status = 'pending'`,
+   WHERE ta.id = $2 AND ta.status = 'pending'
+   AND t.archived_at IS NULL`,
       [userId, applicationId],
     );
 
+    // An archived team is read-only (STATUS item 40): its pending applications
+    // can no longer be approved or declined, same as invitations to it can no
+    // longer be answered. Approving one used to add the applicant to the
+    // archived team.
     if (applicationResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
