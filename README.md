@@ -30,8 +30,9 @@ To test the live demo, anyone can just **register their own account** directly i
 
 - **Authentication** — JWT-based registration, login, email verification, password reset, and verified email change. The session JWT is delivered as an `httpOnly`, `sameSite` cookie (never in the response body or readable by frontend JavaScript); auth middleware and the Socket.IO handshake read it from the cookie, with the `Authorization: Bearer` header kept as a fallback for API clients. Transactional emails are sent through Brevo's transactional HTTPS API (Render blocks outbound SMTP). Registration protected by Cloudflare Turnstile CAPTCHA (feature-flagged for local dev). Registration requires explicit acceptance of Terms of Service, acknowledgement of the Privacy Policy, and confirmation of minimum age (16+); the version of each legal document is stamped on the user row at sign-up. Unverified accounts are deleted after their verification link expires plus a one-hour buffer, with cleanup running every six hours and once on server startup. Changing an account email is double-opt-in: the current-password-protected request stores the new address as `pending_email` with a 24-hour token and sends a verification link to it, and the account email only switches over once the new address confirms — the old address stays active until then. Expired email-change tokens are cleared by the same cleanup pass as password-reset tokens.
 - **User Profiles** — CRUD with avatar uploads (ImageKit), interest tags, badge portfolios, and user-controlled public/private visibility. Verified accounts remain private by default until the user opts in to public visibility.
+- **Languages (English / German)** — Each user has a `preferred_language`, and the five user-facing transactional emails are sent in it (`config/languages.js`, `services/emailCopy.js`). Email is the one thing the backend words itself: everywhere else it sends data and stable `code`s (`config/teamErrors.js`, `contactErrors.js`, `searchErrors.js`) and the frontend writes the sentence
 - **User Blocking** — Authenticated users can manage a private blocklist. Block relationships hide profiles and user-search results where requester context is available, suppress team application visibility, disable direct messaging, and exclude blocked users from team chat realtime events where needed.
-- **Teams** — Create, join, manage members, assign roles, and archive teams
+- **Teams** — Create, join, manage members, assign roles, and archive teams. Deleting a team with other members archives it (read-only for role management and for handling applications and invitations; members can still be removed and can still leave), and everyone with an open application or invitation is told by direct message from the owner — see [Team Deletion](#team-deletion)
 - **Vacant Roles** — Post open positions on teams with desired tags, badges, and location preferences
 - **Matching Engine** — Score users against roles (and vice versa) using weighted tag/badge/distance criteria
 - **Search** — Global search across teams, users, and roles with boolean queries, tag/badge/location filtering, proximity sorting, and "Best Match" scoring
@@ -61,6 +62,7 @@ To test the live demo, anyone can just **register their own account** directly i
 | CAPTCHA | Cloudflare Turnstile |
 | Rate Limiting | express-rate-limit |
 | Security Headers | Helmet |
+| Testing | Node's built-in test runner (`node --test`) |
 
 ---
 
@@ -146,15 +148,18 @@ Verify it's running by visiting `http://localhost:5001` — you should see **"Lo
 |---|---|
 | `npm run dev` | Start dev server with nodemon (hot reload) |
 | `npm start` | Start production server |
-| `npm run migrate` | Run database migrations |
-| `npm run seed` | Seed the database with initial data |
+| `npm run migrate` | Run the database migrations in order (see [Database Migrations](#database-migrations)) |
+| `npm run seed` | Seed the database with the demo data in `src/database/seeds/` |
 | `npm test` | Run tests (`node --test`) |
 | `npm run backup` | Create a database dump now (see [Database Backups](#database-backups)) |
 | `npm run backup:status` | List existing dumps with their age |
+| `npm run backup:open` | Open the backup directory |
 | `npm run backup:install` | Install or refresh the scheduled backup agent |
 | `npm run backup:uninstall` | Remove the scheduled backup agent |
 
 ### Test Notes
+
+`npm test` runs every file in `test/` (62 files). They are unit tests: controllers are driven against a mocked database pool and socket layer, and pure helpers run directly. A mock cannot run SQL, so the migration tests read each migration as text (importing one would open the application's database pool) and pin its rules; the SQL itself is exercised separately on a disposable database with synthetic rows, never production.
 
 For search work, run the focused search suite:
 
@@ -184,7 +189,14 @@ Lomir-backend/
 │   ├── config/
 │   │   ├── database.js         # PostgreSQL connection pool (Neon)
 │   │   ├── imagekit.js         # ImageKit client configuration
-│   │   └── legalDocuments.js   # Current version constants for Terms, Privacy Policy, and age confirmation
+│   │   ├── legalDocuments.js   # Current version constants for Terms, Privacy Policy, and age confirmation
+│   │   ├── languages.js        # Languages on offer + country → language map (Joi validation, email template choice)
+│   │   ├── roleDefaults.js     # The name a role carries when nobody gave one (stored data, stays English)
+│   │   ├── contactTopics.js    # Contact-form topics as stable codes (a DSA report is decided by code, not by label)
+│   │   ├── teamErrors.js       # Failure codes of the team endpoints (invitations, applications, roles, members)
+│   │   ├── contactErrors.js    # Failure codes of /api/contact — the precedent for the other two
+│   │   ├── searchErrors.js     # Failure codes of the search endpoints
+│   │   └── nameBearingMessageFormats.js # Every stored chat-message format that embeds a person's name, traced to its writer; account deletion derives its scrub from it
 │   ├── controllers/
 │   │   ├── authController.js
 │   │   ├── userController.js          # User profile CRUD (list, get, update, avatar)
@@ -232,6 +244,7 @@ Lomir-backend/
 │   │   └── contactReportModel.js # Persistent abuse/content report records and email status updates
 │   ├── services/
 │   │   ├── emailService.js     # Transactional email methods + templates (verification, password reset/changed, email-change, contact forwarding, report receipt)
+│   │   ├── emailCopy.js        # The text of every user-facing transactional email, per language
 │   │   └── mailProvider.js     # Brevo HTTPS transport (single seam; swap provider here)
 │   ├── socket/
 │   │   ├── index.js            # initSocket(server, app): io + CORS, app.set("io"), auth, handler registration
@@ -257,6 +270,16 @@ Lomir-backend/
 │   │   ├── locationDerivation.js # Offline postal-code → city/district/state lookup (Berlin, Frankfurt)
 │   │   ├── matchingScorer.js   # Shared scoring utilities
 │   │   ├── searchQueryBuilder.js # Shared search distance/filter/sort SQL builders
+│   │   ├── search/             # The search controller's pieces: searchParamParser (query string → typed config),
+│   │   │                       #   searchSqlBuilders (filters, ORDER BY), searchExecution (the paginated queries),
+│   │   │                       #   searchResultProcessing (tag/badge enrichment, match scoring, privacy sanitizers)
+│   │   ├── user/
+│   │   │   └── userControllerHelpers.js # Pure helpers shared by the profile and account-deletion controllers
+│   │   ├── eventNameToken.js   # Builds the `id:name` token the frontend's event parser reads (renames and deletions resolve at display time)
+│   │   ├── teamDeletionRequests.js # What happens to a deleted team's open applications and invitations (collect, close, notify)
+│   │   ├── replySnapshot.js    # Self-contained reply-preview snapshot embedded in each delivered message
+│   │   ├── escapeForPosixRegex.js # Escapes a display name for use in a POSIX regex (the deletion scrub matches names on word boundaries)
+│   │   ├── postalCodeCountry.js # Country detection from a postal-code format (no guessing where the format is ambiguous)
 │   │   ├── socketMessageEmitter.js
 │   │   ├── turnstileVerify.js  # Cloudflare Turnstile CAPTCHA verification
 │   │   ├── vacantRoleSerializer.js    # Serializes vacant role rows; builds creator and filled_by user sub-objects (id, name, avatar_url, is_public)
@@ -267,36 +290,46 @@ Lomir-backend/
 │   │   ├── cleanupUnverifiedAccounts.js # Every 6 hours + startup; deletes expired unverified accounts
 │   │   └── cleanupArchivedTeams.js # Daily + startup; permanently deletes teams archived longer than the grace period
 │   └── database/
-│       └── migrations/
-│           └── create_contact_reports.js # Stores report submissions with reference IDs and mail status
-├── scripts/                    # SQL seed, migration, and utility scripts
+│       ├── migrations/         # Incremental migrations, run in order by index.js — see Database Migrations
+│       │   ├── index.js        # The registry and the order
+│       │   ├── _helpers.js     # Shared by migration steps (e.g. a safe naive-timestamp → TIMESTAMPTZ conversion); not a step itself
+│       │   └── *.js            # One file per step: schema changes, plus data migrations that rewrite stored chat messages
+│       └── seeds/              # Demo data for `npm run seed` (users, tags, teams, badges, more users, messages)
+├── migrate.js                  # Entry point of `npm run migrate`
+├── seed.js                     # Entry point of `npm run seed`
+├── backfill-team-geocoding.js  # One-off: geocode existing teams that have an address but no coordinates
+├── backfill-vacant-role-geocoding.js # Same for vacant roles
+├── scripts/                    # SQL, backup and utility scripts
 │   ├── migrate-cloudinary-to-imagekit.js   # One-time migration (already run): converted Cloudinary URLs to ImageKit URLs in the database
 │   ├── add-location-district-columns.sql  # Migration: adds district column to teams/users/roles
 │   ├── add-legal-consent-columns.sql      # Standalone SQL for the legal consent migration (see migrations/add_legal_consent_to_users.js)
-│   └── backfill-location-data.js         # One-off script to backfill district/state from geocoding
-├── test/                       # Controller and utility unit tests
-│   ├── authController.login.test.js
-│   ├── authController.emailChange.test.js
-│   ├── csrfProtection.test.js
-│   ├── errorResponse.test.js
-│   ├── invitationController.test.js
-│   ├── invitationController.staleNotifications.test.js
-│   ├── contactController.test.js
-│   ├── messageController.sendMessage.test.js
-│   ├── messageController.markAllAsRead.test.js
-│   ├── messageController.bodyCasing.test.js # Drives controllers with the snake_case bodies the frontend sends
-│   ├── notificationController.getUnreadCount.test.js
-│   ├── locationDerivation.test.js
-│   ├── searchController.test.js
-│   ├── teamController.applyToJoinTeam.test.js
-│   ├── teamController.applications.test.js
-│   ├── teamController.deleteTeam.test.js
-│   ├── cleanupArchivedTeams.test.js
-│   ├── userController.deleteUser.test.js
-│   ├── userController.deletionPreview.test.js
-│   ├── userController.emailUpdate.test.js
-│   ├── userModel.legalConsent.test.js
-│   └── vacantRoleController.test.js
+│   ├── add-avatar-file-id-columns.sql     # Adds the ImageKit file-id columns for user and team avatars
+│   ├── add_team_application_role_id.sql / add_team_invitation_role_id.sql / fix_team_invitations_unique_constraint.sql
+│   │                           # Role targeting for applications and invitations
+│   ├── add_performance_indexes.sql        # Indexes for the heaviest queries (safe to run repeatedly)
+│   ├── backfill-location-data.js          # One-off script to backfill district/state from geocoding
+│   ├── backfill-state-data.js             # One-off: state/region from reverse geocoding of stored coordinates
+│   ├── seed_badge_awards.sql / lomir_badge_backfill.sql  # Badge-award seed and backfill data
+│   ├── backup-db.sh / install-backup-agent.sh # Database backups (see Database Backups)
+├── test/                       # 62 test files, named <subject>.<aspect>.test.js; by area:
+│   │                           #   controllers  authController.*, userController.*, teamController.*,
+│   │                           #                teamApplicationsController.archivedTeam, teamReadController.*,
+│   │                           #                invitationController*, vacantRoleController, messageController.*,
+│   │                           #                notificationController.*, searchController, contactController
+│   │                           #   account deletion  userController.deleteUser / deletionPreview / resolveNames,
+│   │                           #                userDeletion.namePrefixes / nameSpellings / notifications
+│   │                           #                (the name scrub is derived from config/nameBearingMessageFormats.js)
+│   │                           #   data migrations  *.migration.test.js, legacyMarkerDms.*, proseEvents.*,
+│   │                           #                clipboardProseDms.teamIds, migrationHelpers — read the migration as
+│   │                           #                text and pin its rules
+│   │                           #   languages and email  preferredLanguage, authController.preferredLanguage,
+│   │                           #                emailTemplates, mailLanguageFields
+│   │                           #   error codes  teamErrors, searchErrors, errorResponse
+│   │                           #   infrastructure  csrfProtection, tokenExpiry, cleanupArchivedTeams,
+│   │                           #                cleanupUnverifiedAccounts, replySnapshot
+│   │                           #   location  locationDerivation, postalCodeCountry, geocoding*
+│   └── messageController.bodyCasing.test.js # e.g. drives controllers with the snake_case bodies the frontend sends
+├── nodemon.json                # Dev watcher config (watches src/ only)
 ├── .env                        # Environment variables (not committed)
 ├── package.json
 └── README.md
@@ -311,8 +344,8 @@ All routes are prefixed with `/api`.
 | Prefix | Description |
 |---|---|
 | `/api/auth` | Register (requires `acceptedTerms`, `acceptedPrivacy`, `confirmedAge16`), login (sets the httpOnly session cookie), `POST /auth/logout` (clears it), email verification, password reset, verified email change (`PUT /auth/change-email` to request, `GET /auth/verify-email-change?token=...` to confirm); `POST /auth/check-username` for rate-limited username availability checks |
-| `/api/users` | User CRUD, tags, badges, avatar, self-only blocklist endpoints, account deletion with preview |
-| `/api/teams` | Team CRUD, members, applications, invitations, badge awards; `DELETE /invitations/:id/role` cancels only the role portion of a pending invitation |
+| `/api/users` | User CRUD (including `preferred_language`), tags, badges, avatar, self-only blocklist endpoints, account deletion with preview |
+| `/api/teams` | Team CRUD, members, applications, invitations, badge awards; `DELETE /invitations/:id/role` cancels only the role portion of a pending invitation; `DELETE /:id` takes an optional JSON body `{ "message": "…" }` (max 2000 characters) that is sent to everyone whose application or invitation the deletion voids — see [Team Deletion](#team-deletion). `GET /:id` answers 404 with `TEAM_NOT_FOUND` for a team that no longer exists (or is archived and the reader is not a member) and 404 with `TEAM_NOT_ACCESSIBLE` for a private team the reader cannot see |
 | `/api/teams/:teamId/vacant-roles` | Vacant role CRUD and status management. Supports `?ids=1,2,3` for bulk filtering (bypasses the default status filter so polling can detect roles that transitioned to filled/closed). Role responses include `is_public` on the `creator` and `filled_by` user sub-objects. |
 | `/api/search/global` | Keyword/boolean search across teams, users, and roles with tag/badge/location/role filtering |
 | `/api/search/all` | Initial search-page data without a required keyword, using the same filtering/sorting core |
@@ -324,6 +357,12 @@ All routes are prefixed with `/api`.
 | `/api/tags` | Tag catalog (structured by category) |
 | `/api/geocoding` | Postal code → city/district/country/coordinates lookup |
 | `/api/contact` | Public contact form submission with optional file attachments forwarded by email (Brevo); `Report content or abuse` submissions are persisted first, return a `referenceId`, and trigger an automated acknowledgement-of-receipt email to the reporter |
+
+---
+
+## Error Codes
+
+Failures a normal user can reach carry a stable `code` next to the English `message`: `config/contactErrors.js` (`/api/contact`), `config/searchErrors.js` and `config/teamErrors.js` (invitations, applications, vacant roles, role changes, member changes, team reads). The frontend words the sentence in the reader's language from the code; `message` stays so an older frontend keeps working and no deploy order arises. Only races a user can run into are coded — for example two admins handling the same request, or a team archived while a panel was open. Guards the UI already prevents stay prose. Details that only the backend knows travel in an optional `values` object. Each file's header states the rules; read `contactErrors.js` first, it is the precedent.
 
 ---
 
@@ -346,6 +385,20 @@ Supported search controls include:
 Authenticated user searches automatically exclude users who are in a block relationship with the requester, in either direction.
 
 The team search response intentionally returns `teamavatarUrl` from the SQL alias `teamavatar_url as "teamavatarUrl"` for API compatibility with the frontend.
+
+---
+
+## Database Migrations
+
+`npm run migrate` runs `src/database/migrations/index.js`, which lists every step in order. The base schema already exists in the database; only incremental steps live in the repo.
+
+- **Schema steps** add columns and tables (`add_*`, `create_*`).
+- **Data migrations** rewrite stored chat messages — for example adding the `id:` token to older event rows so a rename or a deleted account is resolved at display time, or removing a deleted person's name from stored text. They are the repo's way of changing data by rule; they never contain the data itself.
+- A **data migration** must be **idempotent** (guarded, so a second run changes nothing) and must **own its transaction**.
+- ⚠️ The runner's `catch` does **not** rethrow, so `migrate.js` prints "Migration completed successfully" even after a failed step. Read the log, and verify a data migration from outside (a read-only query that counts what is left) rather than trusting that line.
+- **Order matters.** A step that corrects an earlier one (it recognises a row by the wrong value the first one wrote) must stay after it.
+- A data migration that reads stored text needs the frontend parser that understands the new shape to be live wherever the database is read; run it after that release, not before.
+- Back up first (see [Database Backups](#database-backups)).
 
 ---
 
@@ -375,12 +428,18 @@ The server uses Socket.IO for real-time features. Clients authenticate from the 
 | `message:read` | Client → Server | Mark messages as read |
 | `message:status` | Server → Client | Read receipt notification |
 | `messages:read-all` | Server → Client | Emitted to the user's own room after `PUT /messages/read-all` so the navbar badge and the chat page conversation list drop to zero in real time |
-| `typing:start` / `typing:stop` | Bidirectional | Typing indicators |
+| `typing:start` / `typing:stop` | Client → Server | The sender started or stopped typing |
+| `typing:update` | Server → Client | Typing state of the other side of the conversation |
+| `message:edited` / `message:deleted` | Server → Client | A message was edited or soft-deleted (emitted by the REST endpoints, to the team room or both DM participants) |
+| `messages:read` | Server → Client | Sent to the reader after `message:read`, so their own navbar can update the unread count |
 | `blocks:updated` | Server → Client | Tells both affected users to re-sync block state after a block or unblock |
 | `users:online` | Server → Client | Updated list of online user IDs |
 | `team:member_left` | Server → Client | Member removal (e.g. account deletion) |
 | `team:member_kicked` | Server → Client | Emitted to the removed member to kick them from the team chat |
 | `conversation:deleted` | Server → Client | DM conversation removed |
+| `team:deleted` | Server → Client | Sent to the owner when a solo team is removed at once, so their chat list drops it without waiting for a failed fetch |
+| `role:statusChanged` | Server → Client | A role an applicant applied for, or an invitee was invited to, changed status |
+| `badge:awarded` | Server → Client | Sent to the person who was awarded a badge (badge name, category, awarder) |
 | `notification:new` | Server → Client | New notification for the user — covers invitations, applications, member changes, role lifecycle events (`role_created`, `role_updated`, `role_deleted`, `role_closed`, `role_filled`, `role_reopened`), badge awards, `message_mention`, team deletion, and ownership transfers |
 | `notification:updated` | Server → Client | Tells the client to re-fetch notifications — emitted on invitation cancellation, role invitation cancellation, an invitee accepting or declining an invitation (so their own resolved invite notification disappears), stale notification cleanup (e.g. after member removal or role deletion), and admin action acknowledgements |
 
@@ -469,10 +528,11 @@ Requires `pg_dump` on the `PATH` (`brew install postgresql@17`). The restore pro
 Full transactional account deletion. Key highlights:
 
 - **Impact preview** — `POST /api/users/:id/deletion-preview` returns a password-verified summary of what will happen (teams transferred, teams deleted, roles reopened, counts)
-- **Single transaction** — All cleanup runs in one database transaction with 6 phases (context gathering → message cleanup → team ownership → role/reference cleanup → user row deletion → post-transaction Socket.IO events)
+- **Single transaction** — All cleanup runs in one database transaction in phases (A context → B messages and chat → C team ownership → D role and reference cleanup, D2 notifications that name the user → E user row), followed by the Socket.IO events after commit
 - **Badge preservation** — Team names copied to `badge_awards.custom_team_name` before sole-owner teams are deleted
 - **"Former Lomir User"** — Deleted user references display a grey silhouette avatar with no personal info
-- **41+ automated tests** covering deletion scenarios and preview logic
+- **Names in stored text** — A person's name is removed from team-chat messages and notifications that mention it. Which stored formats carry a name, whose, and whether the sender is that person is recorded per format in `config/nameBearingMessageFormats.js`; the scrub is derived from that table, so a new event format cannot be forgotten
+- **Automated tests** cover the deletion scenarios, the preview, the name scrub (prefixes, spellings, notifications) and the name resolution (`userController.deleteUser`, `deletionPreview`, `resolveNames`, `userDeletion.*`)
 
 ---
 
@@ -481,13 +541,19 @@ Full transactional account deletion. Key highlights:
 When an owner deletes a team (`DELETE /api/teams/:id`), the behaviour depends on whether anyone else is still a member:
 
 - **Solo team (owner is the only member)** — the team is **permanently deleted right away** via `permanentlyDeleteTeam`, removing the team row, its chat messages, invitations/applications, badges, notifications, members, and the ImageKit avatar. Nothing is left behind, so a deleted solo team never leaves an orphaned, unreachable conversation.
-- **Team with other members** — the team is **soft-deleted (archived)**: `archived_at`/`status` are set, a `TEAM_DELETED` system message is posted to the chat, and every member is notified. The archived chat stays available to the remaining members as a **"farewell" window**: they can still read **and post** messages until they leave or the grace period ends. Socket and REST team access are gated on current membership (not on `archived_at`), so live messages keep flowing to remaining members. It is permanently purged once the **last** member leaves (`checkAndCleanupArchivedTeam`).
+- **Team with other members** — the team is **soft-deleted (archived)**: `archived_at`/`status` are set, its open applications and invitations are closed (see below), a `TEAM_DELETED` system message is posted to the chat, and every member is notified. The archived chat stays available to the remaining members as a **"farewell" window**: they can still read **and post** messages until they leave or the grace period ends. Socket and REST team access are gated on current membership (not on `archived_at`), so live messages keep flowing to remaining members. It is permanently purged once the **last** member leaves (`checkAndCleanupArchivedTeam`).
 - **Member visibility of archived teams** — archived teams are still served to their current members (never to outsiders — 404 otherwise, regardless of `is_public`): `getTeamById` and the team badge endpoints return them so members can open the full Team Details modal (info, focus areas, badges, roles, members) for an archived team's chat, and `getConversations`/`getConversationById` expose `archived_at`/`status`. Archived teams where the viewer is the only remaining member are hidden from the conversation list and chat search.
   - Each conversation row in `getConversations` also embeds the entity's `is_synthetic` flag (teams and direct partners) alongside `name`/`avatarUrl`, so the frontend conversation list can render names, avatars, and the demo overlay directly from the list payload instead of issuing a per-conversation `getTeamById`/`getUserById` fetch.
   - Likewise, `getConversationById` embeds `is_synthetic` on each team member (alongside `avatarUrl`), so the open chat resolves member avatars and demo overlays from the members payload instead of a per-member `getUserById` fallback. This matters most for archived farewell chats, which skip the `getTeamById` hydrate that would otherwise supply the flag.
+- **Archived teams are read-only** — the owner and admins can no longer edit the team, create, edit, delete or change the status of roles, change member roles, send invitations or answer them, or approve or decline applications (`handleTeamApplication` refuses with `APPLICATION_UNAVAILABLE`). Removing a member and leaving the team stay possible, so a team can still be emptied; the owner may leave without transferring ownership.
+- **Open applications and invitations** — before anything is touched, `deleteTeam` collects everyone with a pending application or invitation (`utils/teamDeletionRequests.js`). Each gets a direct message from the owner:
+
+      🗑️ REQUEST_VOID: <teamId>:<team> | <ownerId>:<owner> | <kind> | archived|deleted | <hasPersonalMessage>
+
+  `kind` is `application` / `invitation` for someone outside the team and `role_application` / `role_invitation` for a member who applied for, or was invited to, a role inside it. An optional `message` in the DELETE body follows as a separate ordinary message (the way a decline carries its reply). One DM per person and kind; the recipient is not named in the event. In the archive path the requests are closed in the same transaction — invitations become `canceled`, applications are deleted (there is no "withdrawn" status, and `rejected` would read as a refusal), drafts included. A solo team is removed at once and its requesters are told `deleted`. Teams archived before this existed are left alone; the grace-period cleanup removes their requests with them.
 - **Grace-period safety net** — to guarantee a deleted team never lingers forever when members never explicitly leave, the `cleanupArchivedTeams` job permanently deletes any team archived longer than `ARCHIVED_TEAM_GRACE_DAYS` (default 14). It runs daily and once on server startup. See [Scheduled Jobs](#scheduled-jobs).
 
-Covered by `teamController.deleteTeam.test.js`, `cleanupArchivedTeams.test.js`, and `messageController.sendMessage.test.js`.
+Covered by `teamController.deleteTeam.test.js`, `teamController.deleteTeam.requests.test.js`, `teamApplicationsController.archivedTeam.test.js`, `cleanupArchivedTeams.test.js`, and `messageController.sendMessage.test.js`.
 
 ---
 
