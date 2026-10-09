@@ -1,5 +1,6 @@
 const db = require("../config/database");
 const { visibleAwardCondition } = require("../utils/badgeVisibilityUtils");
+const { TEAM_ERROR_CODES } = require("../config/teamErrors");
 
 const PUBLIC_TEAM_FIELDS = `
   t.id, t.name, t.description, t.is_public, t.max_members,
@@ -83,6 +84,7 @@ const getTeamById = async (req, res) => {
     if (teamResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
+        code: TEAM_ERROR_CODES.TEAM_NOT_FOUND,
         message: "Team not found",
       });
     }
@@ -98,6 +100,7 @@ const getTeamById = async (req, res) => {
       if (!viewerId) {
         return res.status(404).json({
           success: false,
+          code: TEAM_ERROR_CODES.TEAM_NOT_ACCESSIBLE,
           message: "Team not found",
         });
       }
@@ -108,6 +111,7 @@ const getTeamById = async (req, res) => {
       if (memberCheck.rows.length === 0) {
         return res.status(404).json({
           success: false,
+          code: TEAM_ERROR_CODES.TEAM_NOT_ACCESSIBLE,
           message: "Team not found",
         });
       }
@@ -131,6 +135,7 @@ const getTeamById = async (req, res) => {
     if (team.archived_at && !viewerIsMember) {
       return res.status(404).json({
         success: false,
+        code: TEAM_ERROR_CODES.TEAM_NOT_FOUND,
         message: "Team not found",
       });
     }

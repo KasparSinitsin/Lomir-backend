@@ -19,7 +19,14 @@
  */
 
 const TEAM_ERROR_CODES = {
+  // Also answered by GET /api/teams/:id for a team that no longer exists —
+  // hard-deleted, or archived (scheduled for deletion) to a non-member.
   TEAM_NOT_FOUND: "TEAM_NOT_FOUND",
+  // GET /api/teams/:id only: the team exists but is private and the reader is
+  // not a member. Chat events name such teams; the frontend keeps them as
+  // links instead of treating them as gone (item 34). Reveals that the id
+  // exists, never anything about the team.
+  TEAM_NOT_ACCESSIBLE: "TEAM_NOT_ACCESSIBLE",
   TEAM_FULL: "TEAM_FULL",
   // values: { memberCount } — a new maximum below the current member count
   MAX_MEMBERS_BELOW_MEMBER_COUNT: "MAX_MEMBERS_BELOW_MEMBER_COUNT",
