@@ -62,6 +62,9 @@ const scrubDeletedPeopleInApplicationEvents = require(
 const addTeamIdsToLegacyMarkerDms = require(
   "./add_team_ids_to_legacy_marker_dms"
 );
+const addTeamIdsToClipboardProseDms = require(
+  "./add_team_ids_to_clipboard_prose_dms"
+);
 
 const runMigrations = async () => {
   try {
@@ -131,6 +134,9 @@ const runMigrations = async () => {
     // Team ids into slot 1 of the legacy marker DMs whose team still exists and
     // is corroborated beyond its name (item 33). Dry run: deletion-audit/57.
     await addTeamIdsToLegacyMarkerDms();
+    // Team ids into the quoted team of the legacy 📋 prose DMs (item 35).
+    // Needs the item-35 frontend parser live. Dry run: deletion-audit/63.
+    await addTeamIdsToClipboardProseDms();
 
     console.log("All migrations completed successfully!");
   } catch (error) {
