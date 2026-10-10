@@ -34,6 +34,18 @@
       "name": "Lifestyle",
       "note": "unverändert"
     },
+    "25": {
+      "en": "Science & Learning",
+      "name": "Wissenschaft & Lernen"
+    },
+    "26": {
+      "en": "Natural Sciences",
+      "name": "Naturwissenschaften"
+    },
+    "27": {
+      "en": "Social Sciences",
+      "name": "Sozialwissenschaften"
+    },
     "31": {
       "en": "Wellness & Lifestyle",
       "name": "Wellness & Lifestyle",
@@ -98,6 +110,26 @@
     "57": {
       "en": "Sustainability & Eco Projects",
       "name": "Nachhaltigkeits- & Ökoprojekte"
+    },
+    "58": {
+      "en": "Book Clubs & Literature",
+      "name": "Buchclubs & Literatur"
+    },
+    "59": {
+      "en": "History & Culture",
+      "name": "Geschichte & Kultur"
+    },
+    "60": {
+      "en": "Public Speaking",
+      "name": "Öffentliches Reden / Rhetorik"
+    },
+    "61": {
+      "en": "Financial Literacy",
+      "name": "Finanzbildung"
+    },
+    "62": {
+      "en": "Career & Personal Development",
+      "name": "Karriere & Persönlichkeitsentwicklung"
     },
     "63": {
       "en": "English",
@@ -466,6 +498,41 @@
       "name": "Yoga",
       "note": "unverändert"
     },
+    "309": {
+      "en": "Language Exchange",
+      "name": "Sprachaustausch"
+    },
+    "310": {
+      "en": "Coding Buddies",
+      "name": "Coding Buddies",
+      "note": "unverändert"
+    },
+    "311": {
+      "en": "Art Practice",
+      "name": "Kunstpraxis"
+    },
+    "313": {
+      "en": "Peer Review",
+      "name": "Peer Review",
+      "note": "unverändert"
+    },
+    "314": {
+      "en": "Workshops",
+      "name": "Workshops",
+      "note": "unverändert"
+    },
+    "315": {
+      "en": "Online Courses",
+      "name": "Online-Kurse"
+    },
+    "317": {
+      "en": "Lectures",
+      "name": "Vorlesungen"
+    },
+    "318": {
+      "en": "Seminars",
+      "name": "Seminare"
+    },
     "324": {
       "en": "Backpacking",
       "name": "Backpacking",
@@ -486,6 +553,76 @@
     "328": {
       "en": "Adventure Trips",
       "name": "Abenteuerreisen"
+    },
+    "329": {
+      "en": "Knitting",
+      "name": "Stricken"
+    },
+    "330": {
+      "en": "Pottery",
+      "name": "Töpfern"
+    },
+    "331": {
+      "en": "Woodworking",
+      "name": "Holzbearbeitung"
+    },
+    "332": {
+      "en": "Origami",
+      "name": "Origami",
+      "note": "unverändert"
+    },
+    "333": {
+      "en": "DIY",
+      "name": "DIY",
+      "note": "unverändert"
+    },
+    "334": {
+      "en": "Dog Training",
+      "name": "Hundetraining"
+    },
+    "335": {
+      "en": "Cat Behavior",
+      "name": "Katzenverhalten"
+    },
+    "337": {
+      "en": "Pet Photography",
+      "name": "Haustierfotografie"
+    },
+    "338": {
+      "en": "Animal Rescue",
+      "name": "Tierrettung"
+    },
+    "457": {
+      "en": "Crochet",
+      "name": "Häkeln"
+    },
+    "458": {
+      "en": "Embroidery",
+      "name": "Sticken"
+    },
+    "459": {
+      "en": "Sewing & Dressmaking",
+      "name": "Nähen & Schneidern"
+    },
+    "460": {
+      "en": "Calligraphy & Hand Lettering",
+      "name": "Kalligrafie & Handlettering"
+    },
+    "461": {
+      "en": "3D Printing & Maker Projects",
+      "name": "3D-Druck & Maker-Projekte"
+    },
+    "462": {
+      "en": "Model Building & Miniatures",
+      "name": "Modellbau & Miniaturen"
+    },
+    "463": {
+      "en": "Lego & Brick Building",
+      "name": "Lego & Klemmbausteine"
+    },
+    "464": {
+      "en": "Soap & Candle Making",
+      "name": "Seifen- & Kerzenherstellung"
     },
     "471": {
       "en": "Animal Shelter Volunteering",
@@ -739,6 +876,104 @@
       "en": "Civic Engagement",
       "name": "Bürgerschaftliches Engagement"
     },
+    "828": {
+      "en": "Bookbinding",
+      "name": "Buchbinden"
+    },
+    "829": {
+      "en": "Ceramics",
+      "name": "Keramik"
+    },
+    "830": {
+      "en": "Jewelry Making",
+      "name": "Schmuckherstellung"
+    },
+    "831": {
+      "en": "Leathercraft",
+      "name": "Lederhandwerk"
+    },
+    "832": {
+      "en": "Macrame",
+      "name": "Makramee"
+    },
+    "833": {
+      "en": "Miniature Painting",
+      "name": "Miniaturmalerei"
+    },
+    "834": {
+      "en": "Quilting",
+      "name": "Quilten"
+    },
+    "835": {
+      "en": "Resin Art",
+      "name": "Epoxidharz-Design"
+    },
+    "836": {
+      "en": "Upcycling",
+      "name": "Upcycling",
+      "note": "unverändert"
+    },
+    "837": {
+      "en": "Wood Carving",
+      "name": "Holzschnitzen"
+    },
+    "838": {
+      "en": "Academic Research",
+      "name": "Wissenschaftliche Forschung"
+    },
+    "839": {
+      "en": "Curriculum Design",
+      "name": "Lehrplangestaltung"
+    },
+    "840": {
+      "en": "Instructional Design",
+      "name": "Instruktionsdesign"
+    },
+    "841": {
+      "en": "Language Learning",
+      "name": "Sprachenlernen"
+    },
+    "842": {
+      "en": "Mentoring",
+      "name": "Mentoring",
+      "note": "unverändert"
+    },
+    "843": {
+      "en": "Science Communication",
+      "name": "Wissenschaftskommunikation"
+    },
+    "844": {
+      "en": "Teaching",
+      "name": "Unterrichten"
+    },
+    "845": {
+      "en": "Tutoring",
+      "name": "Nachhilfe"
+    },
+    "846": {
+      "en": "Critical Thinking",
+      "name": "Kritisches Denken"
+    },
+    "847": {
+      "en": "Debate",
+      "name": "Debattieren"
+    },
+    "848": {
+      "en": "Facilitation",
+      "name": "Moderation"
+    },
+    "849": {
+      "en": "Leadership",
+      "name": "Führung"
+    },
+    "850": {
+      "en": "Negotiation",
+      "name": "Verhandeln"
+    },
+    "851": {
+      "en": "Workshop Design",
+      "name": "Workshop-Design"
+    },
     "873": {
       "en": "Civic Tech",
       "name": "Civic Tech",
@@ -898,6 +1133,19 @@
     "908": {
       "en": "Stress Management",
       "name": "Stressmanagement"
+    },
+    "909": {
+      "en": "Crafting",
+      "name": "Basteln & Handarbeit"
+    },
+    "910": {
+      "en": "Education",
+      "name": "Bildung"
+    },
+    "911": {
+      "en": "Soft Skills",
+      "name": "Soft Skills",
+      "note": "unverändert"
     }
   },
   "categories": {
