@@ -5,6 +5,7 @@ const { generateToken } = require("../utils/jwtUtils");
 const { setAuthCookie, clearAuthCookie } = require("../utils/authCookie");
 const emailService = require("../services/emailService");
 const db = require("../config/database");
+const { AUTH_ERROR_CODES } = require("../config/authErrors");
 const { resolveLocationData } = require("../utils/geocodingUtil");
 const { verifyTurnstileToken } = require("../utils/turnstileVerify");
 const {
@@ -167,6 +168,7 @@ const authController = {
         if (!turnstile_token) {
           return res.status(400).json({
             success: false,
+            code: AUTH_ERROR_CODES.CAPTCHA_REQUIRED,
             message: "CAPTCHA verification is required",
           });
         }
@@ -183,6 +185,7 @@ const authController = {
 
           return res.status(400).json({
             success: false,
+            code: AUTH_ERROR_CODES.CAPTCHA_FAILED,
             message: "CAPTCHA verification failed. Please try again.",
           });
         }
@@ -201,6 +204,7 @@ const authController = {
       if (existingUserByUsername) {
         return res.status(400).json({
           success: false,
+          code: AUTH_ERROR_CODES.USERNAME_TAKEN,
           message: "User with this username already exists",
         });
       }
@@ -295,6 +299,7 @@ const authController = {
         if (constraint === "users_username_unique_ci") {
           return res.status(400).json({
             success: false,
+            code: AUTH_ERROR_CODES.USERNAME_TAKEN,
             message: "User with this username already exists",
           });
         }
@@ -360,6 +365,7 @@ const authController = {
       if (!token) {
         return res.status(400).json({
           success: false,
+          code: AUTH_ERROR_CODES.VERIFICATION_TOKEN_INVALID,
           message: "Verification token is required",
         });
       }
@@ -376,6 +382,7 @@ const authController = {
       if (result.rows.length === 0) {
         return res.status(400).json({
           success: false,
+          code: AUTH_ERROR_CODES.VERIFICATION_TOKEN_INVALID,
           message: "Invalid or expired verification token",
         });
       }
@@ -504,6 +511,7 @@ const authController = {
       if (!user) {
         return res.status(401).json({
           success: false,
+          code: AUTH_ERROR_CODES.INVALID_CREDENTIALS,
           message: INVALID_LOGIN_MESSAGE,
         });
       }
@@ -516,6 +524,7 @@ const authController = {
       if (!isValidPassword) {
         return res.status(401).json({
           success: false,
+          code: AUTH_ERROR_CODES.INVALID_CREDENTIALS,
           message: INVALID_LOGIN_MESSAGE,
         });
       }
@@ -524,6 +533,7 @@ const authController = {
       if (!user.email_verified) {
         return res.status(403).json({
           success: false,
+          code: AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED,
           message: "Please verify your email before logging in. Check your inbox for the verification link — it expires 24 hours after registration.",
           requiresVerification: true,
         });
@@ -755,6 +765,7 @@ const authController = {
 
         return res.status(400).json({
           success: false,
+          code: AUTH_ERROR_CODES.RESET_TOKEN_INVALID,
           message: "Invalid or expired reset token",
         });
       }
@@ -837,6 +848,7 @@ const authController = {
       if (!isValid) {
         return res.status(401).json({
           success: false,
+          code: AUTH_ERROR_CODES.PASSWORD_INCORRECT,
           message: "Current password is incorrect",
         });
       }
@@ -849,6 +861,7 @@ const authController = {
       if (isSameAsCurrent) {
         return res.status(400).json({
           success: false,
+          code: AUTH_ERROR_CODES.PASSWORD_UNCHANGED,
           message: "New password must be different from your current password",
         });
       }
@@ -941,6 +954,7 @@ const authController = {
       if (!isValid) {
         return res.status(401).json({
           success: false,
+          code: AUTH_ERROR_CODES.PASSWORD_INCORRECT,
           message: "Current password is incorrect",
         });
       }
@@ -948,6 +962,7 @@ const authController = {
       if (newEmail.toLowerCase() === result.rows[0].email.toLowerCase()) {
         return res.status(400).json({
           success: false,
+          code: AUTH_ERROR_CODES.EMAIL_UNCHANGED,
           message: "New email must be different from your current email",
         });
       }
@@ -973,6 +988,7 @@ const authController = {
       if (emailCheck.rows.length > 0) {
         return res.status(409).json({
           success: false,
+          code: AUTH_ERROR_CODES.EMAIL_IN_USE,
           message: "This email address is already in use or pending verification",
         });
       }
@@ -1049,6 +1065,7 @@ const authController = {
       if (!token) {
         return res.status(400).json({
           success: false,
+          code: AUTH_ERROR_CODES.EMAIL_CHANGE_TOKEN_INVALID,
           message: "Verification token is required",
         });
       }
@@ -1065,6 +1082,7 @@ const authController = {
       if (pendingResult.rows.length === 0) {
         return res.status(400).json({
           success: false,
+          code: AUTH_ERROR_CODES.EMAIL_CHANGE_TOKEN_INVALID,
           message: "Invalid or expired email change token",
         });
       }
@@ -1093,6 +1111,7 @@ const authController = {
 
         return res.status(409).json({
           success: false,
+          code: AUTH_ERROR_CODES.EMAIL_IN_USE,
           message: "This email address is already in use",
         });
       }
@@ -1123,6 +1142,7 @@ const authController = {
       if (error.code === "23505") {
         return res.status(409).json({
           success: false,
+          code: AUTH_ERROR_CODES.EMAIL_IN_USE,
           message: "This email address is already in use",
         });
       }

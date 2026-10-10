@@ -1,5 +1,6 @@
 const rateLimit = require("express-rate-limit");
 const { CONTACT_ERROR_CODES } = require("../config/contactErrors");
+const { AUTH_ERROR_CODES } = require("../config/authErrors");
 
 /**
  * `code` is optional and additive: a limiter that passes one lets the frontend
@@ -29,12 +30,14 @@ const authLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
   max: 8,
   message: "Too many attempts. Please try again in 15 minutes.",
+  code: AUTH_ERROR_CODES.RATE_LIMITED,
 });
 
 const registerLimiter = createRateLimiter({
   windowMs: 60 * 60 * 1000,
   max: 10,
   message: "Too many registration attempts. Please try again later.",
+  code: AUTH_ERROR_CODES.RATE_LIMITED,
 });
 
 // Authenticated account changes (change-email / change-password). Kept separate
@@ -45,6 +48,7 @@ const accountChangeLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
   max: 15,
   message: "Too many account-change attempts. Please try again in 15 minutes.",
+  code: AUTH_ERROR_CODES.RATE_LIMITED,
 });
 
 const usernameAvailabilityLimiter = createRateLimiter({
