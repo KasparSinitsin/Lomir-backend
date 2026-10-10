@@ -1,6 +1,28 @@
 {
   "language": "de",
-  "tags": {},
+  "tags": {
+    "324": {
+      "en": "Backpacking",
+      "name": "Backpacking",
+      "note": "unverändert"
+    },
+    "325": {
+      "en": "City Tours",
+      "name": "Stadtführungen"
+    },
+    "326": {
+      "en": "Travel Blogging",
+      "name": "Reiseblogging"
+    },
+    "327": {
+      "en": "Cultural Exchange",
+      "name": "Kulturaustausch"
+    },
+    "328": {
+      "en": "Adventure Trips",
+      "name": "Abenteuerreisen"
+    }
+  },
   "categories": {
     "1": {
       "en": "Business",
