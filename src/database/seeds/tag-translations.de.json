@@ -1,6 +1,118 @@
 {
   "language": "de",
   "tags": {
+    "1": {
+      "en": "Software Development",
+      "name": "Softwareentwicklung"
+    },
+    "151": {
+      "en": "JavaScript",
+      "name": "JavaScript",
+      "note": "unverändert"
+    },
+    "152": {
+      "en": "React",
+      "name": "React",
+      "note": "unverändert"
+    },
+    "153": {
+      "en": "Node.js",
+      "name": "Node.js",
+      "note": "unverändert"
+    },
+    "155": {
+      "en": "Python",
+      "name": "Python",
+      "note": "unverändert"
+    },
+    "156": {
+      "en": "Mobile Development",
+      "name": "Mobile Entwicklung"
+    },
+    "158": {
+      "en": "DevOps",
+      "name": "DevOps",
+      "note": "unverändert"
+    },
+    "160": {
+      "en": "GraphQL",
+      "name": "GraphQL",
+      "note": "unverändert"
+    },
+    "167": {
+      "en": "AI/ML",
+      "name": "KI/ML"
+    },
+    "168": {
+      "en": "IoT",
+      "name": "IoT",
+      "note": "unverändert"
+    },
+    "193": {
+      "en": "Hardware",
+      "name": "Hardware",
+      "note": "unverändert"
+    },
+    "194": {
+      "en": "Web Development",
+      "name": "Webentwicklung"
+    },
+    "203": {
+      "en": "Java",
+      "name": "Java",
+      "note": "unverändert"
+    },
+    "204": {
+      "en": "C++",
+      "name": "C++",
+      "note": "unverändert"
+    },
+    "205": {
+      "en": "Angular",
+      "name": "Angular",
+      "note": "unverändert"
+    },
+    "206": {
+      "en": "HTML/CSS",
+      "name": "HTML/CSS",
+      "note": "unverändert"
+    },
+    "256": {
+      "en": "Front-end Development",
+      "name": "Frontend-Entwicklung"
+    },
+    "259": {
+      "en": "Database Management",
+      "name": "Datenbankverwaltung"
+    },
+    "260": {
+      "en": "3D Printing",
+      "name": "3D-Druck"
+    },
+    "261": {
+      "en": "Arduino Projects",
+      "name": "Arduino-Projekte"
+    },
+    "262": {
+      "en": "Electronics Repair",
+      "name": "Elektronikreparatur"
+    },
+    "263": {
+      "en": "Robotics",
+      "name": "Robotik"
+    },
+    "293": {
+      "en": "Hardware & Engineering",
+      "name": "Hardware & Ingenieurwesen"
+    },
+    "294": {
+      "en": "AI & Data Science",
+      "name": "KI & Data Science"
+    },
+    "297": {
+      "en": "Technology & Development",
+      "name": "Technologie & Entwicklung"
+    },
     "324": {
       "en": "Backpacking",
       "name": "Backpacking",
@@ -21,6 +133,104 @@
     "328": {
       "en": "Adventure Trips",
       "name": "Abenteuerreisen"
+    },
+    "882": {
+      "en": "Business Intelligence",
+      "name": "Business Intelligence",
+      "note": "unverändert"
+    },
+    "883": {
+      "en": "Data Analysis",
+      "name": "Datenanalyse"
+    },
+    "884": {
+      "en": "Data Engineering",
+      "name": "Data Engineering",
+      "note": "unverändert"
+    },
+    "885": {
+      "en": "Data Visualization",
+      "name": "Datenvisualisierung"
+    },
+    "886": {
+      "en": "ETL",
+      "name": "ETL",
+      "note": "unverändert"
+    },
+    "887": {
+      "en": "Machine Learning",
+      "name": "Maschinelles Lernen"
+    },
+    "888": {
+      "en": "Power BI",
+      "name": "Power BI",
+      "note": "unverändert"
+    },
+    "889": {
+      "en": "Tableau",
+      "name": "Tableau",
+      "note": "unverändert"
+    },
+    "890": {
+      "en": "CI/CD",
+      "name": "CI/CD",
+      "note": "unverändert"
+    },
+    "891": {
+      "en": "Cloud Computing",
+      "name": "Cloud-Computing"
+    },
+    "892": {
+      "en": "Docker",
+      "name": "Docker",
+      "note": "unverändert"
+    },
+    "893": {
+      "en": "Express.js",
+      "name": "Express.js",
+      "note": "unverändert"
+    },
+    "894": {
+      "en": "Game Development",
+      "name": "Spieleentwicklung"
+    },
+    "895": {
+      "en": "Git",
+      "name": "Git",
+      "note": "unverändert"
+    },
+    "896": {
+      "en": "Next.js",
+      "name": "Next.js",
+      "note": "unverändert"
+    },
+    "897": {
+      "en": "REST APIs",
+      "name": "REST-APIs"
+    },
+    "898": {
+      "en": "SQL",
+      "name": "SQL",
+      "note": "unverändert"
+    },
+    "899": {
+      "en": "Tailwind CSS",
+      "name": "Tailwind CSS",
+      "note": "unverändert"
+    },
+    "900": {
+      "en": "Testing & QA",
+      "name": "Testing & QA",
+      "note": "unverändert"
+    },
+    "901": {
+      "en": "TypeScript",
+      "name": "TypeScript",
+      "note": "unverändert"
+    },
+    "902": {
+      "en": "Unit Testing",
+      "name": "Unit-Tests"
     }
   },
   "categories": {
