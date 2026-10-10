@@ -448,6 +448,9 @@ const getUserBadges = async (req, res) => {
         ba.team_id,
         ba.custom_team_name,
         ba.project_name,
+        -- the id lets the client show the focus area in the set language; it
+        -- keeps using the stored name to match and group
+        ba.tag_id,
         tag.name AS tag_name,
         tag.category AS tag_category,
         COALESCE(t.name, ba.custom_team_name) AS team_name,
