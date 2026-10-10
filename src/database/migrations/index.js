@@ -67,6 +67,7 @@ const addTeamIdsToClipboardProseDms = require(
 );
 const mergeLegacyTags = require("./merge_legacy_tags");
 const createTagCategoryTables = require("./create_tag_category_tables");
+const createTagTranslationTables = require("./create_tag_translation_tables");
 
 const runMigrations = async () => {
   try {
@@ -145,6 +146,10 @@ const runMigrations = async () => {
     // so each category text exists once (item 11). Additive: the text columns stay.
     // Dry run: deletion-audit/76.
     await createTagCategoryTables();
+
+    // The empty tables for the translated tag names (item 11). Needs the category tables
+    // above. The German names arrive through scripts/import-tag-translations.js.
+    await createTagTranslationTables();
 
     // Team ids into the quoted team of the legacy 📋 prose DMs (item 35).
     // Needs the item-35 frontend parser live. Dry run: deletion-audit/63.

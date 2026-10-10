@@ -9,6 +9,7 @@
     "test": "node --test",
     "migrate": "node migrate.js",
     "seed": "node seed.js",
+    "import:tag-translations": "node scripts/import-tag-translations.js",
     "backup": "./scripts/backup-db.sh",
     "backup:status": "./scripts/backup-db.sh --status",
     "backup:open": "open \"${LOMIR_BACKUP_DIR:-$HOME/LomirBackups}\"",
