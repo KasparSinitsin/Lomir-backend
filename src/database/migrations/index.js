@@ -66,6 +66,7 @@ const addTeamIdsToClipboardProseDms = require(
   "./add_team_ids_to_clipboard_prose_dms"
 );
 const mergeLegacyTags = require("./merge_legacy_tags");
+const createTagCategoryTables = require("./create_tag_category_tables");
 
 const runMigrations = async () => {
   try {
@@ -139,6 +140,11 @@ const runMigrations = async () => {
     // deleted (item 11). Refuses, and rolls back, if anything else still points at
     // them. Dry run: deletion-audit/71 and 72.
     await mergeLegacyTags();
+
+    // Ids for the tag categories and supercategories; moves the stray "Social Impact" tag 21
+    // so each category text exists once (item 11). Additive: the text columns stay.
+    // Dry run: deletion-audit/76.
+    await createTagCategoryTables();
 
     // Team ids into the quoted team of the legacy 📋 prose DMs (item 35).
     // Needs the item-35 frontend parser live. Dry run: deletion-audit/63.
