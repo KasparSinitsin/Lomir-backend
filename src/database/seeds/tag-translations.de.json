@@ -1,6 +1,335 @@
 {
   "language": "de",
   "tags": {},
-  "categories": {},
-  "supercategories": {}
+  "categories": {
+    "1": {
+      "en": "Business",
+      "name": "Business",
+      "note": "unverändert"
+    },
+    "2": {
+      "en": "Business & Entrepreneurship",
+      "name": "Wirtschaft & Unternehmertum"
+    },
+    "3": {
+      "en": "Finance",
+      "name": "Finanzen"
+    },
+    "4": {
+      "en": "Marketing",
+      "name": "Marketing",
+      "note": "unverändert"
+    },
+    "5": {
+      "en": "Product Management & Strategy",
+      "name": "Produktmanagement & Strategie"
+    },
+    "6": {
+      "en": "Project Types",
+      "name": "Projektarten"
+    },
+    "7": {
+      "en": "Arts & Crafts",
+      "name": "Kunst & Kunsthandwerk"
+    },
+    "8": {
+      "en": "Crafts & DIY",
+      "name": "Handwerk & DIY"
+    },
+    "9": {
+      "en": "Creative Arts",
+      "name": "Kreative Künste"
+    },
+    "10": {
+      "en": "Design & Collaboration Tools",
+      "name": "Design- & Kollaborationstools"
+    },
+    "11": {
+      "en": "Digital & UX Design",
+      "name": "Digital- & UX-Design"
+    },
+    "12": {
+      "en": "Instruments",
+      "name": "Instrumente"
+    },
+    "13": {
+      "en": "Music",
+      "name": "Musik"
+    },
+    "14": {
+      "en": "Performance Arts",
+      "name": "Darstellende Künste"
+    },
+    "15": {
+      "en": "Production",
+      "name": "Produktion"
+    },
+    "16": {
+      "en": "Visual Arts",
+      "name": "Bildende Kunst"
+    },
+    "17": {
+      "en": "Vocal",
+      "name": "Gesang"
+    },
+    "18": {
+      "en": "Writing & Literature",
+      "name": "Schreiben & Literatur"
+    },
+    "19": {
+      "en": "Crafting",
+      "name": "Basteln & Handarbeit"
+    },
+    "20": {
+      "en": "African Languages",
+      "name": "Afrikanische Sprachen"
+    },
+    "21": {
+      "en": "Asian Languages",
+      "name": "Asiatische Sprachen"
+    },
+    "22": {
+      "en": "Balkan Languages",
+      "name": "Balkansprachen"
+    },
+    "23": {
+      "en": "Baltic Languages",
+      "name": "Baltische Sprachen"
+    },
+    "24": {
+      "en": "European Languages",
+      "name": "Europäische Sprachen"
+    },
+    "25": {
+      "en": "Languages",
+      "name": "Sprachen"
+    },
+    "26": {
+      "en": "Middle Eastern Languages",
+      "name": "Nahöstliche Sprachen"
+    },
+    "27": {
+      "en": "Nordic Languages",
+      "name": "Nordische Sprachen"
+    },
+    "28": {
+      "en": "Uralic Languages",
+      "name": "Uralische Sprachen"
+    },
+    "29": {
+      "en": "Class",
+      "name": "Kurse"
+    },
+    "30": {
+      "en": "Education",
+      "name": "Bildung"
+    },
+    "31": {
+      "en": "Natural Sciences",
+      "name": "Naturwissenschaften"
+    },
+    "32": {
+      "en": "Science & Learning",
+      "name": "Wissenschaft & Lernen"
+    },
+    "33": {
+      "en": "Social Sciences",
+      "name": "Sozialwissenschaften"
+    },
+    "34": {
+      "en": "Soft Skills",
+      "name": "Soft Skills",
+      "note": "unverändert"
+    },
+    "35": {
+      "en": "Tandem",
+      "name": "Tandem",
+      "note": "unverändert"
+    },
+    "36": {
+      "en": "Board Games",
+      "name": "Brettspiele"
+    },
+    "37": {
+      "en": "Games",
+      "name": "Spiele"
+    },
+    "38": {
+      "en": "Hangouts",
+      "name": "Treffen & Ausgehen"
+    },
+    "39": {
+      "en": "Popular Games",
+      "name": "Beliebte Spiele"
+    },
+    "40": {
+      "en": "Video & Computer Games",
+      "name": "Video- & Computerspiele"
+    },
+    "41": {
+      "en": "Hiking & Trekking",
+      "name": "Wandern & Trekking"
+    },
+    "42": {
+      "en": "Outdoor Activities",
+      "name": "Outdoor-Aktivitäten"
+    },
+    "43": {
+      "en": "Water Sports",
+      "name": "Wassersport"
+    },
+    "44": {
+      "en": "Pet Care",
+      "name": "Haustierpflege"
+    },
+    "45": {
+      "en": "Civic Engagement",
+      "name": "Bürgerschaftliches Engagement"
+    },
+    "46": {
+      "en": "Social Activities",
+      "name": "Soziales Engagement"
+    },
+    "47": {
+      "en": "Social Impact",
+      "name": "Soziale Wirkung"
+    },
+    "48": {
+      "en": "Dance & Movement",
+      "name": "Tanz & Bewegung"
+    },
+    "49": {
+      "en": "Individual Sports",
+      "name": "Einzelsportarten"
+    },
+    "50": {
+      "en": "Martial Arts & Combat Sports",
+      "name": "Kampfkunst & Kampfsport"
+    },
+    "51": {
+      "en": "Racquet & Paddle Sports",
+      "name": "Schläger- & Paddelsport"
+    },
+    "52": {
+      "en": "Sports",
+      "name": "Sport"
+    },
+    "53": {
+      "en": "Sports & Fitness",
+      "name": "Sport & Fitness"
+    },
+    "54": {
+      "en": "Strength & Conditioning",
+      "name": "Kraft- & Konditionstraining"
+    },
+    "55": {
+      "en": "Team Sports",
+      "name": "Mannschaftssport"
+    },
+    "56": {
+      "en": "Winter Sports",
+      "name": "Wintersport"
+    },
+    "57": {
+      "en": "AI & Data Science",
+      "name": "KI & Data Science"
+    },
+    "58": {
+      "en": "Hardware & Engineering",
+      "name": "Hardware & Ingenieurwesen"
+    },
+    "59": {
+      "en": "Software Development",
+      "name": "Softwareentwicklung"
+    },
+    "60": {
+      "en": "Technology & Development",
+      "name": "Technologie & Entwicklung"
+    },
+    "61": {
+      "en": "Travels",
+      "name": "Reisen"
+    },
+    "62": {
+      "en": "Food & Cooking",
+      "name": "Essen & Kochen"
+    },
+    "63": {
+      "en": "Food & Drinks",
+      "name": "Essen & Trinken"
+    },
+    "64": {
+      "en": "Health & Wellness",
+      "name": "Gesundheit & Wellness"
+    },
+    "65": {
+      "en": "Lifestyle",
+      "name": "Lifestyle",
+      "note": "unverändert"
+    },
+    "66": {
+      "en": "Mindfulness",
+      "name": "Achtsamkeit"
+    },
+    "67": {
+      "en": "Wellness & Lifestyle",
+      "name": "Wellness & Lifestyle",
+      "note": "unverändert"
+    }
+  },
+  "supercategories": {
+    "1": {
+      "en": "Business & Entrepreneurship",
+      "name": "Wirtschaft & Unternehmertum"
+    },
+    "2": {
+      "en": "Creative Arts & Design",
+      "name": "Kreative Künste & Design"
+    },
+    "3": {
+      "en": "Hobbies & Crafts",
+      "name": "Hobbys & Handarbeit"
+    },
+    "4": {
+      "en": "Languages",
+      "name": "Sprachen"
+    },
+    "5": {
+      "en": "Learning, Knowledge & Personal Growth",
+      "name": "Lernen, Wissen & Persönlichkeitsentwicklung"
+    },
+    "6": {
+      "en": "Leisure",
+      "name": "Freizeit"
+    },
+    "7": {
+      "en": "Outdoor & Adventure",
+      "name": "Outdoor & Abenteuer"
+    },
+    "8": {
+      "en": "Pets",
+      "name": "Haustiere"
+    },
+    "9": {
+      "en": "Social, Community & Volunteering",
+      "name": "Soziales, Gemeinschaft & Ehrenamt"
+    },
+    "10": {
+      "en": "Sports & Fitness",
+      "name": "Sport & Fitness"
+    },
+    "11": {
+      "en": "Technology & Development",
+      "name": "Technologie & Entwicklung"
+    },
+    "12": {
+      "en": "Travels",
+      "name": "Reisen"
+    },
+    "13": {
+      "en": "Wellness & Lifestyle",
+      "name": "Wellness & Lifestyle",
+      "note": "unverändert"
+    }
+  }
 }
