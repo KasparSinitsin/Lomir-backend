@@ -5,6 +5,10 @@
       "en": "Software Development",
       "name": "Softwareentwicklung"
     },
+    "13": {
+      "en": "Outdoor Activities",
+      "name": "Outdoor-Aktivitäten"
+    },
     "14": {
       "en": "Languages",
       "name": "Sprachen"
@@ -70,6 +74,27 @@
     "36": {
       "en": "Coffee & Café Hopping",
       "name": "Kaffee & Café-Hopping"
+    },
+    "38": {
+      "en": "Hiking",
+      "name": "Wandern"
+    },
+    "39": {
+      "en": "Camping",
+      "name": "Camping",
+      "note": "unverändert"
+    },
+    "40": {
+      "en": "Nature Photography",
+      "name": "Naturfotografie"
+    },
+    "41": {
+      "en": "Kayaking & Water Sports",
+      "name": "Kajakfahren & Wassersport"
+    },
+    "42": {
+      "en": "Climbing & Bouldering",
+      "name": "Klettern & Bouldern"
     },
     "48": {
       "en": "Home Gardening & Plants",
@@ -533,6 +558,18 @@
       "en": "Seminars",
       "name": "Seminare"
     },
+    "321": {
+      "en": "Wildlife Watching",
+      "name": "Wildtierbeobachtung"
+    },
+    "322": {
+      "en": "Gardening",
+      "name": "Gärtnern"
+    },
+    "323": {
+      "en": "Stargazing",
+      "name": "Sternbeobachtung"
+    },
     "324": {
       "en": "Backpacking",
       "name": "Backpacking",
@@ -592,6 +629,66 @@
       "en": "Animal Rescue",
       "name": "Tierrettung"
     },
+    "339": {
+      "en": "Board Games",
+      "name": "Brettspiele"
+    },
+    "340": {
+      "en": "Card Games",
+      "name": "Kartenspiele"
+    },
+    "341": {
+      "en": "Puzzle Solving",
+      "name": "Puzzeln & Rätsel"
+    },
+    "342": {
+      "en": "Tabletop RPG",
+      "name": "Tabletop-Rollenspiel"
+    },
+    "344": {
+      "en": "Movie Nights",
+      "name": "Filmabende"
+    },
+    "345": {
+      "en": "Picnics",
+      "name": "Picknicks"
+    },
+    "346": {
+      "en": "Game Nights",
+      "name": "Spieleabende"
+    },
+    "347": {
+      "en": "Coffee Meetups",
+      "name": "Kaffeetreffen"
+    },
+    "348": {
+      "en": "Theater Outings",
+      "name": "Theaterbesuche"
+    },
+    "366": {
+      "en": "Kayaking",
+      "name": "Kajakfahren"
+    },
+    "367": {
+      "en": "Stand-Up Paddling (SUP)",
+      "name": "Stand-up-Paddling (SUP)"
+    },
+    "368": {
+      "en": "Trail Hiking",
+      "name": "Trailwandern"
+    },
+    "404": {
+      "en": "Hiking & Trekking",
+      "name": "Wandern & Trekking"
+    },
+    "405": {
+      "en": "Water Sports",
+      "name": "Wassersport"
+    },
+    "425": {
+      "en": "Video & Computer Games",
+      "name": "Video- & Computerspiele"
+    },
     "457": {
       "en": "Crochet",
       "name": "Häkeln"
@@ -623,6 +720,30 @@
     "464": {
       "en": "Soap & Candle Making",
       "name": "Seifen- & Kerzenherstellung"
+    },
+    "465": {
+      "en": "Karaoke Nights",
+      "name": "Karaokeabende"
+    },
+    "466": {
+      "en": "Pub Quiz Nights",
+      "name": "Kneipenquiz-Abende"
+    },
+    "467": {
+      "en": "Escape Room Visits",
+      "name": "Escape-Room-Besuche"
+    },
+    "468": {
+      "en": "Theme Park Visits",
+      "name": "Freizeitparkbesuche"
+    },
+    "469": {
+      "en": "Festival & Concert Outings",
+      "name": "Festival- & Konzertbesuche"
+    },
+    "470": {
+      "en": "Bar Hopping & Nightlife",
+      "name": "Kneipentour & Nachtleben"
     },
     "471": {
       "en": "Animal Shelter Volunteering",
@@ -974,6 +1095,65 @@
       "en": "Workshop Design",
       "name": "Workshop-Design"
     },
+    "852": {
+      "en": "Dungeons & Dragons",
+      "name": "Dungeons & Dragons",
+      "note": "unverändert"
+    },
+    "853": {
+      "en": "Game Mastering",
+      "name": "Spielleitung"
+    },
+    "861": {
+      "en": "Birdwatching",
+      "name": "Vogelbeobachtung"
+    },
+    "862": {
+      "en": "Bushcraft",
+      "name": "Bushcraft",
+      "note": "unverändert"
+    },
+    "863": {
+      "en": "Foraging",
+      "name": "Wildkräuter & Pilze sammeln"
+    },
+    "864": {
+      "en": "Geocaching",
+      "name": "Geocaching",
+      "note": "unverändert"
+    },
+    "865": {
+      "en": "Orienteering",
+      "name": "Orientierungslauf"
+    },
+    "866": {
+      "en": "Survival Skills",
+      "name": "Survival-Training"
+    },
+    "867": {
+      "en": "Canoeing",
+      "name": "Kanufahren"
+    },
+    "868": {
+      "en": "Rowing",
+      "name": "Rudern"
+    },
+    "869": {
+      "en": "Sailing",
+      "name": "Segeln"
+    },
+    "870": {
+      "en": "Scuba Diving",
+      "name": "Tauchen"
+    },
+    "871": {
+      "en": "Snorkeling",
+      "name": "Schnorcheln"
+    },
+    "872": {
+      "en": "Windsurfing",
+      "name": "Windsurfen"
+    },
     "873": {
       "en": "Civic Tech",
       "name": "Civic Tech",
@@ -1146,6 +1326,10 @@
       "en": "Soft Skills",
       "name": "Soft Skills",
       "note": "unverändert"
+    },
+    "912": {
+      "en": "Games",
+      "name": "Spiele"
     }
   },
   "categories": {
