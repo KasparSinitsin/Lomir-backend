@@ -5,6 +5,262 @@
       "en": "Software Development",
       "name": "Softwareentwicklung"
     },
+    "14": {
+      "en": "Languages",
+      "name": "Sprachen"
+    },
+    "15": {
+      "en": "European Languages",
+      "name": "Europäische Sprachen"
+    },
+    "16": {
+      "en": "Asian Languages",
+      "name": "Asiatische Sprachen"
+    },
+    "63": {
+      "en": "English",
+      "name": "Englisch"
+    },
+    "64": {
+      "en": "Spanish",
+      "name": "Spanisch"
+    },
+    "65": {
+      "en": "Portuguese",
+      "name": "Portugiesisch"
+    },
+    "66": {
+      "en": "French",
+      "name": "Französisch"
+    },
+    "67": {
+      "en": "German",
+      "name": "Deutsch"
+    },
+    "68": {
+      "en": "Italian",
+      "name": "Italienisch"
+    },
+    "69": {
+      "en": "Russian",
+      "name": "Russisch"
+    },
+    "70": {
+      "en": "Ukrainian",
+      "name": "Ukrainisch"
+    },
+    "71": {
+      "en": "Polish",
+      "name": "Polnisch"
+    },
+    "72": {
+      "en": "Dutch",
+      "name": "Niederländisch"
+    },
+    "73": {
+      "en": "Romanian",
+      "name": "Rumänisch"
+    },
+    "74": {
+      "en": "Greek",
+      "name": "Griechisch"
+    },
+    "75": {
+      "en": "Hungarian",
+      "name": "Ungarisch"
+    },
+    "76": {
+      "en": "Czech",
+      "name": "Tschechisch"
+    },
+    "77": {
+      "en": "Swedish",
+      "name": "Schwedisch"
+    },
+    "78": {
+      "en": "Danish",
+      "name": "Dänisch"
+    },
+    "79": {
+      "en": "Norwegian",
+      "name": "Norwegisch"
+    },
+    "80": {
+      "en": "Mandarin Chinese",
+      "name": "Mandarin-Chinesisch"
+    },
+    "81": {
+      "en": "Hindi",
+      "name": "Hindi",
+      "note": "unverändert"
+    },
+    "82": {
+      "en": "Bengali",
+      "name": "Bengalisch"
+    },
+    "83": {
+      "en": "Japanese",
+      "name": "Japanisch"
+    },
+    "84": {
+      "en": "Korean",
+      "name": "Koreanisch"
+    },
+    "85": {
+      "en": "Vietnamese",
+      "name": "Vietnamesisch"
+    },
+    "86": {
+      "en": "Thai",
+      "name": "Thai",
+      "note": "unverändert"
+    },
+    "87": {
+      "en": "Indonesian",
+      "name": "Indonesisch"
+    },
+    "88": {
+      "en": "Malay",
+      "name": "Malaiisch"
+    },
+    "89": {
+      "en": "Punjabi",
+      "name": "Punjabi",
+      "note": "unverändert"
+    },
+    "90": {
+      "en": "Urdu",
+      "name": "Urdu",
+      "note": "unverändert"
+    },
+    "91": {
+      "en": "Marathi",
+      "name": "Marathi",
+      "note": "unverändert"
+    },
+    "92": {
+      "en": "Gujarati",
+      "name": "Gujarati",
+      "note": "unverändert"
+    },
+    "93": {
+      "en": "Telugu",
+      "name": "Telugu",
+      "note": "unverändert"
+    },
+    "94": {
+      "en": "Tamil",
+      "name": "Tamil",
+      "note": "unverändert"
+    },
+    "95": {
+      "en": "Kannada",
+      "name": "Kannada",
+      "note": "unverändert"
+    },
+    "96": {
+      "en": "Malayalam",
+      "name": "Malayalam",
+      "note": "unverändert"
+    },
+    "97": {
+      "en": "Javanese",
+      "name": "Javanisch"
+    },
+    "98": {
+      "en": "Filipino / Tagalog",
+      "name": "Filipino / Tagalog",
+      "note": "unverändert"
+    },
+    "99": {
+      "en": "Burmese (Myanmar)",
+      "name": "Burmesisch (Myanmar)"
+    },
+    "100": {
+      "en": "Arabic",
+      "name": "Arabisch"
+    },
+    "101": {
+      "en": "Persian (Farsi)",
+      "name": "Persisch (Farsi)"
+    },
+    "102": {
+      "en": "Turkish",
+      "name": "Türkisch"
+    },
+    "103": {
+      "en": "Kurdish",
+      "name": "Kurdisch"
+    },
+    "104": {
+      "en": "Hebrew",
+      "name": "Hebräisch"
+    },
+    "105": {
+      "en": "Pashto",
+      "name": "Paschtu"
+    },
+    "106": {
+      "en": "Azerbaijani",
+      "name": "Aserbaidschanisch"
+    },
+    "107": {
+      "en": "Swahili",
+      "name": "Swahili",
+      "note": "unverändert"
+    },
+    "108": {
+      "en": "Hausa",
+      "name": "Hausa",
+      "note": "unverändert"
+    },
+    "109": {
+      "en": "Yoruba",
+      "name": "Yoruba",
+      "note": "unverändert"
+    },
+    "110": {
+      "en": "Amharic",
+      "name": "Amharisch"
+    },
+    "111": {
+      "en": "Somali",
+      "name": "Somali",
+      "note": "unverändert"
+    },
+    "112": {
+      "en": "Zulu",
+      "name": "Zulu",
+      "note": "unverändert"
+    },
+    "113": {
+      "en": "Finnish",
+      "name": "Finnisch"
+    },
+    "114": {
+      "en": "Icelandic",
+      "name": "Isländisch"
+    },
+    "115": {
+      "en": "Lithuanian",
+      "name": "Litauisch"
+    },
+    "116": {
+      "en": "Latvian",
+      "name": "Lettisch"
+    },
+    "117": {
+      "en": "Estonian",
+      "name": "Estnisch"
+    },
+    "118": {
+      "en": "Serbian",
+      "name": "Serbisch"
+    },
+    "119": {
+      "en": "Croatian",
+      "name": "Kroatisch"
+    },
     "151": {
       "en": "JavaScript",
       "name": "JavaScript",
