@@ -5,6 +5,50 @@
       "en": "Software Development",
       "name": "Softwareentwicklung"
     },
+    "2": {
+      "en": "Visual Arts",
+      "name": "Bildende Kunst"
+    },
+    "3": {
+      "en": "Performance Arts",
+      "name": "Darstellende Künste"
+    },
+    "4": {
+      "en": "Writing & Literature",
+      "name": "Schreiben & Literatur"
+    },
+    "5": {
+      "en": "Crafts & DIY",
+      "name": "Handwerk & DIY"
+    },
+    "6": {
+      "en": "Music",
+      "name": "Musik"
+    },
+    "7": {
+      "en": "Instruments",
+      "name": "Instrumente"
+    },
+    "8": {
+      "en": "Vocal",
+      "name": "Gesang"
+    },
+    "9": {
+      "en": "Production",
+      "name": "Produktion"
+    },
+    "10": {
+      "en": "Sports",
+      "name": "Sport"
+    },
+    "11": {
+      "en": "Team Sports",
+      "name": "Mannschaftssport"
+    },
+    "12": {
+      "en": "Individual Sports",
+      "name": "Einzelsportarten"
+    },
     "13": {
       "en": "Outdoor Activities",
       "name": "Outdoor-Aktivitäten"
@@ -68,6 +112,14 @@
       "en": "Social Sciences",
       "name": "Sozialwissenschaften"
     },
+    "28": {
+      "en": "Creative Arts",
+      "name": "Kreative Künste"
+    },
+    "29": {
+      "en": "Sports & Fitness",
+      "name": "Sport & Fitness"
+    },
     "30": {
       "en": "Business & Entrepreneurship",
       "name": "Wirtschaft & Unternehmertum"
@@ -97,6 +149,10 @@
       "en": "Coffee & Café Hopping",
       "name": "Kaffee & Café-Hopping"
     },
+    "37": {
+      "en": "Food Photography & Blogging",
+      "name": "Food-Fotografie & Blogging"
+    },
     "38": {
       "en": "Hiking",
       "name": "Wandern"
@@ -117,6 +173,22 @@
     "42": {
       "en": "Climbing & Bouldering",
       "name": "Klettern & Bouldern"
+    },
+    "43": {
+      "en": "Sketching & Illustration",
+      "name": "Skizzieren & Illustration"
+    },
+    "44": {
+      "en": "Handmade Crafts & Knitting",
+      "name": "Handarbeit & Stricken"
+    },
+    "46": {
+      "en": "Instrument Practice",
+      "name": "Instrument üben"
+    },
+    "47": {
+      "en": "Creative Writing & Storytelling",
+      "name": "Kreatives Schreiben & Geschichtenerzählen"
     },
     "48": {
       "en": "Home Gardening & Plants",
@@ -422,9 +494,142 @@
       "en": "Croatian",
       "name": "Kroatisch"
     },
+    "120": {
+      "en": "Volleyball",
+      "name": "Volleyball",
+      "note": "unverändert"
+    },
+    "121": {
+      "en": "Beach Volleyball",
+      "name": "Beachvolleyball"
+    },
+    "122": {
+      "en": "Handball",
+      "name": "Handball",
+      "note": "unverändert"
+    },
+    "123": {
+      "en": "Rugby",
+      "name": "Rugby",
+      "note": "unverändert"
+    },
+    "124": {
+      "en": "American Football",
+      "name": "American Football",
+      "note": "unverändert"
+    },
+    "125": {
+      "en": "Field Hockey",
+      "name": "Feldhockey"
+    },
+    "126": {
+      "en": "Ice Hockey",
+      "name": "Eishockey"
+    },
+    "127": {
+      "en": "Baseball",
+      "name": "Baseball",
+      "note": "unverändert"
+    },
+    "128": {
+      "en": "Softball",
+      "name": "Softball",
+      "note": "unverändert"
+    },
+    "129": {
+      "en": "Ultimate Frisbee",
+      "name": "Ultimate Frisbee",
+      "note": "unverändert"
+    },
+    "130": {
+      "en": "Floorball",
+      "name": "Floorball",
+      "note": "unverändert"
+    },
+    "131": {
+      "en": "Futsal",
+      "name": "Futsal",
+      "note": "unverändert"
+    },
+    "132": {
+      "en": "Running / Jogging",
+      "name": "Laufen / Joggen"
+    },
+    "133": {
+      "en": "Trail Running",
+      "name": "Trailrunning"
+    },
+    "134": {
+      "en": "Road Cycling",
+      "name": "Rennradfahren"
+    },
+    "135": {
+      "en": "Mountain Biking",
+      "name": "Mountainbiken"
+    },
+    "136": {
+      "en": "Swimming",
+      "name": "Schwimmen"
+    },
+    "137": {
+      "en": "Open Water Swimming",
+      "name": "Freiwasserschwimmen"
+    },
+    "138": {
+      "en": "Badminton",
+      "name": "Badminton",
+      "note": "unverändert"
+    },
+    "139": {
+      "en": "Table Tennis",
+      "name": "Tischtennis"
+    },
+    "140": {
+      "en": "Squash",
+      "name": "Squash",
+      "note": "unverändert"
+    },
+    "141": {
+      "en": "Boxing",
+      "name": "Boxen"
+    },
+    "142": {
+      "en": "Kickboxing",
+      "name": "Kickboxen"
+    },
+    "143": {
+      "en": "Muay Thai",
+      "name": "Muay Thai",
+      "note": "unverändert"
+    },
+    "144": {
+      "en": "Judo",
+      "name": "Judo",
+      "note": "unverändert"
+    },
+    "145": {
+      "en": "Karate",
+      "name": "Karate",
+      "note": "unverändert"
+    },
+    "146": {
+      "en": "Taekwondo",
+      "name": "Taekwondo",
+      "note": "unverändert"
+    },
+    "147": {
+      "en": "Triathlon",
+      "name": "Triathlon",
+      "note": "unverändert"
+    },
     "148": {
       "en": "Sauna",
       "name": "Sauna",
+      "note": "unverändert"
+    },
+    "149": {
+      "en": "Pilates",
+      "name": "Pilates",
       "note": "unverändert"
     },
     "150": {
@@ -480,6 +685,22 @@
       "name": "IoT",
       "note": "unverändert"
     },
+    "173": {
+      "en": "Art",
+      "name": "Kunst"
+    },
+    "175": {
+      "en": "Photography",
+      "name": "Fotografie"
+    },
+    "177": {
+      "en": "Reading",
+      "name": "Lesen"
+    },
+    "178": {
+      "en": "Writing",
+      "name": "Schreiben"
+    },
     "193": {
       "en": "Hardware",
       "name": "Hardware",
@@ -488,6 +709,26 @@
     "194": {
       "en": "Web Development",
       "name": "Webentwicklung"
+    },
+    "197": {
+      "en": "Painting",
+      "name": "Malerei"
+    },
+    "198": {
+      "en": "Digital Illustration",
+      "name": "Digitale Illustration"
+    },
+    "199": {
+      "en": "Sculpture",
+      "name": "Bildhauerei"
+    },
+    "200": {
+      "en": "Acting",
+      "name": "Schauspielerei"
+    },
+    "201": {
+      "en": "Dance",
+      "name": "Tanz"
     },
     "203": {
       "en": "Java",
@@ -508,6 +749,18 @@
       "en": "HTML/CSS",
       "name": "HTML/CSS",
       "note": "unverändert"
+    },
+    "232": {
+      "en": "Content Creation",
+      "name": "Content-Erstellung"
+    },
+    "254": {
+      "en": "Improv Comedy",
+      "name": "Impro-Comedy"
+    },
+    "255": {
+      "en": "Ballet",
+      "name": "Ballett"
     },
     "256": {
       "en": "Front-end Development",
@@ -533,6 +786,28 @@
       "en": "Robotics",
       "name": "Robotik"
     },
+    "264": {
+      "en": "Music Band",
+      "name": "Musikband"
+    },
+    "265": {
+      "en": "Music Production",
+      "name": "Musikproduktion"
+    },
+    "266": {
+      "en": "Singing",
+      "name": "Singen"
+    },
+    "267": {
+      "en": "Songwriting",
+      "name": "Songwriting",
+      "note": "unverändert"
+    },
+    "268": {
+      "en": "DJing",
+      "name": "DJing",
+      "note": "unverändert"
+    },
     "293": {
       "en": "Hardware & Engineering",
       "name": "Hardware & Ingenieurwesen"
@@ -545,10 +820,46 @@
       "en": "Technology & Development",
       "name": "Technologie & Entwicklung"
     },
+    "299": {
+      "en": "Strength Training",
+      "name": "Krafttraining"
+    },
     "300": {
       "en": "Yoga",
       "name": "Yoga",
       "note": "unverändert"
+    },
+    "301": {
+      "en": "Running",
+      "name": "Laufen"
+    },
+    "302": {
+      "en": "Cardio",
+      "name": "Cardio",
+      "note": "unverändert"
+    },
+    "303": {
+      "en": "Workout",
+      "name": "Workout",
+      "note": "unverändert"
+    },
+    "304": {
+      "en": "Soccer",
+      "name": "Fußball"
+    },
+    "305": {
+      "en": "Basketball",
+      "name": "Basketball",
+      "note": "unverändert"
+    },
+    "306": {
+      "en": "Tennis",
+      "name": "Tennis",
+      "note": "unverändert"
+    },
+    "307": {
+      "en": "Martial Arts",
+      "name": "Kampfkunst"
     },
     "309": {
       "en": "Language Exchange",
@@ -672,6 +983,10 @@
       "en": "Tabletop RPG",
       "name": "Tabletop-Rollenspiel"
     },
+    "343": {
+      "en": "Online Coops",
+      "name": "Online-Coop-Games"
+    },
     "344": {
       "en": "Movie Nights",
       "name": "Filmabende"
@@ -692,6 +1007,83 @@
       "en": "Theater Outings",
       "name": "Theaterbesuche"
     },
+    "349": {
+      "en": "Water Polo",
+      "name": "Wasserball"
+    },
+    "350": {
+      "en": "Cricket",
+      "name": "Cricket",
+      "note": "unverändert"
+    },
+    "351": {
+      "en": "Lacrosse",
+      "name": "Lacrosse",
+      "note": "unverändert"
+    },
+    "352": {
+      "en": "Dodgeball",
+      "name": "Dodgeball",
+      "note": "unverändert"
+    },
+    "353": {
+      "en": "Flag Football",
+      "name": "Flag Football",
+      "note": "unverändert"
+    },
+    "354": {
+      "en": "Archery",
+      "name": "Bogenschießen"
+    },
+    "355": {
+      "en": "Fencing",
+      "name": "Fechten"
+    },
+    "356": {
+      "en": "Pole Dancing / Pole Fitness",
+      "name": "Poledance / Pole Fitness"
+    },
+    "357": {
+      "en": "Inline Skating / Rollerblading",
+      "name": "Inlineskaten / Rollerbladen"
+    },
+    "358": {
+      "en": "Calisthenics",
+      "name": "Calisthenics",
+      "note": "unverändert"
+    },
+    "359": {
+      "en": "Skipping Rope / Jump Rope",
+      "name": "Seilspringen"
+    },
+    "360": {
+      "en": "Nordic Walking",
+      "name": "Nordic Walking",
+      "note": "unverändert"
+    },
+    "361": {
+      "en": "Golf",
+      "name": "Golf",
+      "note": "unverändert"
+    },
+    "362": {
+      "en": "CrossFit",
+      "name": "CrossFit",
+      "note": "unverändert"
+    },
+    "363": {
+      "en": "Zumba",
+      "name": "Zumba",
+      "note": "unverändert"
+    },
+    "364": {
+      "en": "Stretching / Mobility Training",
+      "name": "Dehnen / Beweglichkeitstraining"
+    },
+    "365": {
+      "en": "Functional Training",
+      "name": "Funktionelles Training"
+    },
     "366": {
       "en": "Kayaking",
       "name": "Kajakfahren"
@@ -704,6 +1096,158 @@
       "en": "Trail Hiking",
       "name": "Trailwandern"
     },
+    "369": {
+      "en": "Martial Arts & Combat Sports",
+      "name": "Kampfkunst & Kampfsport"
+    },
+    "370": {
+      "en": "Dance & Movement",
+      "name": "Tanz & Bewegung"
+    },
+    "371": {
+      "en": "Winter Sports",
+      "name": "Wintersport"
+    },
+    "372": {
+      "en": "Racquet & Paddle Sports",
+      "name": "Schläger- & Paddelsport"
+    },
+    "373": {
+      "en": "Strength & Conditioning",
+      "name": "Kraft- & Konditionstraining"
+    },
+    "374": {
+      "en": "Brazilian Jiu-Jitsu (BJJ)",
+      "name": "Brasilianisches Jiu-Jitsu (BJJ)"
+    },
+    "375": {
+      "en": "Wrestling",
+      "name": "Ringen"
+    },
+    "376": {
+      "en": "Mixed Martial Arts (MMA)",
+      "name": "Mixed Martial Arts (MMA)",
+      "note": "unverändert"
+    },
+    "377": {
+      "en": "Aikido",
+      "name": "Aikido",
+      "note": "unverändert"
+    },
+    "378": {
+      "en": "Kendo",
+      "name": "Kendo",
+      "note": "unverändert"
+    },
+    "379": {
+      "en": "Capoeira",
+      "name": "Capoeira",
+      "note": "unverändert"
+    },
+    "380": {
+      "en": "Krav Maga",
+      "name": "Krav Maga",
+      "note": "unverändert"
+    },
+    "381": {
+      "en": "Contemporary Dance",
+      "name": "Zeitgenössischer Tanz"
+    },
+    "382": {
+      "en": "Hip-Hop Dance",
+      "name": "Hip-Hop-Tanz"
+    },
+    "383": {
+      "en": "Jazz Dance",
+      "name": "Jazztanz"
+    },
+    "384": {
+      "en": "Latin Dance / Salsa",
+      "name": "Lateinamerikanischer Tanz / Salsa"
+    },
+    "385": {
+      "en": "Ballroom Dancing",
+      "name": "Gesellschaftstanz"
+    },
+    "386": {
+      "en": "Street Dance",
+      "name": "Streetdance"
+    },
+    "387": {
+      "en": "Folk Dance",
+      "name": "Volkstanz"
+    },
+    "388": {
+      "en": "Alpine Skiing",
+      "name": "Alpines Skifahren"
+    },
+    "389": {
+      "en": "Snowboarding",
+      "name": "Snowboarden"
+    },
+    "390": {
+      "en": "Cross-Country Skiing",
+      "name": "Skilanglauf"
+    },
+    "391": {
+      "en": "Ski Touring",
+      "name": "Skitouren"
+    },
+    "392": {
+      "en": "Snowshoeing",
+      "name": "Schneeschuhwandern"
+    },
+    "393": {
+      "en": "Ice Skating",
+      "name": "Eislaufen"
+    },
+    "394": {
+      "en": "Padel",
+      "name": "Padel",
+      "note": "unverändert"
+    },
+    "395": {
+      "en": "Pickleball",
+      "name": "Pickleball",
+      "note": "unverändert"
+    },
+    "396": {
+      "en": "Beach Tennis",
+      "name": "Beach Tennis",
+      "note": "unverändert"
+    },
+    "397": {
+      "en": "Platform Tennis",
+      "name": "Platform Tennis",
+      "note": "unverändert"
+    },
+    "398": {
+      "en": "Powerlifting",
+      "name": "Powerlifting",
+      "note": "unverändert"
+    },
+    "399": {
+      "en": "Olympic Weightlifting",
+      "name": "Olympisches Gewichtheben"
+    },
+    "400": {
+      "en": "Bodybuilding",
+      "name": "Bodybuilding",
+      "note": "unverändert"
+    },
+    "401": {
+      "en": "High-Intensity Interval Training (HIIT)",
+      "name": "High-Intensity Interval Training (HIIT)",
+      "note": "unverändert"
+    },
+    "402": {
+      "en": "Circuit Training",
+      "name": "Zirkeltraining"
+    },
+    "403": {
+      "en": "Kettlebell Training",
+      "name": "Kettlebell-Training"
+    },
     "404": {
       "en": "Hiking & Trekking",
       "name": "Wandern & Trekking"
@@ -712,9 +1256,219 @@
       "en": "Water Sports",
       "name": "Wassersport"
     },
+    "406": {
+      "en": "Chess",
+      "name": "Schach"
+    },
+    "408": {
+      "en": "Checkers / Draughts",
+      "name": "Dame"
+    },
+    "409": {
+      "en": "Go (Weiqi)",
+      "name": "Go (Weiqi)",
+      "note": "unverändert"
+    },
+    "410": {
+      "en": "Shogi",
+      "name": "Shogi",
+      "note": "unverändert"
+    },
+    "411": {
+      "en": "Xiangqi (Chinese Chess)",
+      "name": "Xiangqi (Chinesisches Schach)"
+    },
+    "412": {
+      "en": "Backgammon",
+      "name": "Backgammon",
+      "note": "unverändert"
+    },
+    "413": {
+      "en": "Othello / Reversi",
+      "name": "Othello / Reversi",
+      "note": "unverändert"
+    },
+    "414": {
+      "en": "Catan",
+      "name": "Catan",
+      "note": "unverändert"
+    },
+    "415": {
+      "en": "Carcassonne",
+      "name": "Carcassonne",
+      "note": "unverändert"
+    },
+    "416": {
+      "en": "Risk",
+      "name": "Risk",
+      "note": "unverändert"
+    },
+    "417": {
+      "en": "Azul",
+      "name": "Azul",
+      "note": "unverändert"
+    },
+    "418": {
+      "en": "Splendor",
+      "name": "Splendor",
+      "note": "unverändert"
+    },
+    "419": {
+      "en": "Ticket to Ride",
+      "name": "Ticket to Ride",
+      "note": "unverändert"
+    },
+    "420": {
+      "en": "Codenames",
+      "name": "Codenames",
+      "note": "unverändert"
+    },
+    "421": {
+      "en": "Hanabi",
+      "name": "Hanabi",
+      "note": "unverändert"
+    },
+    "422": {
+      "en": "Pandemic",
+      "name": "Pandemic",
+      "note": "unverändert"
+    },
     "425": {
       "en": "Video & Computer Games",
       "name": "Video- & Computerspiele"
+    },
+    "426": {
+      "en": "PC Gaming",
+      "name": "PC-Spiele"
+    },
+    "427": {
+      "en": "Console Gaming",
+      "name": "Konsolenspiele"
+    },
+    "428": {
+      "en": "Mobile Gaming",
+      "name": "Mobile Gaming",
+      "note": "unverändert"
+    },
+    "429": {
+      "en": "Esports & Competitive Gaming",
+      "name": "E-Sport & Competitive Gaming"
+    },
+    "430": {
+      "en": "Casual Online Gaming",
+      "name": "Casual Gaming (online)"
+    },
+    "431": {
+      "en": "LAN Parties",
+      "name": "LAN-Partys"
+    },
+    "432": {
+      "en": "Retro Gaming",
+      "name": "Retro-Gaming"
+    },
+    "433": {
+      "en": "VR Gaming",
+      "name": "VR-Spiele"
+    },
+    "434": {
+      "en": "Popular Games",
+      "name": "Beliebte Spiele"
+    },
+    "437": {
+      "en": "Minecraft",
+      "name": "Minecraft",
+      "note": "unverändert"
+    },
+    "438": {
+      "en": "Fortnite",
+      "name": "Fortnite",
+      "note": "unverändert"
+    },
+    "439": {
+      "en": "League of Legends",
+      "name": "League of Legends",
+      "note": "unverändert"
+    },
+    "440": {
+      "en": "Valorant",
+      "name": "Valorant",
+      "note": "unverändert"
+    },
+    "441": {
+      "en": "Counter-Strike 2",
+      "name": "Counter-Strike 2",
+      "note": "unverändert"
+    },
+    "442": {
+      "en": "Dota 2",
+      "name": "Dota 2",
+      "note": "unverändert"
+    },
+    "443": {
+      "en": "Rocket League",
+      "name": "Rocket League",
+      "note": "unverändert"
+    },
+    "444": {
+      "en": "EA FC / FIFA",
+      "name": "EA FC / FIFA",
+      "note": "unverändert"
+    },
+    "445": {
+      "en": "Call of Duty",
+      "name": "Call of Duty",
+      "note": "unverändert"
+    },
+    "446": {
+      "en": "Apex Legends",
+      "name": "Apex Legends",
+      "note": "unverändert"
+    },
+    "447": {
+      "en": "Overwatch 2",
+      "name": "Overwatch 2",
+      "note": "unverändert"
+    },
+    "448": {
+      "en": "Elden Ring",
+      "name": "Elden Ring",
+      "note": "unverändert"
+    },
+    "449": {
+      "en": "The Legend of Zelda: Breath of the Wild",
+      "name": "The Legend of Zelda: Breath of the Wild",
+      "note": "unverändert"
+    },
+    "450": {
+      "en": "GTA V / GTA Online",
+      "name": "GTA V / GTA Online",
+      "note": "unverändert"
+    },
+    "451": {
+      "en": "Baldur's Gate 3",
+      "name": "Baldur's Gate 3",
+      "note": "unverändert"
+    },
+    "452": {
+      "en": "FPS (First-Person Shooters)",
+      "name": "FPS (Ego-Shooter)"
+    },
+    "453": {
+      "en": "MOBA (Multiplayer Online Battle Arena)",
+      "name": "MOBA (Multiplayer Online Battle Arena)",
+      "note": "unverändert"
+    },
+    "454": {
+      "en": "RPG (Role-Playing Games)",
+      "name": "RPG (Rollenspiele)"
+    },
+    "455": {
+      "en": "Co-op Games",
+      "name": "Koop-Spiele"
+    },
+    "456": {
+      "en": "Party Games (Video)",
+      "name": "Partyspiele (Video)"
     },
     "457": {
       "en": "Crochet",
@@ -1023,6 +1777,688 @@
       "en": "No-Code / Low-Code Product Building",
       "name": "No-Code- / Low-Code-Produktentwicklung"
     },
+    "546": {
+      "en": "Electric Guitar",
+      "name": "E-Gitarre"
+    },
+    "547": {
+      "en": "Acoustic Guitar",
+      "name": "Akustikgitarre"
+    },
+    "548": {
+      "en": "Bass Guitar",
+      "name": "Bassgitarre"
+    },
+    "549": {
+      "en": "Classical Guitar",
+      "name": "Klassische Gitarre"
+    },
+    "550": {
+      "en": "Ukulele",
+      "name": "Ukulele",
+      "note": "unverändert"
+    },
+    "551": {
+      "en": "Violin",
+      "name": "Violine / Geige"
+    },
+    "552": {
+      "en": "Viola",
+      "name": "Bratsche / Viola"
+    },
+    "553": {
+      "en": "Cello",
+      "name": "Cello",
+      "note": "unverändert"
+    },
+    "554": {
+      "en": "Double Bass",
+      "name": "Kontrabass"
+    },
+    "555": {
+      "en": "Harp",
+      "name": "Harfe"
+    },
+    "556": {
+      "en": "Banjo",
+      "name": "Banjo",
+      "note": "unverändert"
+    },
+    "557": {
+      "en": "Mandolin",
+      "name": "Mandoline"
+    },
+    "558": {
+      "en": "Piano",
+      "name": "Klavier"
+    },
+    "559": {
+      "en": "Keyboard / Synthesizer",
+      "name": "Keyboard / Synthesizer",
+      "note": "unverändert"
+    },
+    "560": {
+      "en": "Organ",
+      "name": "Orgel"
+    },
+    "561": {
+      "en": "Accordion",
+      "name": "Akkordeon"
+    },
+    "562": {
+      "en": "Drums",
+      "name": "Schlagzeug"
+    },
+    "563": {
+      "en": "Percussion",
+      "name": "Percussion",
+      "note": "unverändert"
+    },
+    "564": {
+      "en": "Cajon",
+      "name": "Cajon",
+      "note": "unverändert"
+    },
+    "565": {
+      "en": "Congas & Bongos",
+      "name": "Congas & Bongos",
+      "note": "unverändert"
+    },
+    "566": {
+      "en": "Vibraphone / Marimba",
+      "name": "Vibraphon / Marimba"
+    },
+    "567": {
+      "en": "Saxophone",
+      "name": "Saxophon"
+    },
+    "568": {
+      "en": "Trumpet",
+      "name": "Trompete"
+    },
+    "569": {
+      "en": "Trombone",
+      "name": "Posaune"
+    },
+    "570": {
+      "en": "Flute",
+      "name": "Flöte"
+    },
+    "571": {
+      "en": "Clarinet",
+      "name": "Klarinette"
+    },
+    "572": {
+      "en": "Oboe",
+      "name": "Oboe",
+      "note": "unverändert"
+    },
+    "573": {
+      "en": "Bassoon",
+      "name": "Fagott"
+    },
+    "574": {
+      "en": "French Horn",
+      "name": "Waldhorn"
+    },
+    "575": {
+      "en": "Tuba",
+      "name": "Tuba",
+      "note": "unverändert"
+    },
+    "576": {
+      "en": "Harmonica",
+      "name": "Mundharmonika"
+    },
+    "577": {
+      "en": "Bagpipes",
+      "name": "Dudelsack"
+    },
+    "578": {
+      "en": "Recorder",
+      "name": "Blockflöte"
+    },
+    "579": {
+      "en": "Turntables / DJ Equipment",
+      "name": "Plattenspieler / DJ-Equipment"
+    },
+    "580": {
+      "en": "Theremin",
+      "name": "Theremin",
+      "note": "unverändert"
+    },
+    "581": {
+      "en": "Didgeridoo",
+      "name": "Didgeridoo",
+      "note": "unverändert"
+    },
+    "582": {
+      "en": "Rock",
+      "name": "Rock",
+      "note": "unverändert"
+    },
+    "583": {
+      "en": "Classic Rock",
+      "name": "Classic Rock",
+      "note": "unverändert"
+    },
+    "584": {
+      "en": "Alternative Rock",
+      "name": "Alternative Rock",
+      "note": "unverändert"
+    },
+    "585": {
+      "en": "Indie Rock",
+      "name": "Indie Rock",
+      "note": "unverändert"
+    },
+    "586": {
+      "en": "Progressive Rock",
+      "name": "Progressive Rock",
+      "note": "unverändert"
+    },
+    "587": {
+      "en": "Post-Rock",
+      "name": "Post-Rock",
+      "note": "unverändert"
+    },
+    "588": {
+      "en": "Psychedelic Rock",
+      "name": "Psychedelic Rock",
+      "note": "unverändert"
+    },
+    "589": {
+      "en": "Grunge",
+      "name": "Grunge",
+      "note": "unverändert"
+    },
+    "590": {
+      "en": "Stoner Rock",
+      "name": "Stoner Rock",
+      "note": "unverändert"
+    },
+    "591": {
+      "en": "Garage Rock",
+      "name": "Garage Rock",
+      "note": "unverändert"
+    },
+    "592": {
+      "en": "Surf Rock",
+      "name": "Surf Rock",
+      "note": "unverändert"
+    },
+    "593": {
+      "en": "Hard Rock",
+      "name": "Hard Rock",
+      "note": "unverändert"
+    },
+    "594": {
+      "en": "Soft Rock",
+      "name": "Soft Rock",
+      "note": "unverändert"
+    },
+    "595": {
+      "en": "Punk",
+      "name": "Punk",
+      "note": "unverändert"
+    },
+    "596": {
+      "en": "Pop Punk",
+      "name": "Pop Punk",
+      "note": "unverändert"
+    },
+    "597": {
+      "en": "Post-Punk",
+      "name": "Post-Punk",
+      "note": "unverändert"
+    },
+    "598": {
+      "en": "Hardcore Punk",
+      "name": "Hardcore Punk",
+      "note": "unverändert"
+    },
+    "599": {
+      "en": "Ska Punk",
+      "name": "Ska Punk",
+      "note": "unverändert"
+    },
+    "600": {
+      "en": "Metal",
+      "name": "Metal",
+      "note": "unverändert"
+    },
+    "601": {
+      "en": "Heavy Metal",
+      "name": "Heavy Metal",
+      "note": "unverändert"
+    },
+    "602": {
+      "en": "Thrash Metal",
+      "name": "Thrash Metal",
+      "note": "unverändert"
+    },
+    "603": {
+      "en": "Death Metal",
+      "name": "Death Metal",
+      "note": "unverändert"
+    },
+    "604": {
+      "en": "Melodic Death Metal",
+      "name": "Melodic Death Metal",
+      "note": "unverändert"
+    },
+    "605": {
+      "en": "Black Metal",
+      "name": "Black Metal",
+      "note": "unverändert"
+    },
+    "606": {
+      "en": "Doom Metal",
+      "name": "Doom Metal",
+      "note": "unverändert"
+    },
+    "607": {
+      "en": "Power Metal",
+      "name": "Power Metal",
+      "note": "unverändert"
+    },
+    "608": {
+      "en": "Symphonic Metal",
+      "name": "Symphonic Metal",
+      "note": "unverändert"
+    },
+    "609": {
+      "en": "Progressive Metal",
+      "name": "Progressive Metal",
+      "note": "unverändert"
+    },
+    "610": {
+      "en": "Nu Metal",
+      "name": "Nu Metal",
+      "note": "unverändert"
+    },
+    "611": {
+      "en": "Metalcore",
+      "name": "Metalcore",
+      "note": "unverändert"
+    },
+    "612": {
+      "en": "Deathcore",
+      "name": "Deathcore",
+      "note": "unverändert"
+    },
+    "613": {
+      "en": "Folk Metal",
+      "name": "Folk Metal",
+      "note": "unverändert"
+    },
+    "614": {
+      "en": "Industrial Metal",
+      "name": "Industrial Metal",
+      "note": "unverändert"
+    },
+    "615": {
+      "en": "Sludge Metal",
+      "name": "Sludge Metal",
+      "note": "unverändert"
+    },
+    "616": {
+      "en": "Gothic Metal",
+      "name": "Gothic Metal",
+      "note": "unverändert"
+    },
+    "617": {
+      "en": "Pop",
+      "name": "Pop",
+      "note": "unverändert"
+    },
+    "618": {
+      "en": "Synth-Pop",
+      "name": "Synth-Pop",
+      "note": "unverändert"
+    },
+    "619": {
+      "en": "Indie Pop",
+      "name": "Indie Pop",
+      "note": "unverändert"
+    },
+    "620": {
+      "en": "K-Pop",
+      "name": "K-Pop",
+      "note": "unverändert"
+    },
+    "621": {
+      "en": "Dream Pop",
+      "name": "Dream Pop",
+      "note": "unverändert"
+    },
+    "622": {
+      "en": "Electronic",
+      "name": "Elektronische Musik"
+    },
+    "623": {
+      "en": "House",
+      "name": "House",
+      "note": "unverändert"
+    },
+    "624": {
+      "en": "Techno",
+      "name": "Techno",
+      "note": "unverändert"
+    },
+    "625": {
+      "en": "Drum and Bass",
+      "name": "Drum and Bass",
+      "note": "unverändert"
+    },
+    "626": {
+      "en": "Dubstep",
+      "name": "Dubstep",
+      "note": "unverändert"
+    },
+    "627": {
+      "en": "Trance",
+      "name": "Trance",
+      "note": "unverändert"
+    },
+    "628": {
+      "en": "Ambient",
+      "name": "Ambient",
+      "note": "unverändert"
+    },
+    "629": {
+      "en": "IDM",
+      "name": "IDM",
+      "note": "unverändert"
+    },
+    "630": {
+      "en": "Synthwave",
+      "name": "Synthwave",
+      "note": "unverändert"
+    },
+    "631": {
+      "en": "Chillwave",
+      "name": "Chillwave",
+      "note": "unverändert"
+    },
+    "632": {
+      "en": "Lo-Fi",
+      "name": "Lo-Fi",
+      "note": "unverändert"
+    },
+    "633": {
+      "en": "Hip-Hop",
+      "name": "Hip-Hop",
+      "note": "unverändert"
+    },
+    "634": {
+      "en": "Rap",
+      "name": "Rap",
+      "note": "unverändert"
+    },
+    "635": {
+      "en": "R&B",
+      "name": "R&B",
+      "note": "unverändert"
+    },
+    "636": {
+      "en": "Soul",
+      "name": "Soul",
+      "note": "unverändert"
+    },
+    "637": {
+      "en": "Neo-Soul",
+      "name": "Neo-Soul",
+      "note": "unverändert"
+    },
+    "638": {
+      "en": "Funk",
+      "name": "Funk",
+      "note": "unverändert"
+    },
+    "639": {
+      "en": "Jazz",
+      "name": "Jazz",
+      "note": "unverändert"
+    },
+    "640": {
+      "en": "Blues",
+      "name": "Blues",
+      "note": "unverändert"
+    },
+    "641": {
+      "en": "Swing",
+      "name": "Swing",
+      "note": "unverändert"
+    },
+    "642": {
+      "en": "Bebop",
+      "name": "Bebop",
+      "note": "unverändert"
+    },
+    "643": {
+      "en": "Fusion",
+      "name": "Fusion",
+      "note": "unverändert"
+    },
+    "644": {
+      "en": "Country",
+      "name": "Country",
+      "note": "unverändert"
+    },
+    "645": {
+      "en": "Folk",
+      "name": "Folk",
+      "note": "unverändert"
+    },
+    "646": {
+      "en": "Bluegrass",
+      "name": "Bluegrass",
+      "note": "unverändert"
+    },
+    "647": {
+      "en": "Americana",
+      "name": "Americana",
+      "note": "unverändert"
+    },
+    "648": {
+      "en": "World Music",
+      "name": "Weltmusik"
+    },
+    "649": {
+      "en": "Reggae",
+      "name": "Reggae",
+      "note": "unverändert"
+    },
+    "650": {
+      "en": "Ska",
+      "name": "Ska",
+      "note": "unverändert"
+    },
+    "651": {
+      "en": "Latin",
+      "name": "Latin",
+      "note": "unverändert"
+    },
+    "652": {
+      "en": "Bossa Nova",
+      "name": "Bossa Nova",
+      "note": "unverändert"
+    },
+    "653": {
+      "en": "Afrobeat",
+      "name": "Afrobeat",
+      "note": "unverändert"
+    },
+    "654": {
+      "en": "Flamenco",
+      "name": "Flamenco",
+      "note": "unverändert"
+    },
+    "655": {
+      "en": "Celtic",
+      "name": "Keltische Musik / Celtic"
+    },
+    "656": {
+      "en": "Classical",
+      "name": "Klassik"
+    },
+    "657": {
+      "en": "Orchestral",
+      "name": "Orchestermusik"
+    },
+    "658": {
+      "en": "Chamber Music",
+      "name": "Kammermusik"
+    },
+    "659": {
+      "en": "Opera",
+      "name": "Oper"
+    },
+    "660": {
+      "en": "Experimental",
+      "name": "Experimentelle Musik"
+    },
+    "661": {
+      "en": "Noise",
+      "name": "Noise",
+      "note": "unverändert"
+    },
+    "662": {
+      "en": "Math Rock",
+      "name": "Math Rock",
+      "note": "unverändert"
+    },
+    "663": {
+      "en": "Emo",
+      "name": "Emo",
+      "note": "unverändert"
+    },
+    "664": {
+      "en": "Screamo",
+      "name": "Screamo",
+      "note": "unverändert"
+    },
+    "665": {
+      "en": "Shoegaze",
+      "name": "Shoegaze",
+      "note": "unverändert"
+    },
+    "666": {
+      "en": "New Wave",
+      "name": "New Wave",
+      "note": "unverändert"
+    },
+    "667": {
+      "en": "Britpop",
+      "name": "Britpop",
+      "note": "unverändert"
+    },
+    "668": {
+      "en": "Gospel",
+      "name": "Gospel",
+      "note": "unverändert"
+    },
+    "669": {
+      "en": "Live Performance",
+      "name": "Live-Auftritt"
+    },
+    "670": {
+      "en": "Session Musician",
+      "name": "Session-Musizieren / Studiomusik"
+    },
+    "671": {
+      "en": "Band Management",
+      "name": "Bandmanagement"
+    },
+    "672": {
+      "en": "Music Theory",
+      "name": "Musiktheorie"
+    },
+    "673": {
+      "en": "Music Teaching",
+      "name": "Musikunterricht"
+    },
+    "674": {
+      "en": "Film Scoring",
+      "name": "Filmmusik"
+    },
+    "675": {
+      "en": "Music Composition",
+      "name": "Komposition"
+    },
+    "676": {
+      "en": "Backing Vocals",
+      "name": "Backing Vocals",
+      "note": "unverändert"
+    },
+    "677": {
+      "en": "Beatboxing",
+      "name": "Beatboxen"
+    },
+    "678": {
+      "en": "Choir",
+      "name": "Chor"
+    },
+    "679": {
+      "en": "Rapping / MC",
+      "name": "Rappen / MC"
+    },
+    "680": {
+      "en": "Voice Acting",
+      "name": "Synchronsprechen"
+    },
+    "681": {
+      "en": "Vocal Coaching",
+      "name": "Gesangscoaching"
+    },
+    "682": {
+      "en": "A Cappella",
+      "name": "A cappella"
+    },
+    "683": {
+      "en": "Audio Engineering",
+      "name": "Tontechnik"
+    },
+    "684": {
+      "en": "Mixing",
+      "name": "Mixing",
+      "note": "unverändert"
+    },
+    "685": {
+      "en": "Mastering",
+      "name": "Mastering",
+      "note": "unverändert"
+    },
+    "686": {
+      "en": "Sound Design",
+      "name": "Sounddesign"
+    },
+    "687": {
+      "en": "Recording",
+      "name": "Tonaufnahme"
+    },
+    "688": {
+      "en": "Beat Making",
+      "name": "Beats produzieren"
+    },
+    "689": {
+      "en": "Sampling",
+      "name": "Sampling",
+      "note": "unverändert"
+    },
+    "690": {
+      "en": "Live Sound / FOH",
+      "name": "Live-Sound / FOH"
+    },
+    "691": {
+      "en": "Podcast Production",
+      "name": "Podcast-Produktion"
+    },
+    "692": {
+      "en": "Music Video Production",
+      "name": "Musikvideoproduktion"
+    },
     "693": {
       "en": "A/B Testing",
       "name": "A/B-Tests"
@@ -1193,6 +2629,274 @@
       "en": "Vector Drawing",
       "name": "Vektorgrafik"
     },
+    "732": {
+      "en": "Balalaika",
+      "name": "Balalaika",
+      "note": "unverändert"
+    },
+    "733": {
+      "en": "Bouzouki",
+      "name": "Bouzouki",
+      "note": "unverändert"
+    },
+    "734": {
+      "en": "Contrabassoon",
+      "name": "Kontrafagott"
+    },
+    "735": {
+      "en": "Cornet",
+      "name": "Kornett"
+    },
+    "736": {
+      "en": "Digital Piano",
+      "name": "Digitalpiano"
+    },
+    "737": {
+      "en": "Drum Machine",
+      "name": "Drum Machine",
+      "note": "unverändert"
+    },
+    "738": {
+      "en": "Electric Bass",
+      "name": "E-Bass"
+    },
+    "739": {
+      "en": "English Horn",
+      "name": "Englischhorn"
+    },
+    "740": {
+      "en": "Euphonium",
+      "name": "Euphonium",
+      "note": "unverändert"
+    },
+    "741": {
+      "en": "Flugelhorn",
+      "name": "Flügelhorn"
+    },
+    "742": {
+      "en": "Hang Drum",
+      "name": "Hang Drum",
+      "note": "unverändert"
+    },
+    "743": {
+      "en": "Kalimba",
+      "name": "Kalimba",
+      "note": "unverändert"
+    },
+    "744": {
+      "en": "MIDI Keyboard",
+      "name": "MIDI-Keyboard"
+    },
+    "745": {
+      "en": "Mouth Harp",
+      "name": "Maultrommel"
+    },
+    "746": {
+      "en": "Oud",
+      "name": "Oud",
+      "note": "unverändert"
+    },
+    "747": {
+      "en": "Pan Flute",
+      "name": "Panflöte"
+    },
+    "748": {
+      "en": "Piccolo",
+      "name": "Piccoloflöte"
+    },
+    "749": {
+      "en": "Sampler",
+      "name": "Sampler",
+      "note": "unverändert"
+    },
+    "750": {
+      "en": "Sitar",
+      "name": "Sitar",
+      "note": "unverändert"
+    },
+    "751": {
+      "en": "Steel Drum",
+      "name": "Steeldrum"
+    },
+    "752": {
+      "en": "Tabla",
+      "name": "Tabla",
+      "note": "unverändert"
+    },
+    "753": {
+      "en": "Tin Whistle",
+      "name": "Tin Whistle",
+      "note": "unverändert"
+    },
+    "754": {
+      "en": "Upright Bass",
+      "name": "Kontrabass"
+    },
+    "755": {
+      "en": "Baroque Music",
+      "name": "Barockmusik"
+    },
+    "756": {
+      "en": "Classical Music",
+      "name": "Klassische Musik"
+    },
+    "757": {
+      "en": "Contemporary Classical",
+      "name": "Zeitgenössische Klassik"
+    },
+    "758": {
+      "en": "Deep House",
+      "name": "Deep House",
+      "note": "unverändert"
+    },
+    "759": {
+      "en": "Disco",
+      "name": "Disco",
+      "note": "unverändert"
+    },
+    "760": {
+      "en": "Latin Music",
+      "name": "Lateinamerikanische Musik"
+    },
+    "761": {
+      "en": "Progressive House",
+      "name": "Progressive House",
+      "note": "unverändert"
+    },
+    "762": {
+      "en": "Romantic Music",
+      "name": "Romantische Musik"
+    },
+    "763": {
+      "en": "Salsa",
+      "name": "Salsa",
+      "note": "unverändert"
+    },
+    "764": {
+      "en": "Abstract Art",
+      "name": "Abstrakte Kunst"
+    },
+    "765": {
+      "en": "Acrylic Painting",
+      "name": "Acrylmalerei"
+    },
+    "766": {
+      "en": "Art Restoration",
+      "name": "Kunstrestaurierung"
+    },
+    "767": {
+      "en": "Charcoal Drawing",
+      "name": "Kohlezeichnung"
+    },
+    "768": {
+      "en": "Etching",
+      "name": "Radierung"
+    },
+    "769": {
+      "en": "Figure Drawing",
+      "name": "Figürliches Zeichnen"
+    },
+    "770": {
+      "en": "Gouache",
+      "name": "Gouache",
+      "note": "unverändert"
+    },
+    "771": {
+      "en": "Ink Drawing",
+      "name": "Tuschezeichnung"
+    },
+    "772": {
+      "en": "Landscape Painting",
+      "name": "Landschaftsmalerei"
+    },
+    "773": {
+      "en": "Linocut",
+      "name": "Linolschnitt"
+    },
+    "774": {
+      "en": "Mixed Media Art",
+      "name": "Mixed-Media-Kunst"
+    },
+    "775": {
+      "en": "Oil Painting",
+      "name": "Ölmalerei"
+    },
+    "776": {
+      "en": "Pastel Drawing",
+      "name": "Pastellzeichnung"
+    },
+    "777": {
+      "en": "Portrait Drawing",
+      "name": "Porträtzeichnung"
+    },
+    "778": {
+      "en": "Printmaking",
+      "name": "Druckgrafik"
+    },
+    "779": {
+      "en": "Screen Printing",
+      "name": "Siebdruck"
+    },
+    "780": {
+      "en": "Sketching",
+      "name": "Skizzieren"
+    },
+    "781": {
+      "en": "Vector Illustration",
+      "name": "Vektorillustration"
+    },
+    "782": {
+      "en": "Watercolor Painting",
+      "name": "Aquarellmalerei"
+    },
+    "783": {
+      "en": "Dressage",
+      "name": "Dressurreiten"
+    },
+    "784": {
+      "en": "Endurance Riding",
+      "name": "Distanzreiten"
+    },
+    "785": {
+      "en": "Equestrian Sports",
+      "name": "Reitsport"
+    },
+    "786": {
+      "en": "Eventing",
+      "name": "Vielseitigkeitsreiten"
+    },
+    "787": {
+      "en": "Horse Breeding",
+      "name": "Pferdezucht"
+    },
+    "788": {
+      "en": "Horse Care",
+      "name": "Pferdepflege"
+    },
+    "789": {
+      "en": "Horse Riding",
+      "name": "Reiten"
+    },
+    "790": {
+      "en": "Horse Training",
+      "name": "Pferdetraining"
+    },
+    "791": {
+      "en": "Show Jumping",
+      "name": "Springreiten"
+    },
+    "792": {
+      "en": "Stable Management",
+      "name": "Stallmanagement"
+    },
+    "793": {
+      "en": "Trail Riding",
+      "name": "Geländereiten"
+    },
+    "794": {
+      "en": "Western Riding",
+      "name": "Westernreiten"
+    },
     "795": {
       "en": "Civic Engagement",
       "name": "Bürgerschaftliches Engagement"
@@ -1225,6 +2929,113 @@
     "802": {
       "en": "Public Relations",
       "name": "Öffentlichkeitsarbeit (PR)"
+    },
+    "803": {
+      "en": "Choreography",
+      "name": "Choreografie"
+    },
+    "804": {
+      "en": "Musical Theatre",
+      "name": "Musical"
+    },
+    "805": {
+      "en": "Performance Poetry",
+      "name": "Poetry-Performance / Poetry Slam"
+    },
+    "806": {
+      "en": "Puppetry",
+      "name": "Puppenspiel"
+    },
+    "807": {
+      "en": "Spoken Word",
+      "name": "Spoken Word",
+      "note": "unverändert"
+    },
+    "808": {
+      "en": "Stage Performance",
+      "name": "Bühnenauftritt"
+    },
+    "809": {
+      "en": "Theatre",
+      "name": "Theater"
+    },
+    "810": {
+      "en": "Field Recording",
+      "name": "Field Recording",
+      "note": "unverändert"
+    },
+    "811": {
+      "en": "Foley",
+      "name": "Foley",
+      "note": "unverändert"
+    },
+    "812": {
+      "en": "Live Streaming",
+      "name": "Livestreaming"
+    },
+    "813": {
+      "en": "Podcast Editing",
+      "name": "Podcast-Schnitt"
+    },
+    "814": {
+      "en": "Podcasting",
+      "name": "Podcasting",
+      "note": "unverändert"
+    },
+    "815": {
+      "en": "Art History",
+      "name": "Kunstgeschichte"
+    },
+    "816": {
+      "en": "Collage",
+      "name": "Collage",
+      "note": "unverändert"
+    },
+    "817": {
+      "en": "Blogging",
+      "name": "Bloggen"
+    },
+    "818": {
+      "en": "Copywriting",
+      "name": "Copywriting",
+      "note": "unverändert"
+    },
+    "819": {
+      "en": "Editing",
+      "name": "Lektorat / Redigieren"
+    },
+    "820": {
+      "en": "Essay Writing",
+      "name": "Essayschreiben"
+    },
+    "821": {
+      "en": "Fiction Writing",
+      "name": "Belletristisches Schreiben"
+    },
+    "822": {
+      "en": "Journalism",
+      "name": "Journalismus"
+    },
+    "823": {
+      "en": "Nonfiction Writing",
+      "name": "Sachtexte schreiben"
+    },
+    "824": {
+      "en": "Poetry",
+      "name": "Lyrik"
+    },
+    "825": {
+      "en": "Screenwriting",
+      "name": "Drehbuchschreiben"
+    },
+    "826": {
+      "en": "Translation",
+      "name": "Übersetzen"
+    },
+    "827": {
+      "en": "Worldbuilding",
+      "name": "Worldbuilding",
+      "note": "unverändert"
     },
     "828": {
       "en": "Bookbinding",
@@ -1332,6 +3143,37 @@
     "853": {
       "en": "Game Mastering",
       "name": "Spielleitung"
+    },
+    "854": {
+      "en": "Indie Games",
+      "name": "Indie-Spiele"
+    },
+    "855": {
+      "en": "MMORPGs",
+      "name": "MMORPGs",
+      "note": "unverändert"
+    },
+    "856": {
+      "en": "Simulation Games",
+      "name": "Simulationsspiele"
+    },
+    "857": {
+      "en": "Speedrunning",
+      "name": "Speedrunning",
+      "note": "unverändert"
+    },
+    "858": {
+      "en": "Story-Driven Games",
+      "name": "Story-Spiele"
+    },
+    "859": {
+      "en": "Strategy Video Games",
+      "name": "Strategiespiele"
+    },
+    "860": {
+      "en": "Streaming",
+      "name": "Streaming",
+      "note": "unverändert"
     },
     "861": {
       "en": "Birdwatching",
