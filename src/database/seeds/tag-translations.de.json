@@ -17,6 +17,88 @@
       "en": "Asian Languages",
       "name": "Asiatische Sprachen"
     },
+    "21": {
+      "en": "Social Impact",
+      "name": "Soziale Wirkung"
+    },
+    "22": {
+      "en": "Health & Wellness",
+      "name": "Gesundheit & Wellness"
+    },
+    "23": {
+      "en": "Mindfulness",
+      "name": "Achtsamkeit"
+    },
+    "24": {
+      "en": "Lifestyle",
+      "name": "Lifestyle",
+      "note": "unverändert"
+    },
+    "31": {
+      "en": "Wellness & Lifestyle",
+      "name": "Wellness & Lifestyle",
+      "note": "unverändert"
+    },
+    "32": {
+      "en": "Home Cooking & Meal Prep",
+      "name": "Kochen zu Hause & Meal Prep"
+    },
+    "33": {
+      "en": "French Cuisine & Bistro Culture",
+      "name": "Französische Küche & Bistrokultur"
+    },
+    "34": {
+      "en": "Baking & Patisserie",
+      "name": "Backen & Patisserie"
+    },
+    "35": {
+      "en": "Wine & Cheese Tasting",
+      "name": "Wein- & Käseverkostung"
+    },
+    "36": {
+      "en": "Coffee & Café Hopping",
+      "name": "Kaffee & Café-Hopping"
+    },
+    "48": {
+      "en": "Home Gardening & Plants",
+      "name": "Heimgärtnern & Pflanzen"
+    },
+    "49": {
+      "en": "Mindfulness & Meditation",
+      "name": "Achtsamkeit & Meditation"
+    },
+    "50": {
+      "en": "DIY Home Projects",
+      "name": "DIY-Projekte für zu Hause"
+    },
+    "51": {
+      "en": "Yoga & Mobility",
+      "name": "Yoga & Beweglichkeit"
+    },
+    "52": {
+      "en": "Healthy Home Cooking",
+      "name": "Gesundes Kochen zu Hause"
+    },
+    "53": {
+      "en": "Volunteering & Community Service",
+      "name": "Ehrenamt & Gemeinschaftsdienst"
+    },
+    "54": {
+      "en": "Event Organizing",
+      "name": "Veranstaltungsorganisation"
+    },
+    "55": {
+      "en": "Neighborhood Meetups",
+      "name": "Nachbarschaftstreffen"
+    },
+    "56": {
+      "en": "Charity & Fundraising",
+      "name": "Wohltätigkeit & Fundraising"
+    },
+    "57": {
+      "en": "Sustainability & Eco Projects",
+      "name": "Nachhaltigkeits- & Ökoprojekte"
+    },
     "63": {
       "en": "English",
       "name": "Englisch"
@@ -261,6 +343,16 @@
       "en": "Croatian",
       "name": "Kroatisch"
     },
+    "148": {
+      "en": "Sauna",
+      "name": "Sauna",
+      "note": "unverändert"
+    },
+    "150": {
+      "en": "Meditation",
+      "name": "Meditation",
+      "note": "unverändert"
+    },
     "151": {
       "en": "JavaScript",
       "name": "JavaScript",
@@ -369,6 +461,11 @@
       "en": "Technology & Development",
       "name": "Technologie & Entwicklung"
     },
+    "300": {
+      "en": "Yoga",
+      "name": "Yoga",
+      "note": "unverändert"
+    },
     "324": {
       "en": "Backpacking",
       "name": "Backpacking",
@@ -389,6 +486,63 @@
     "328": {
       "en": "Adventure Trips",
       "name": "Abenteuerreisen"
+    },
+    "471": {
+      "en": "Animal Shelter Volunteering",
+      "name": "Ehrenamt im Tierheim"
+    },
+    "472": {
+      "en": "Food Bank & Community Kitchen",
+      "name": "Tafel & Gemeinschaftsküche"
+    },
+    "473": {
+      "en": "Refugee Support & Integration",
+      "name": "Flüchtlingshilfe & Integration"
+    },
+    "474": {
+      "en": "Mentoring & Tutoring (Volunteering)",
+      "name": "Mentoring & Nachhilfe (Ehrenamt)"
+    },
+    "795": {
+      "en": "Civic Engagement",
+      "name": "Bürgerschaftliches Engagement"
+    },
+    "873": {
+      "en": "Civic Tech",
+      "name": "Civic Tech",
+      "note": "unverändert"
+    },
+    "874": {
+      "en": "Climate Activism",
+      "name": "Klimaaktivismus"
+    },
+    "875": {
+      "en": "Community Organizing",
+      "name": "Gemeinwesenarbeit"
+    },
+    "876": {
+      "en": "Democracy & Participation",
+      "name": "Demokratie & Beteiligung"
+    },
+    "877": {
+      "en": "Human Rights Advocacy",
+      "name": "Einsatz für Menschenrechte"
+    },
+    "878": {
+      "en": "Local Politics",
+      "name": "Kommunalpolitik"
+    },
+    "879": {
+      "en": "Nonprofit Work",
+      "name": "Arbeit in gemeinnützigen Organisationen"
+    },
+    "880": {
+      "en": "Political Science",
+      "name": "Politikwissenschaft"
+    },
+    "881": {
+      "en": "Public Policy",
+      "name": "Politikgestaltung"
     },
     "882": {
       "en": "Business Intelligence",
@@ -487,6 +641,31 @@
     "902": {
       "en": "Unit Testing",
       "name": "Unit-Tests"
+    },
+    "903": {
+      "en": "Breathwork",
+      "name": "Breathwork",
+      "note": "unverändert"
+    },
+    "904": {
+      "en": "Holistic Health",
+      "name": "Ganzheitliche Gesundheit"
+    },
+    "905": {
+      "en": "Mental Health Advocacy",
+      "name": "Einsatz für psychische Gesundheit"
+    },
+    "906": {
+      "en": "Nutrition",
+      "name": "Ernährung"
+    },
+    "907": {
+      "en": "Sleep Health",
+      "name": "Schlafgesundheit"
+    },
+    "908": {
+      "en": "Stress Management",
+      "name": "Stressmanagement"
     }
   },
   "categories": {
