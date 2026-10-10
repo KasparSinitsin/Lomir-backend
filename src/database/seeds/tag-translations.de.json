@@ -21,6 +21,24 @@
       "en": "Asian Languages",
       "name": "Asiatische Sprachen"
     },
+    "17": {
+      "en": "Business",
+      "name": "Business",
+      "note": "unverändert"
+    },
+    "18": {
+      "en": "Project Types",
+      "name": "Projektarten"
+    },
+    "19": {
+      "en": "Marketing",
+      "name": "Marketing",
+      "note": "unverändert"
+    },
+    "20": {
+      "en": "Finance",
+      "name": "Finanzen"
+    },
     "21": {
       "en": "Social Impact",
       "name": "Soziale Wirkung"
@@ -49,6 +67,10 @@
     "27": {
       "en": "Social Sciences",
       "name": "Sozialwissenschaften"
+    },
+    "30": {
+      "en": "Business & Entrepreneurship",
+      "name": "Wirtschaft & Unternehmertum"
     },
     "31": {
       "en": "Wellness & Lifestyle",
@@ -437,6 +459,11 @@
     "158": {
       "en": "DevOps",
       "name": "DevOps",
+      "note": "unverändert"
+    },
+    "159": {
+      "en": "Open Source",
+      "name": "Open Source",
       "note": "unverändert"
     },
     "160": {
@@ -919,6 +946,179 @@
       "name": "Confluence",
       "note": "unverändert"
     },
+    "528": {
+      "en": "Product Management & Strategy",
+      "name": "Produktmanagement & Strategie"
+    },
+    "529": {
+      "en": "Product Management",
+      "name": "Produktmanagement"
+    },
+    "530": {
+      "en": "Product Ownership",
+      "name": "Product Ownership / Produktverantwortung"
+    },
+    "531": {
+      "en": "Product Strategy",
+      "name": "Produktstrategie"
+    },
+    "532": {
+      "en": "Product Discovery",
+      "name": "Product Discovery",
+      "note": "unverändert"
+    },
+    "533": {
+      "en": "Roadmapping & Prioritization",
+      "name": "Roadmapping & Priorisierung"
+    },
+    "534": {
+      "en": "OKRs & Goal Setting",
+      "name": "OKRs & Zielsetzung"
+    },
+    "535": {
+      "en": "Agile Methods",
+      "name": "Agile Methoden"
+    },
+    "536": {
+      "en": "Scrum",
+      "name": "Scrum",
+      "note": "unverändert"
+    },
+    "537": {
+      "en": "Kanban",
+      "name": "Kanban",
+      "note": "unverändert"
+    },
+    "538": {
+      "en": "Design Sprints",
+      "name": "Design Sprints",
+      "note": "unverändert"
+    },
+    "539": {
+      "en": "Lean Startup",
+      "name": "Lean Startup",
+      "note": "unverändert"
+    },
+    "540": {
+      "en": "Growth & Experimentation",
+      "name": "Produktwachstum & -Research"
+    },
+    "541": {
+      "en": "A/B Testing & Experiment Design",
+      "name": "A/B-Tests & Experimentdesign"
+    },
+    "542": {
+      "en": "Stakeholder Management",
+      "name": "Stakeholder-Management"
+    },
+    "543": {
+      "en": "Requirements Engineering & Backlog Management",
+      "name": "Requirements Engineering & Backlog-Management"
+    },
+    "544": {
+      "en": "Technical Product Management",
+      "name": "Technisches Produktmanagement"
+    },
+    "545": {
+      "en": "No-Code / Low-Code Product Building",
+      "name": "No-Code- / Low-Code-Produktentwicklung"
+    },
+    "693": {
+      "en": "A/B Testing",
+      "name": "A/B-Tests"
+    },
+    "694": {
+      "en": "Affiliate Marketing",
+      "name": "Affiliate-Marketing"
+    },
+    "695": {
+      "en": "Brand Marketing",
+      "name": "Markenmarketing"
+    },
+    "696": {
+      "en": "Community Marketing",
+      "name": "Community-Marketing"
+    },
+    "697": {
+      "en": "Content Marketing",
+      "name": "Content-Marketing"
+    },
+    "698": {
+      "en": "Conversion Optimization",
+      "name": "Conversion-Optimierung"
+    },
+    "699": {
+      "en": "Digital Marketing",
+      "name": "Digitales Marketing"
+    },
+    "700": {
+      "en": "Email Marketing",
+      "name": "E-Mail-Marketing"
+    },
+    "701": {
+      "en": "Event Marketing",
+      "name": "Event-Marketing"
+    },
+    "702": {
+      "en": "Field Marketing",
+      "name": "Field-Marketing"
+    },
+    "703": {
+      "en": "Google Ads",
+      "name": "Google Ads",
+      "note": "unverändert"
+    },
+    "704": {
+      "en": "Growth Marketing",
+      "name": "Growth-Marketing"
+    },
+    "705": {
+      "en": "Influencer Marketing",
+      "name": "Influencer-Marketing"
+    },
+    "706": {
+      "en": "Local SEO",
+      "name": "Lokale SEO"
+    },
+    "707": {
+      "en": "Marketing Analytics",
+      "name": "Marketing-Analytics"
+    },
+    "708": {
+      "en": "Meta Ads",
+      "name": "Meta Ads",
+      "note": "unverändert"
+    },
+    "709": {
+      "en": "Partnership Marketing",
+      "name": "Partnerschaftsmarketing"
+    },
+    "710": {
+      "en": "Performance Marketing",
+      "name": "Performance-Marketing"
+    },
+    "711": {
+      "en": "Product Marketing",
+      "name": "Produktmarketing"
+    },
+    "712": {
+      "en": "SEM",
+      "name": "SEM",
+      "note": "unverändert"
+    },
+    "713": {
+      "en": "SEO",
+      "name": "SEO",
+      "note": "unverändert"
+    },
+    "714": {
+      "en": "Social Media Marketing",
+      "name": "Social-Media-Marketing"
+    },
+    "715": {
+      "en": "Technical SEO",
+      "name": "Technische SEO"
+    },
     "716": {
       "en": "Adobe After Effects",
       "name": "Adobe After Effects",
@@ -996,6 +1196,35 @@
     "795": {
       "en": "Civic Engagement",
       "name": "Bürgerschaftliches Engagement"
+    },
+    "796": {
+      "en": "Business Strategy",
+      "name": "Unternehmensstrategie"
+    },
+    "797": {
+      "en": "Operations Management",
+      "name": "Betriebsorganisation"
+    },
+    "798": {
+      "en": "CRM Marketing",
+      "name": "CRM-Marketing"
+    },
+    "799": {
+      "en": "Communications",
+      "name": "Kommunikation"
+    },
+    "800": {
+      "en": "Employer Branding",
+      "name": "Employer Branding",
+      "note": "unverändert"
+    },
+    "801": {
+      "en": "Market Research",
+      "name": "Marktforschung"
+    },
+    "802": {
+      "en": "Public Relations",
+      "name": "Öffentlichkeitsarbeit (PR)"
     },
     "828": {
       "en": "Bookbinding",
