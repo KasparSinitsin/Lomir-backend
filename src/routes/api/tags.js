@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../../config/database');
 const { authenticateToken } = require('../../middlewares/auth');
+const { parseLanguage, loadDictionary } = require('../../utils/tagTranslations');
 
 // GET /api/tags/structured
 router.get('/structured', async (req, res) => {
@@ -70,6 +71,21 @@ router.get('/structured', async (req, res) => {
   } catch (error) {
     console.error('Error fetching structured tags:', error);
     res.status(500).json({ error: 'Failed to fetch structured tags' });
+  }
+});
+
+// GET /api/tags/translations?lang=de
+// The translated names of the taxonomy (tags by id, categories and supercategories by their
+// English text). English, an unknown language or a missing table give empty maps, status 200:
+// the frontend then shows the stored names.
+router.get('/translations', async (req, res) => {
+  try {
+    const dictionary = await loadDictionary(db, parseLanguage(req.query.lang));
+    res.set('Cache-Control', 'public, max-age=300');
+    res.json(dictionary);
+  } catch (error) {
+    console.error('Error fetching tag translations:', error);
+    res.status(500).json({ error: 'Failed to fetch tag translations' });
   }
 });
 
