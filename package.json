@@ -8,6 +8,7 @@
     "dev": "nodemon src/server.js",
     "test": "node --test",
     "migrate": "node migrate.js",
+    "migrate:one": "node scripts/run-migration.js",
     "seed": "node seed.js",
     "import:tag-translations": "node scripts/import-tag-translations.js",
     "backup": "./scripts/backup-db.sh",
