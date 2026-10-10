@@ -77,6 +77,7 @@ test("login returns a generic credential error when the email is unknown", async
   assert.equal(res.statusCode, 401);
   assert.deepEqual(res.body, {
     success: false,
+    code: "INVALID_CREDENTIALS",
     message: "Invalid email or password",
   });
 });
@@ -101,6 +102,7 @@ test("login returns the same generic credential error for a wrong password", asy
   assert.equal(res.statusCode, 401);
   assert.deepEqual(res.body, {
     success: false,
+    code: "INVALID_CREDENTIALS",
     message: "Invalid email or password",
   });
 });
@@ -121,6 +123,7 @@ test("login does not reveal an unverified account when the password is wrong", a
   assert.equal(res.statusCode, 401);
   assert.deepEqual(res.body, {
     success: false,
+    code: "INVALID_CREDENTIALS",
     message: "Invalid email or password",
   });
 });

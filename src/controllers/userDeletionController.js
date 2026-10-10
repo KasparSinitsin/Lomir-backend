@@ -1,4 +1,5 @@
 const db = require("../config/database");
+const { AUTH_ERROR_CODES } = require("../config/authErrors");
 const { idNameToken } = require("../utils/eventNameToken");
 const { DEFAULT_ROLE_NAME } = require("../config/roleDefaults");
 const { pool } = db;
@@ -252,6 +253,7 @@ const deleteUser = async (req, res) => {
     if (!passwordMatches) {
       return rollbackAndRespond(401, {
         success: false,
+        code: AUTH_ERROR_CODES.PASSWORD_INCORRECT,
         message: "Password is incorrect",
       });
     }
@@ -1076,6 +1078,7 @@ const deletionPreview = async (req, res) => {
     if (!passwordMatches) {
       return res.status(401).json({
         success: false,
+        code: AUTH_ERROR_CODES.PASSWORD_INCORRECT,
         message: "Password is incorrect",
       });
     }
