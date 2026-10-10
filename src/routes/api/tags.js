@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../../config/database');
 const { authenticateToken } = require('../../middlewares/auth');
 const { parseLanguage, loadDictionary } = require('../../utils/tagTranslations');
+const { tagRelevanceJoinSQL } = require('../../utils/search/tagNameMatch');
 
 // GET /api/tags/structured
 router.get('/structured', async (req, res) => {
@@ -117,13 +118,16 @@ router.get('/search', async (req, res) => {
   try {
     const query = req.query.query || '';
 
+    // Matches the stored name and every translation; best match first.
     const searchQuery = `
-      SELECT id, name, category, supercategory
-      FROM tags
-      WHERE LOWER(name) LIKE $1
+      SELECT t.id, t.name, t.category, t.supercategory
+      FROM tags t
+      ${tagRelevanceJoinSQL('t', '$1')}
+      WHERE tm.relevance IS NOT NULL
+      ORDER BY tm.relevance ASC, t.name ASC
       LIMIT 20
     `;
-    const result = await db.query(searchQuery, [`%${query.toLowerCase()}%`]);
+    const result = await db.query(searchQuery, [query]);
 
     res.json(result.rows);
   } catch (error) {
@@ -168,16 +172,13 @@ router.get('/suggestions', async (req, res) => {
       SELECT 
         t.id, t.name, t.category, t.supercategory,
         COUNT(ut.user_id) as usage_count,
-        CASE
-          WHEN LOWER(t.name) = LOWER($1) THEN 1
-          WHEN LOWER(t.name) LIKE LOWER($1) || '%' THEN 2
-          ELSE 3
-        END as relevance
+        tm.relevance as relevance
       FROM tags t
+      ${tagRelevanceJoinSQL('t', '$1')}
       LEFT JOIN user_tags ut ON t.id = ut.tag_id
-      WHERE LOWER(t.name) LIKE '%' || LOWER($1) || '%'
+      WHERE tm.relevance IS NOT NULL
       ${excludeIds.length > 0 ? `AND t.id NOT IN (${excludeIds.join(',')})` : ''}
-      GROUP BY t.id, t.name, t.category, t.supercategory
+      GROUP BY t.id, t.name, t.category, t.supercategory, tm.relevance
       ORDER BY relevance ASC, usage_count DESC, t.name ASC
       LIMIT $2
     `;
