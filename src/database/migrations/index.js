@@ -65,6 +65,7 @@ const addTeamIdsToLegacyMarkerDms = require(
 const addTeamIdsToClipboardProseDms = require(
   "./add_team_ids_to_clipboard_prose_dms"
 );
+const mergeLegacyTags = require("./merge_legacy_tags");
 
 const runMigrations = async () => {
   try {
@@ -134,6 +135,11 @@ const runMigrations = async () => {
     // Team ids into slot 1 of the legacy marker DMs whose team still exists and
     // is corroborated beyond its name (item 33). Dry run: deletion-audit/57.
     await addTeamIdsToLegacyMarkerDms();
+    // The four "(legacy)" focus areas are merged into their current versions and
+    // deleted (item 11). Refuses, and rolls back, if anything else still points at
+    // them. Dry run: deletion-audit/71 and 72.
+    await mergeLegacyTags();
+
     // Team ids into the quoted team of the legacy 📋 prose DMs (item 35).
     // Needs the item-35 frontend parser live. Dry run: deletion-audit/63.
     await addTeamIdsToClipboardProseDms();
