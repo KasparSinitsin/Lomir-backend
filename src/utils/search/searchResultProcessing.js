@@ -17,6 +17,7 @@ const {
 const {
   BADGE_NAME_TRANSLATIONS_VALUES_SQL,
 } = require("./badgeNameTranslations");
+const { tagNameMatchSQL } = require("./tagNameMatch");
 
 function computeJaccardOverlap(baseSet, candidateIds) {
   const candidateSet = new Set(
@@ -187,9 +188,9 @@ function appendTeamSearchClause({
     const teamTagConfig = {
       tagColumn: "tag.name",
       existsTemplate:
-        "EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND t2.name ILIKE $PARAM)",
+        `EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND ${tagNameMatchSQL("t2", "$PARAM")})`,
       notExistsTemplate:
-        "NOT EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND t2.name ILIKE $PARAM)",
+        `NOT EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND ${tagNameMatchSQL("t2", "$PARAM")})`,
     };
     const teamSearch = parseBooleanSearch(
       query,
@@ -206,7 +207,7 @@ function appendTeamSearchClause({
             t.name ILIKE $${nextParamIndex} OR
             t.description ILIKE $${nextParamIndex} OR
             t.city ILIKE $${nextParamIndex} OR
-            tag.name ILIKE $${nextParamIndex}
+            ${tagNameMatchSQL("tag", `$${nextParamIndex}`)}
           )
         `;
     teamParams.push(searchTerm);
@@ -256,7 +257,7 @@ const visibleFocusAreaMatchSQL = (param) => `
               FROM user_tags ut2
               JOIN tags t2 ON ut2.tag_id = t2.id
               WHERE ut2.user_id = u.id
-                AND t2.name ILIKE ${param}
+                AND ${tagNameMatchSQL("t2", param)}
                 AND ${visibleFocusAreaCondition({
                   userAlias: "u",
                   tagAlias: "t2",
