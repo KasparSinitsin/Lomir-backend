@@ -503,6 +503,238 @@
       "en": "Mentoring & Tutoring (Volunteering)",
       "name": "Mentoring & Nachhilfe (Ehrenamt)"
     },
+    "493": {
+      "en": "Digital & UX Design",
+      "name": "Digital- & UX-Design"
+    },
+    "494": {
+      "en": "Behavioural Design",
+      "name": "Behavioral Design"
+    },
+    "495": {
+      "en": "Design Thinking",
+      "name": "Design Thinking",
+      "note": "unverändert"
+    },
+    "496": {
+      "en": "Service Design",
+      "name": "Service Design",
+      "note": "unverändert"
+    },
+    "497": {
+      "en": "Usability Evaluation",
+      "name": "Usability-Evaluation"
+    },
+    "498": {
+      "en": "Content Design / UX Writing",
+      "name": "Content-Design / UX-Writing"
+    },
+    "499": {
+      "en": "User Testing",
+      "name": "Nutzertests"
+    },
+    "500": {
+      "en": "Information Architecture (IA)",
+      "name": "Informationsarchitektur (IA)"
+    },
+    "501": {
+      "en": "User Persona Development",
+      "name": "Persona-Entwicklung"
+    },
+    "502": {
+      "en": "Wireframing",
+      "name": "Wireframing",
+      "note": "unverändert"
+    },
+    "503": {
+      "en": "Design Systems & Component Libraries",
+      "name": "Designsysteme & Komponentenbibliotheken"
+    },
+    "504": {
+      "en": "Journey Mapping",
+      "name": "Customer-Journey-Mapping"
+    },
+    "505": {
+      "en": "Prototyping (Figma / XD / Sketch)",
+      "name": "Prototyping (Figma / XD / Sketch)",
+      "note": "unverändert"
+    },
+    "506": {
+      "en": "UX Research",
+      "name": "UX-Research"
+    },
+    "507": {
+      "en": "Product Design (Digital)",
+      "name": "Produktdesign (digital)"
+    },
+    "508": {
+      "en": "UI Design",
+      "name": "UI-Design"
+    },
+    "509": {
+      "en": "Interaction Design",
+      "name": "Interaktionsdesign"
+    },
+    "510": {
+      "en": "Accessibility (a11y) Design",
+      "name": "Barrierefreies Design (a11y)"
+    },
+    "511": {
+      "en": "UX Design",
+      "name": "UX-Design"
+    },
+    "512": {
+      "en": "Design & Collaboration Tools",
+      "name": "Design- & Kollaborationstools"
+    },
+    "513": {
+      "en": "Figma",
+      "name": "Figma",
+      "note": "unverändert"
+    },
+    "514": {
+      "en": "Sketch",
+      "name": "Sketch",
+      "note": "unverändert"
+    },
+    "515": {
+      "en": "Adobe XD",
+      "name": "Adobe XD",
+      "note": "unverändert"
+    },
+    "516": {
+      "en": "Webflow",
+      "name": "Webflow",
+      "note": "unverändert"
+    },
+    "517": {
+      "en": "Framer",
+      "name": "Framer",
+      "note": "unverändert"
+    },
+    "518": {
+      "en": "Miro",
+      "name": "Miro",
+      "note": "unverändert"
+    },
+    "519": {
+      "en": "FigJam",
+      "name": "FigJam",
+      "note": "unverändert"
+    },
+    "520": {
+      "en": "InVision",
+      "name": "InVision",
+      "note": "unverändert"
+    },
+    "521": {
+      "en": "Marvel (Prototyping)",
+      "name": "Marvel (Prototyping)",
+      "note": "unverändert"
+    },
+    "522": {
+      "en": "Maze (User Testing)",
+      "name": "Maze (Nutzertests)"
+    },
+    "523": {
+      "en": "UsabilityHub",
+      "name": "UsabilityHub",
+      "note": "unverändert"
+    },
+    "524": {
+      "en": "Optimal Workshop",
+      "name": "Optimal Workshop",
+      "note": "unverändert"
+    },
+    "525": {
+      "en": "Notion",
+      "name": "Notion",
+      "note": "unverändert"
+    },
+    "526": {
+      "en": "Jira",
+      "name": "Jira",
+      "note": "unverändert"
+    },
+    "527": {
+      "en": "Confluence",
+      "name": "Confluence",
+      "note": "unverändert"
+    },
+    "716": {
+      "en": "Adobe After Effects",
+      "name": "Adobe After Effects",
+      "note": "unverändert"
+    },
+    "717": {
+      "en": "Adobe Illustrator",
+      "name": "Adobe Illustrator",
+      "note": "unverändert"
+    },
+    "718": {
+      "en": "Adobe InDesign",
+      "name": "Adobe InDesign",
+      "note": "unverändert"
+    },
+    "719": {
+      "en": "Adobe Photoshop",
+      "name": "Adobe Photoshop",
+      "note": "unverändert"
+    },
+    "720": {
+      "en": "Adobe Premiere",
+      "name": "Adobe Premiere",
+      "note": "unverändert"
+    },
+    "721": {
+      "en": "Affinity Designer",
+      "name": "Affinity Designer",
+      "note": "unverändert"
+    },
+    "722": {
+      "en": "Brand Identity Design",
+      "name": "Brand-Identity-Design"
+    },
+    "723": {
+      "en": "Drawing",
+      "name": "Zeichnen"
+    },
+    "724": {
+      "en": "Editorial Design",
+      "name": "Editorial Design",
+      "note": "unverändert"
+    },
+    "725": {
+      "en": "Graphic Design",
+      "name": "Grafikdesign"
+    },
+    "726": {
+      "en": "Illustration",
+      "name": "Illustration",
+      "note": "unverändert"
+    },
+    "727": {
+      "en": "Logo Design",
+      "name": "Logodesign"
+    },
+    "728": {
+      "en": "Motion Design",
+      "name": "Motion Design",
+      "note": "unverändert"
+    },
+    "729": {
+      "en": "Packaging Design",
+      "name": "Verpackungsdesign"
+    },
+    "730": {
+      "en": "Procreate",
+      "name": "Procreate",
+      "note": "unverändert"
+    },
+    "731": {
+      "en": "Vector Drawing",
+      "name": "Vektorgrafik"
+    },
     "795": {
       "en": "Civic Engagement",
       "name": "Bürgerschaftliches Engagement"
