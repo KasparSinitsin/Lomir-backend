@@ -1,7 +1,7 @@
 /**
  * Boolean Search Query Parser
  *
- * Supports:
+ * Supports (operators in CAPITALS only; see classifyToken):
  * - AND operator (default between terms, or explicit "AND")
  * - OR operator
  * - NOT operator (or "-" prefix)
@@ -100,19 +100,26 @@ function tokenize(query) {
 }
 
 /**
- * Classify a token as operator or term
+ * Classify a token as operator or term.
+ *
+ * Operators are written in CAPITALS only (Julia, 2026-10-09): `and`, `or` and
+ * `not` are ordinary words, in German `und`, `oder` and `nicht` even more so,
+ * and one rule has to hold in every language. A lowercase `and` is therefore
+ * searched for like any other word. Words of other languages never reach this
+ * function: the frontend turns the operators of the interface language into
+ * AND / OR / NOT before it sends the query, so the backend knows no language.
+ *
  * @param {string} token - Token string
  * @returns {Object} Token object with type and value
  */
 function classifyToken(token) {
-  const upper = token.toUpperCase();
-  if (upper === "AND" || upper === "&&") {
+  if (token === "AND" || token === "&&") {
     return { type: "OPERATOR", value: OPERATORS.AND };
   }
-  if (upper === "OR" || upper === "||") {
+  if (token === "OR" || token === "||") {
     return { type: "OPERATOR", value: OPERATORS.OR };
   }
-  if (upper === "NOT" || upper === "!") {
+  if (token === "NOT" || token === "!") {
     return { type: "OPERATOR", value: OPERATORS.NOT };
   }
   return { type: "TERM", value: token };

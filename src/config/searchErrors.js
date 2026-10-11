@@ -7,8 +7,10 @@
  * order arises, and every payload key is camelCase.
  *
  * `values.operator` is always "AND", "OR" or "NOT", also when the user typed
- * `-` or lowercase: the tokenizer normalises operators, and operators are
- * syntax that stays English in every UI language (plan decision E1).
+ * `-`: the tokenizer normalises operators, and operators are syntax that stays
+ * English in every UI language (plan decision E1). Operators are capitals only
+ * (see classifyToken), and the frontend turns the operator words of its
+ * language into these three before it sends the query.
  */
 
 const SEARCH_ERROR_CODES = {

@@ -32,7 +32,7 @@ test("validateBooleanQuery names each failure with a code", () => {
     ["", SEARCH_ERROR_CODES.QUERY_EMPTY, undefined],
     ['"react', SEARCH_ERROR_CODES.UNCLOSED_QUOTE, undefined],
     ["AND react", SEARCH_ERROR_CODES.STARTS_WITH_OPERATOR, { operator: "AND" }],
-    ["react or", SEARCH_ERROR_CODES.ENDS_WITH_OPERATOR, { operator: "OR" }],
+    ["react OR", SEARCH_ERROR_CODES.ENDS_WITH_OPERATOR, { operator: "OR" }],
     ["react NOT AND vue", SEARCH_ERROR_CODES.NOT_WITHOUT_TERM, undefined],
     ["react OR OR vue", SEARCH_ERROR_CODES.OPERATOR_WITHOUT_TERMS, { operator: "OR" }],
   ];
