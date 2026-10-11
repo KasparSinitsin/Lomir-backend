@@ -395,7 +395,7 @@ The team search response intentionally returns `teamavatarUrl` from the SQL alia
 - **Schema steps** add columns and tables (`add_*`, `create_*`).
 - **Data migrations** rewrite stored chat messages — for example adding the `id:` token to older event rows so a rename or a deleted account is resolved at display time, or removing a deleted person's name from stored text. They are the repo's way of changing data by rule; they never contain the data itself.
 - A **data migration** must be **idempotent** (guarded, so a second run changes nothing) and must **own its transaction**.
-- ⚠️ The runner's `catch` does **not** rethrow, so `migrate.js` prints "Migration completed successfully" even after a failed step. Read the log, and verify a data migration from outside (a read-only query that counts what is left) rather than trusting that line.
+- The runner stops at the first failed step, prints the error and `Migration failed`, and exits with code 1; the steps after it do not run. (Until 2026-10-11 it printed "Migration completed successfully" with exit code 0 after a failure.) Still verify a data migration from outside — a read-only query that counts what is left — rather than trusting the exit code alone.
 - **Order matters.** A step that corrects an earlier one (it recognises a row by the wrong value the first one wrote) must stay after it.
 - A data migration that reads stored text needs the frontend parser that understands the new shape to be live wherever the database is read; run it after that release, not before.
 - Back up first (see [Database Backups](#database-backups)).
