@@ -9,6 +9,11 @@ const { AUTH_ERROR_CODES } = require("../config/authErrors");
 const { resolveLocationData } = require("../utils/geocodingUtil");
 const { verifyTurnstileToken } = require("../utils/turnstileVerify");
 const {
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_LETTER_AND_NUMBER,
+  isAcceptablePassword,
+} = require("../utils/passwordRules");
+const {
   SUPPORTED_LANGUAGES,
   resolveUserLanguage,
   warnIfMailLanguageFieldsMissing,
@@ -25,8 +30,8 @@ const registerSchema = Joi.object({
   username: Joi.string().alphanum().min(3).max(30).required(),
   email: Joi.string().email().required(),
   password: Joi.string()
-    .min(8)
-    .pattern(/^(?=.*[a-zA-Z])(?=.*[0-9])/)
+    .min(PASSWORD_MIN_LENGTH)
+    .pattern(PASSWORD_LETTER_AND_NUMBER)
     .required()
     .messages({
       "string.min": "Password must be at least 8 characters",
@@ -719,10 +724,7 @@ const authController = {
         });
       }
 
-      if (
-        password.length < 8 ||
-        !/^(?=.*[a-zA-Z])(?=.*[0-9])/.test(password)
-      ) {
+      if (!isAcceptablePassword(password)) {
         return res.status(400).json({
           success: false,
           message:
@@ -816,10 +818,7 @@ const authController = {
         });
       }
 
-      if (
-        newPassword.length < 8 ||
-        !/^(?=.*[a-zA-Z])(?=.*[0-9])/.test(newPassword)
-      ) {
+      if (!isAcceptablePassword(newPassword)) {
         return res.status(400).json({
           success: false,
           message:
