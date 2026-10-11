@@ -298,13 +298,6 @@ Lomir-backend/
 │   ├── migrate.js                         # Entry point of `npm run migrate`
 │   ├── backfill-team-geocoding.js         # One-off: geocode existing teams that have an address but no coordinates
 │   ├── backfill-vacant-role-geocoding.js  # Same for vacant roles
-│   ├── migrate-cloudinary-to-imagekit.js   # One-time migration (already run): converted Cloudinary URLs to ImageKit URLs in the database
-│   ├── add-location-district-columns.sql  # Migration: adds district column to teams/users/roles
-│   ├── add-legal-consent-columns.sql      # Standalone SQL for the legal consent migration (see migrations/add_legal_consent_to_users.js)
-│   ├── add-avatar-file-id-columns.sql     # Adds the ImageKit file-id columns for user and team avatars
-│   ├── add_team_application_role_id.sql / add_team_invitation_role_id.sql / fix_team_invitations_unique_constraint.sql
-│   │                           # Role targeting for applications and invitations
-│   ├── add_performance_indexes.sql        # Indexes for the heaviest queries (safe to run repeatedly)
 │   ├── backfill-location-data.js          # One-off script to backfill district/state from geocoding
 │   ├── backfill-state-data.js             # One-off: state/region from reverse geocoding of stored coordinates
 │   ├── seed_badge_awards.sql / lomir_badge_backfill.sql  # Badge-award seed and backfill data
@@ -475,7 +468,7 @@ Location data for users, teams, and vacant roles is resolved through `src/utils/
 
 Registration, team creation/update, and user profile update all call `resolveLocationData()` and write back the full enriched object — so location fields (including `district` and `state`) are normalized on save, not just at query time.
 
-The `district` field is stored in the `users`, `teams`, and `vacant_roles` tables. Existing rows can be backfilled with `scripts/backfill-location-data.js`; the required schema migration is `scripts/add-location-district-columns.sql`.
+The `district` field is stored in the `users`, `teams`, and `vacant_roles` tables. Rows created before the field existed can be backfilled with `scripts/backfill-location-data.js`; new rows get it when they are created.
 
 The public `GET /api/geocoding/postal-code/:code` endpoint is rate-limited (60 req/15 min) and backed by a bounded in-memory cache (24-hour TTL, max 1000 entries). Caching repeated postal-code lookups reduces outbound calls to Nominatim — respecting their usage policy and limiting how often user-entered locations leave the server. Definitive "no result" responses are cached, but transient Nominatim failures (timeouts/errors) are not, so lookups recover automatically.
 

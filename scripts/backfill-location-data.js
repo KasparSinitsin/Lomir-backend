@@ -1,7 +1,7 @@
 /**
  * Backfill normalized location data for users, teams, and vacant roles.
  *
- * Run after scripts/add-location-district-columns.sql:
+ * The district columns are part of the database structure. From the repository root:
  *   node scripts/backfill-location-data.js
  */
 
