@@ -1,12 +1,12 @@
 /**
- * The guard of the demo setup (`npm run db:setup`, `npm run seed:demo`).
+ * The guard of the demo setup (`npm run demo-db`).
  *
  * 🔴 Why it exists: local development and the live app can share ONE database (the
  * `DATABASE_URL` in `.env` points at it). A script that creates tables and demo users
  * must never run against that. Two independent checks, both of which must pass:
  *
  *   1. the target is LOCAL: `localhost`, `127.0.0.1`, `::1` or a Unix socket;
- *   2. the target is EMPTY: no tables (setup) or no users (seed).
+ *   2. the target is EMPTY: it has no tables yet.
  *
  * There is no override. A database reached through an SSH tunnel looks local; check 2
  * is what stops it, because a live database is never empty.
@@ -73,30 +73,16 @@ const assertLocalTarget = (connectionString) => {
   return target;
 };
 
-/** Throws if the database already has tables (setup) – it must start empty. */
+/** Throws if the database already has tables: the demo database is only ever built into an empty one. */
 const assertNoTables = async (client) => {
   const { rows } = await client.query(
     "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = 'public'",
   );
   if (rows[0].n !== 0) {
     throw new Error(
-      `Refusing to run: the database already has ${rows[0].n} tables. db:setup only works on an empty database.`,
+      `Refusing to run: the database already has ${rows[0].n} tables. npm run demo-db only works on an empty database.`,
     );
   }
 };
 
-/** Throws unless the users table exists and is empty (seed). */
-const assertNoUsers = async (client) => {
-  const exists = await client.query("SELECT to_regclass('public.users') AS t");
-  if (!exists.rows[0].t) {
-    throw new Error("Refusing to run: there is no users table. Run `npm run db:setup` first.");
-  }
-  const { rows } = await client.query("SELECT count(*)::int AS n FROM users");
-  if (rows[0].n !== 0) {
-    throw new Error(
-      `Refusing to run: the database already has ${rows[0].n} users. seed:demo only works on a database without users.`,
-    );
-  }
-};
-
-module.exports = { describeTarget, isLocalTarget, assertLocalTarget, assertNoTables, assertNoUsers };
+module.exports = { describeTarget, isLocalTarget, assertLocalTarget, assertNoTables };

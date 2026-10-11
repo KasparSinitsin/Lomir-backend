@@ -1,5 +1,5 @@
 {
- "_note": "Product content, not personal data: the focus area taxonomy (supercategories, categories, tags) with the ids the German translations refer to. Loaded by `npm run db:setup`.",
+ "_note": "Product content, not personal data: the focus area taxonomy (supercategories, categories, tags) with the ids the German translations refer to. Loaded by `npm run demo-db`.",
  "supercategories": [
   {
    "id": 1,

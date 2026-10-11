@@ -1,5 +1,5 @@
 {
- "_note": "Product content, not personal data: the 30 badge definitions. Loaded by `npm run db:setup`. The image URL columns are not used by the frontend and are left empty.",
+ "_note": "Product content, not personal data: the 30 badge definitions. Loaded by `npm run demo-db`. The image URL columns are not used by the frontend and are left empty.",
  "badges": [
   {
    "id": 115,

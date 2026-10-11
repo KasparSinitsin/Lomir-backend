@@ -6,10 +6,9 @@ const {
   isLocalTarget,
   assertLocalTarget,
   assertNoTables,
-  assertNoUsers,
-} = require("../src/database/demo/guard");
+} = require("../scripts/demo/guard");
 
-// The guard decides whether db:setup and seed:demo may write. It must say yes only to a local database.
+// The guard decides whether npm run demo-db may write. It must say yes only to a local database.
 
 test("local addresses pass", () => {
   for (const url of [
@@ -66,10 +65,4 @@ const clientAnswering = (...answers) => {
 test("setup needs an empty database", async () => {
   await assert.doesNotReject(() => assertNoTables(clientAnswering({ n: 0 })));
   await assert.rejects(() => assertNoTables(clientAnswering({ n: 30 })), /already has 30 tables/);
-});
-
-test("the seed needs the structure and no users", async () => {
-  await assert.rejects(() => assertNoUsers(clientAnswering({ t: null })), /db:setup/);
-  await assert.doesNotReject(() => assertNoUsers(clientAnswering({ t: "users" }, { n: 0 })));
-  await assert.rejects(() => assertNoUsers(clientAnswering({ t: "users" }, { n: 12 })), /already has 12 users/);
 });

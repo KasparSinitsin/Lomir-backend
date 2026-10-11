@@ -6,11 +6,12 @@ const path = require("node:path");
 // schema.sql and the reference files are published with the code and loaded into strangers' databases.
 // They must hold structure and product content only, never a person.
 
-const db = (...parts) => path.join(__dirname, "..", "src", "database", ...parts);
+const db = (...parts) => path.join(__dirname, "..", "scripts", "demo", ...parts);
+const translationsFile = path.join(__dirname, "..", "src", "database", "seeds", "tag-translations.de.json");
 const schema = fs.readFileSync(db("schema.sql"), "utf8");
 const taxonomy = JSON.parse(fs.readFileSync(db("reference", "taxonomy.json"), "utf8"));
 const { badges } = JSON.parse(fs.readFileSync(db("reference", "badges.json"), "utf8"));
-const translations = JSON.parse(fs.readFileSync(db("seeds", "tag-translations.de.json"), "utf8"));
+const translations = JSON.parse(fs.readFileSync(translationsFile, "utf8"));
 
 // The header comment explains what was removed, so the checks for removed things look at code only.
 // `assert.equal(regex.test(...), false)` keeps a failure short: doesNotMatch would print the whole file.
