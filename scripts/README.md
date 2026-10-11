@@ -1,7 +1,22 @@
-# Database Scripts
+# Scripts
 
-This folder contains SQL scripts for seeding and managing the Lomir database,
-plus the database backup script.
+**Every script of this repository lives in this folder** — the entry point of `npm run migrate`,
+the one-off backfills, the SQL scripts and the database backup. The repository root
+holds only configuration (`package.json`, `nodemon.json`, `.gitignore`, the README and the licence).
+A new script goes here from the start and runs from here (`node scripts/<name>.js`, or an `npm run` entry
+that points at `scripts/`); `test/repoLayout.test.js` fails if a script appears in the root or an
+`npm run` entry points at a script outside `scripts/` and `src/`.
+
+Run scripts from the repository root: they read `.env` from the working directory.
+
+| Script | What it does |
+|---|---|
+| `migrate.js` | `npm run migrate`: the migrations in order, stops at the first error (exit code 1) |
+| `migrate:one` → `run-migration.js` | `npm run migrate:one -- <name>`: ONE named migration from an allow-list |
+| `import-tag-translations.js` | `npm run import:tag-translations`: imports the translated tag names (a dry run unless `--apply`) |
+| `backfill-team-geocoding.js`, `backfill-vacant-role-geocoding.js` | One-off: coordinates for teams and vacant roles that have an address |
+| `backup-db.sh`, `install-backup-agent.sh` | Database backups, below |
+| `*.sql` and the other one-off scripts | Historical schema and data scripts, described in the README |
 
 ## Backups — `backup-db.sh`
 
@@ -9,11 +24,11 @@ plus the database backup script.
 npm run backup           # create a backup now (do this before risky migrations)
 npm run backup:status    # list existing backups and the age of the newest
 npm run backup:open      # reveal the backup folder in Finder
-npm run backup:install   # install/refresh the daily launchd agent, then verify it
+npm run backup:install   # install/refresh the launchd agent, then verify it
 npm run backup:uninstall # remove the agent (existing backups are kept)
 ```
 
-A **launchd agent runs the backup daily at 10:00**, catching up after boot if a
+A **launchd agent runs the backup three times a day (10:00, 14:00, 17:00)**, catching up after boot if a
 run was missed. Dumps go to `~/LomirBackups` (override with `LOMIR_BACKUP_DIR`),
 are kept for 30 days, and are verified with `pg_restore --list` before the
 script reports success. Requires `brew install postgresql@17`.

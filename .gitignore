@@ -130,6 +130,9 @@ Thumbs.db
 # hash, private messages and location.
 *.dump
 LomirBackups/
+# Exports of the database must never be committed, whatever the folder is called.
+backup/
+backups/
 
 # Test files
 test-results/

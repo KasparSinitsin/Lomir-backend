@@ -65,8 +65,8 @@ test("a failing migration reaches the caller and stops the list", async () => {
   );
 });
 
-test("migrate.js turns a failed run into a message and exit code 1", () => {
-  const source = fs.readFileSync(path.join(__dirname, "../migrate.js"), "utf8");
+test("scripts/migrate.js turns a failed run into a message and exit code 1", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../scripts/migrate.js"), "utf8");
   assert.match(source, /Migration failed/);
   assert.match(source, /process\.exit\(1\)/);
   // The success line must come only after the awaited run.

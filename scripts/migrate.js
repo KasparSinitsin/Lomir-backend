@@ -1,4 +1,4 @@
-const runMigrations = require('./src/database/migrations');
+const runMigrations = require('../src/database/migrations');
 
 (async () => {
   try {

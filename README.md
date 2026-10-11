@@ -148,8 +148,7 @@ Verify it's running by visiting `http://localhost:5001` — you should see **"Lo
 |---|---|
 | `npm run dev` | Start dev server with nodemon (hot reload) |
 | `npm start` | Start production server |
-| `npm run migrate` | Run the database migrations in order (see [Database Migrations](#database-migrations)) |
-| `npm run seed` | Seed the database with the demo data in `src/database/seeds/` |
+| `npm run migrate` | Run the database migrations in order (`scripts/migrate.js`; see [Database Migrations](#database-migrations)) |
 | `npm test` | Run tests (`node --test`) |
 | `npm run backup` | Create a database dump now (see [Database Backups](#database-backups)) |
 | `npm run backup:status` | List existing dumps with their age |
@@ -294,12 +293,11 @@ Lomir-backend/
 │       │   ├── index.js        # The registry and the order
 │       │   ├── _helpers.js     # Shared by migration steps (e.g. a safe naive-timestamp → TIMESTAMPTZ conversion); not a step itself
 │       │   └── *.js            # One file per step: schema changes, plus data migrations that rewrite stored chat messages
-│       └── seeds/              # Demo data for `npm run seed` (users, tags, teams, badges, more users, messages)
-├── migrate.js                  # Entry point of `npm run migrate`
-├── seed.js                     # Entry point of `npm run seed`
-├── backfill-team-geocoding.js  # One-off: geocode existing teams that have an address but no coordinates
-├── backfill-vacant-role-geocoding.js # Same for vacant roles
-├── scripts/                    # SQL, backup and utility scripts
+│       └── seeds/              # `tag-translations.de.json`: the German tag names, imported by `npm run import:tag-translations`
+├── scripts/                    # EVERY script lives here, never in the repository root (a test enforces it)
+│   ├── migrate.js                         # Entry point of `npm run migrate`
+│   ├── backfill-team-geocoding.js         # One-off: geocode existing teams that have an address but no coordinates
+│   ├── backfill-vacant-role-geocoding.js  # Same for vacant roles
 │   ├── migrate-cloudinary-to-imagekit.js   # One-time migration (already run): converted Cloudinary URLs to ImageKit URLs in the database
 │   ├── add-location-district-columns.sql  # Migration: adds district column to teams/users/roles
 │   ├── add-legal-consent-columns.sql      # Standalone SQL for the legal consent migration (see migrations/add_legal_consent_to_users.js)
@@ -311,7 +309,7 @@ Lomir-backend/
 │   ├── backfill-state-data.js             # One-off: state/region from reverse geocoding of stored coordinates
 │   ├── seed_badge_awards.sql / lomir_badge_backfill.sql  # Badge-award seed and backfill data
 │   ├── backup-db.sh / install-backup-agent.sh # Database backups (see Database Backups)
-├── test/                       # 62 test files, named <subject>.<aspect>.test.js; by area:
+├── test/                       # 76 test files, named <subject>.<aspect>.test.js; by area:
 │   │                           #   controllers  authController.*, userController.*, teamController.*,
 │   │                           #                teamApplicationsController.archivedTeam, teamReadController.*,
 │   │                           #                invitationController*, vacantRoleController, messageController.*,
