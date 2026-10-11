@@ -144,7 +144,7 @@ test("it owns a transaction and verifies its own result", () => {
   );
 });
 
-test("it is registered, and the swallowing runner is documented where it is", () => {
+test("it is registered, and the runner passes a failure on instead of hiding it", () => {
   assert.match(
     index,
     /await addIdTokensToProseEvents\(\);/,
@@ -152,7 +152,7 @@ test("it is registered, and the swallowing runner is documented where it is", ()
   );
   assert.match(
     index,
-    /does NOT rethrow/,
-    "the catch that hides a failed migration is undocumented again",
+    /console\.error\("Error running migrations:", error\);\s*throw error;/,
+    "the runner's catch must rethrow, or a failed run reports success again",
   );
 });

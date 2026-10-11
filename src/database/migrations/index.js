@@ -87,7 +87,7 @@ const runMigrations = async () => {
     await addSourceToUserTags();
     // ⚠️ The first DATA migration here: it rewrites stored message
     // text rather than the schema. Idempotent by guard and wrapped in its
-    // own transaction, because the catch below does not rethrow.
+    // own transaction, so a failure leaves nothing half applied.
     await addIdTokensToProseEvents();
     // 🔴 Runs AFTER the backfill above, and corrects it. That migration wrote
     // `sender_id` into the 🎉 APPROVER slot on the premise that the sender is
@@ -157,14 +157,15 @@ const runMigrations = async () => {
 
     console.log("All migrations completed successfully!");
   } catch (error) {
-    // 🔴 This catch does NOT rethrow, so `migrate.js` goes on to print
-    // "Migration completed successfully" after a failure — a failed run is
-    // indistinguishable from a clean one. Noted 2026-10-06 while adding the
-    // first DATA migration; left as it is because changing it affects every
-    // migration and deserves its own change. Until then a data migration must
-    // be idempotent, must own its transaction, and must be verifiable from
-    // OUTSIDE — `deletion-audit/22` is that check for the prose id backfill.
+    // The first error stops the list: the migrations after it do not run. It is
+    // logged and then RETHROWN, so `migrate.js` prints "Migration failed" and
+    // exits with 1. Until 2026-10-11 this catch did not rethrow, and a failed run
+    // printed "Migration completed successfully" with exit 0 (STATUS item 18).
+    // The notes in the migration files that say so describe that time; what they
+    // ask still stands: a data migration is idempotent, owns its transaction and
+    // can be verified from OUTSIDE (the `deletion-audit` rounds).
     console.error("Error running migrations:", error);
+    throw error;
   }
 };
 
