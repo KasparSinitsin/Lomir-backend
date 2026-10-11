@@ -248,8 +248,6 @@ Lomir-backend/
 │   │   └── uploadMiddleware.js # Multer wrapper for file/image uploads
 │   ├── models/
 │   │   ├── userModel.js         # User row queries + legal-consent persistence
-│   │   ├── teamModel.js
-│   │   ├── tagModel.js
 │   │   └── contactReportModel.js # Persistent abuse/content report records and email status updates
 │   ├── services/
 │   │   ├── emailService.js     # Transactional email methods + templates (verification, password reset/changed, email-change, contact forwarding, report receipt)
