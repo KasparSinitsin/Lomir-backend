@@ -68,10 +68,13 @@ To test the live demo, anyone can just **register their own account** directly i
 
 ## Getting Started
 
+You can run Lomir on your own machine with a small invented dataset. Nothing here needs the project's
+servers or accounts.
+
 ### Prerequisites
 
 - **Node.js** v18+ and npm
-- Internet access (database is hosted on Neon — no local PostgreSQL needed)
+- **PostgreSQL**, running locally (tested with 17)
 - Native build tools for `bcrypt`:
   - macOS: `xcode-select --install`
   - Windows: Visual Studio Build Tools with C++ workload
@@ -90,47 +93,33 @@ cd Lomir-backend
 npm install
 ```
 
-### 3. Create `.env`
+### 3. Create an empty local database and a `.env`
 
-Create a `.env` file in the project root:
-
-```env
-# Database (Neon PostgreSQL)
-DATABASE_URL=postgresql://<user>:<password>@<host>/<database>?sslmode=require
-
-# Server
-PORT=5001
-NODE_ENV=development
-
-# JWT Authentication
-JWT_SECRET=<your-jwt-secret>
-JWT_EXPIRES_IN=7d
-
-# ImageKit (image/file uploads)
-IMAGEKIT_PUBLIC_KEY=<your-public-key>
-IMAGEKIT_PRIVATE_KEY=<your-private-key>
-IMAGEKIT_URL_ENDPOINT=https://ik.imagekit.io/<your-id>
-
-# Email (Brevo transactional HTTPS API — Render blocks outbound SMTP)
-BREVO_API_KEY=<brevo-api-key>
-BREVO_SENDER_EMAIL=<verified-brevo-sender-address>
-# BREVO_SENDER_NAME=Lomir              # optional, defaults to "Lomir"
-# CONTACT_INBOX_EMAIL=<inbox-address>  # where contact-form/report mail is sent
-
-# Frontend URL (for CORS and email links)
-CLIENT_URL=http://localhost:5173
-FRONTEND_URL=http://localhost:5173
-
-# Cloudflare Turnstile (configured in the deployed environment; the CAPTCHA widget stays inactive locally until a key is set)
-# TURNSTILE_SECRET_KEY=<turnstile-secret-key>
-
-# Scheduled jobs (optional)
-# ARCHIVED_TEAM_GRACE_DAYS=14          # days an archived (deleted) team is kept before the cleanup job purges it; defaults to 14
+```bash
+createdb lomir_demo
+cp .env.example .env
 ```
 
-> Get the ImageKit and database values from the project owner.
+`.env.example` is written for exactly this setup: it points at `postgresql://localhost:5432/lomir_demo`
+and holds placeholders for everything else. Change `JWT_SECRET`. The three ImageKit values only have to
+exist for the server to start; uploading a picture or a file needs real keys from your own ImageKit account.
 
-### 4. Run the server
+### 4. Build the database and fill it with demo data
+
+```bash
+npm run db:setup     # structure, focus area taxonomy (776 tags), 30 badges, German tag names
+npm run seed:demo    # 12 invented people, 4 teams with an open role each, awards, a few messages
+```
+
+Both commands **refuse to run** unless the database is **local** (localhost, 127.0.0.1, ::1 or a Unix
+socket) **and** empty (no tables for `db:setup`, no users for `seed:demo`). There is no flag that turns
+this off. It is deliberate: the same `.env` can point at a live database, and these commands must never
+touch one.
+
+All demo accounts are on `example.com` and share one password. The seed prints them, for instance
+`demo.mira@example.com` with the password `LomirDemo2026`.
+
+### 5. Run the server
 
 ```bash
 npm run dev
@@ -140,6 +129,11 @@ The server starts on `http://localhost:5001` with hot reload via nodemon.
 
 Verify it's running by visiting `http://localhost:5001` — you should see **"Lomir API is running..."**
 
+Then start the [frontend](https://github.com/KasparSinitsin/Lomir-frontend) and log in with a demo account.
+
+> **Maintainers** working with the shared environment: ask the project owner for its values, and never run
+> `db:setup` or `seed:demo` against it. They would refuse, and so should you.
+
 ---
 
 ## Available Scripts
@@ -148,6 +142,8 @@ Verify it's running by visiting `http://localhost:5001` — you should see **"Lo
 |---|---|
 | `npm run dev` | Start dev server with nodemon (hot reload) |
 | `npm start` | Start production server |
+| `npm run db:setup` | Build a NEW, LOCAL database: structure, focus area taxonomy, badges, German tag names (see [Getting Started](#getting-started)) |
+| `npm run seed:demo` | Fill it with a small invented world to try the app (12 people, 4 teams, awards, messages) |
 | `npm run migrate` | Run the database migrations in order (`scripts/migrate.js`; see [Database Migrations](#database-migrations)) |
 | `npm test` | Run tests (`node --test`) |
 | `npm run backup` | Create a database dump now (see [Database Backups](#database-backups)) |
@@ -289,6 +285,9 @@ Lomir-backend/
 │   │   ├── cleanupUnverifiedAccounts.js # Every 6 hours + startup; deletes expired unverified accounts
 │   │   └── cleanupArchivedTeams.js # Daily + startup; permanently deletes teams archived longer than the grace period
 │   └── database/
+│       ├── schema.sql          # The structure of a fully migrated database (no data); loaded by `npm run db:setup`
+│       ├── reference/          # Product content, not personal data: `taxonomy.json` (focus areas) and `badges.json`
+│       ├── demo/               # The invented world of `npm run seed:demo`, and the guard that keeps both commands off live databases
 │       ├── migrations/         # Incremental migrations, run in order by index.js — see Database Migrations
 │       │   ├── index.js        # The registry and the order
 │       │   ├── _helpers.js     # Shared by migration steps (e.g. a safe naive-timestamp → TIMESTAMPTZ conversion); not a step itself
@@ -296,11 +295,12 @@ Lomir-backend/
 │       └── seeds/              # `tag-translations.de.json`: the German tag names, imported by `npm run import:tag-translations`
 ├── scripts/                    # EVERY script lives here, never in the repository root (a test enforces it)
 │   ├── migrate.js                         # Entry point of `npm run migrate`
+│   ├── db-setup.js                        # Entry point of `npm run db:setup`
+│   ├── seed-demo.js                       # Entry point of `npm run seed:demo`
 │   ├── backfill-team-geocoding.js         # One-off: geocode existing teams that have an address but no coordinates
 │   ├── backfill-vacant-role-geocoding.js  # Same for vacant roles
 │   ├── backfill-location-data.js          # One-off script to backfill district/state from geocoding
 │   ├── backfill-state-data.js             # One-off: state/region from reverse geocoding of stored coordinates
-│   ├── seed_badge_awards.sql / lomir_badge_backfill.sql  # Badge-award seed and backfill data
 │   ├── backup-db.sh / install-backup-agent.sh # Database backups (see Database Backups)
 ├── test/                       # 76 test files, named <subject>.<aspect>.test.js; by area:
 │   │                           #   controllers  authController.*, userController.*, teamController.*,

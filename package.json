@@ -9,6 +9,8 @@
     "test": "node --test",
     "migrate": "node scripts/migrate.js",
     "migrate:one": "node scripts/run-migration.js",
+    "db:setup": "node scripts/db-setup.js",
+    "seed:demo": "node scripts/seed-demo.js",
     "import:tag-translations": "node scripts/import-tag-translations.js",
     "backup": "./scripts/backup-db.sh",
     "backup:status": "./scripts/backup-db.sh --status",
