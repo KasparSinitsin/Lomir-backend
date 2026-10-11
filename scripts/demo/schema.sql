@@ -4,7 +4,7 @@
 -- the psql `\restrict` lines, the unused `ltree` extension, the pg_dump version stamps and the line
 -- `SET transaction_timeout` (it only exists from PostgreSQL 17 on and has no effect here) were removed.
 --
--- Loaded by `npm run db:setup` (scripts/db-setup.js) into an EMPTY, LOCAL database. The migrations in
+-- Loaded by `npm run demo-db` (scripts/demo-database.js) into an EMPTY, LOCAL database. The migrations in
 -- src/database/migrations are increments on top of this state and are already applied here.
 -- Tested with PostgreSQL 17.
 --

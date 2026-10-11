@@ -1,7 +1,7 @@
 # Scripts
 
 **Every script of this repository lives in this folder** — the entry point of `npm run migrate`,
-the commands that build a local demo database, the one-off backfills and the database backup. The repository root
+the command that builds a local demo database and the database backup. The repository root
 holds only configuration (`package.json`, `nodemon.json`, `.gitignore`, the README and the licence).
 A new script goes here from the start and runs from here (`node scripts/<name>.js`, or an `npm run` entry
 that points at `scripts/`); `test/repoLayout.test.js` fails if a script appears in the root or an
@@ -13,10 +13,8 @@ Run scripts from the repository root: they read `.env` from the working director
 |---|---|
 | `migrate.js` | `npm run migrate`: the migrations in order, stops at the first error (exit code 1) |
 | `migrate:one` → `run-migration.js` | `npm run migrate:one -- <name>`: ONE named migration from an allow-list |
-| `db-setup.js` | `npm run db:setup`: structure, taxonomy and badges for a NEW LOCAL database. Refuses any database that is not local and empty |
-| `seed-demo.js` | `npm run seed:demo`: a small invented world to try the app. Refuses any database that is not local, or that has users |
+| `demo-database.js` (+ `demo/`) | `npm run demo-db`: structure, taxonomy, badges and an invented demo world (people, teams, roles, applications, awards, chat, notifications) for a NEW LOCAL database; `-- --empty` leaves out the people. Refuses any database that is not local and empty. Writes only invented data from this repository |
 | `import-tag-translations.js` | `npm run import:tag-translations`: imports the translated tag names (a dry run unless `--apply`) |
-| `backfill-location-data.js`, `backfill-state-data.js`, `backfill-team-geocoding.js`, `backfill-vacant-role-geocoding.js` | One-off: coordinates, state and district for rows that were created before the location fields existed. New rows get them when they are created |
 | `backup-db.sh`, `install-backup-agent.sh` | Database backups, below |
 
 The schema changes that used to have a SQL script here (columns, indexes, constraints) are part of the
