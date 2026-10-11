@@ -189,7 +189,7 @@ test("a message over the limit is refused before anything is written", async () 
 
 // A member can hold an open role application or role invitation. They are
 // told too, with words about a role - "your invitation" alone read wrongly to
-// someone already in the team (Anna Lena Albers, demo team, 2026-10-09). The
+// someone already in the team (a member of the demo team, 2026-10-09). The
 // mock cannot run SQL, so the CASE itself is verified against a throwaway
 // Postgres; this pins that both selects distinguish members.
 test("the selects tell members' role requests apart from outsiders'", async () => {

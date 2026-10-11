@@ -28,8 +28,8 @@
  * A member can hold an internal role application or role invitation. They
  * are told too, in words that say it is about a role: "Your invitation can no
  * longer be considered" read wrongly to someone who is already in the team.
- * (Julia, 2026-10-09: found when Anna Lena Albers got the plain invitation
- * sentence in the demo team.)
+ * (Julia, 2026-10-09: found when a member of the demo team got the plain
+ * invitation sentence.)
  */
 
 const { idNameToken } = require("./eventNameToken");

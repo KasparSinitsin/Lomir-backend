@@ -8,7 +8,7 @@ const db = require("../../config/database");
  *
  * 🔴 **Why these rows exist at all.** Until BE #351 (2026-10-06) the writers
  * emitted a bare name. A rename never reached the banner — a walk found a
- * `👋` row reading "Alice Jones" for somebody called "Alicja Stephanie Beurer"
+ * `👋` row reading "Alice Jones" for somebody called "Alicia Maria Keller"
  * today — and a deletion could only be handled by rewriting stored text, which
  * is why the message scrub exists. FE #664 made all four render paths resolve
  * from an id; this backfills the id into the rows that predate the writers.
