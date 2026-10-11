@@ -129,6 +129,11 @@ repository; nothing is read from another database.
 All demo accounts are on `example.com` and share one password. The command prints them, for instance
 `demo.mira@example.com` with the password `LomirDemo2026`.
 
+> **⚠️ For local use only.** The password of the demo accounts is public: it is written in this repository.
+> Never make a demo database reachable from the internet, and never use these accounts or this password
+> anywhere else. If you do expose an instance, delete the demo accounts or change every password first,
+> and set your own `JWT_SECRET`.
+
 ### 5. Run the server
 
 ```bash

@@ -79,6 +79,8 @@ async function main() {
     console.log("\nTry it: npm run dev (backend) and npm run dev in the frontend repository.");
     console.log(`Log in with demo.${users[0].key}@example.com and the password ${DEMO_PASSWORD}`);
     console.log("(the same password for every demo account: demo.<name>@example.com)");
+    console.log("\n⚠️  The password is public (it is in the repository). Use this database locally only:");
+    console.log("   never expose it to the internet, and change every password first if you ever do.");
   } else {
     console.log("\nNo people were created (--empty).");
   }
