@@ -148,8 +148,7 @@ Verify it's running by visiting `http://localhost:5001` — you should see **"Lo
 |---|---|
 | `npm run dev` | Start dev server with nodemon (hot reload) |
 | `npm start` | Start production server |
-| `npm run migrate` | Run the database migrations in order (see [Database Migrations](#database-migrations)) |
-| `npm run seed` | Seed the database with the demo data in `src/database/seeds/` |
+| `npm run migrate` | Run the database migrations in order (`scripts/migrate.js`; see [Database Migrations](#database-migrations)) |
 | `npm test` | Run tests (`node --test`) |
 | `npm run backup` | Create a database dump now (see [Database Backups](#database-backups)) |
 | `npm run backup:status` | List existing dumps with their age |
@@ -294,24 +293,16 @@ Lomir-backend/
 │       │   ├── index.js        # The registry and the order
 │       │   ├── _helpers.js     # Shared by migration steps (e.g. a safe naive-timestamp → TIMESTAMPTZ conversion); not a step itself
 │       │   └── *.js            # One file per step: schema changes, plus data migrations that rewrite stored chat messages
-│       └── seeds/              # Demo data for `npm run seed` (users, tags, teams, badges, more users, messages)
-├── migrate.js                  # Entry point of `npm run migrate`
-├── seed.js                     # Entry point of `npm run seed`
-├── backfill-team-geocoding.js  # One-off: geocode existing teams that have an address but no coordinates
-├── backfill-vacant-role-geocoding.js # Same for vacant roles
-├── scripts/                    # SQL, backup and utility scripts
-│   ├── migrate-cloudinary-to-imagekit.js   # One-time migration (already run): converted Cloudinary URLs to ImageKit URLs in the database
-│   ├── add-location-district-columns.sql  # Migration: adds district column to teams/users/roles
-│   ├── add-legal-consent-columns.sql      # Standalone SQL for the legal consent migration (see migrations/add_legal_consent_to_users.js)
-│   ├── add-avatar-file-id-columns.sql     # Adds the ImageKit file-id columns for user and team avatars
-│   ├── add_team_application_role_id.sql / add_team_invitation_role_id.sql / fix_team_invitations_unique_constraint.sql
-│   │                           # Role targeting for applications and invitations
-│   ├── add_performance_indexes.sql        # Indexes for the heaviest queries (safe to run repeatedly)
+│       └── seeds/              # `tag-translations.de.json`: the German tag names, imported by `npm run import:tag-translations`
+├── scripts/                    # EVERY script lives here, never in the repository root (a test enforces it)
+│   ├── migrate.js                         # Entry point of `npm run migrate`
+│   ├── backfill-team-geocoding.js         # One-off: geocode existing teams that have an address but no coordinates
+│   ├── backfill-vacant-role-geocoding.js  # Same for vacant roles
 │   ├── backfill-location-data.js          # One-off script to backfill district/state from geocoding
 │   ├── backfill-state-data.js             # One-off: state/region from reverse geocoding of stored coordinates
 │   ├── seed_badge_awards.sql / lomir_badge_backfill.sql  # Badge-award seed and backfill data
 │   ├── backup-db.sh / install-backup-agent.sh # Database backups (see Database Backups)
-├── test/                       # 62 test files, named <subject>.<aspect>.test.js; by area:
+├── test/                       # 76 test files, named <subject>.<aspect>.test.js; by area:
 │   │                           #   controllers  authController.*, userController.*, teamController.*,
 │   │                           #                teamApplicationsController.archivedTeam, teamReadController.*,
 │   │                           #                invitationController*, vacantRoleController, messageController.*,
@@ -477,7 +468,7 @@ Location data for users, teams, and vacant roles is resolved through `src/utils/
 
 Registration, team creation/update, and user profile update all call `resolveLocationData()` and write back the full enriched object — so location fields (including `district` and `state`) are normalized on save, not just at query time.
 
-The `district` field is stored in the `users`, `teams`, and `vacant_roles` tables. Existing rows can be backfilled with `scripts/backfill-location-data.js`; the required schema migration is `scripts/add-location-district-columns.sql`.
+The `district` field is stored in the `users`, `teams`, and `vacant_roles` tables. Rows created before the field existed can be backfilled with `scripts/backfill-location-data.js`; new rows get it when they are created.
 
 The public `GET /api/geocoding/postal-code/:code` endpoint is rate-limited (60 req/15 min) and backed by a bounded in-memory cache (24-hour TTL, max 1000 entries). Caching repeated postal-code lookups reduces outbound calls to Nominatim — respecting their usage policy and limiting how often user-entered locations leave the server. Definitive "no result" responses are cached, but transient Nominatim failures (timeouts/errors) are not, so lookups recover automatically.
 

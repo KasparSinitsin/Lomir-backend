@@ -4,7 +4,7 @@
  * Run this once to add latitude/longitude to teams that have
  * postal_code/city/country but no coordinates.
  *
- * Usage: node backfill-team-geocoding.js
+ * Usage (from the repository root): node scripts/backfill-team-geocoding.js
  *
  * Make sure to run this from your backend directory with access to:
  * - Your .env file (for DATABASE_URL)
@@ -13,7 +13,7 @@
 
 require("dotenv").config();
 const { Pool } = require("pg");
-const { geocodeAddress } = require("./src/utils/geocodingUtil");
+const { geocodeAddress } = require("../src/utils/geocodingUtil");
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
