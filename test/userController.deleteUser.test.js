@@ -666,3 +666,23 @@ test("runAccountDeletion with skipPasswordCheck (the re-deletion script) needs n
   assert.equal(res.statusCode, 200);
   assert.ok(calls.some(({ sql }) => sql.includes("DELETE FROM users WHERE id = $1")));
 });
+
+test("deleteUser gives the person's @-mention labels the placeholder and deletes notifications holding them, by id", async () => {
+  process.env.NODE_ENV = "production";
+  const calls = [];
+  db.pool.connect = async () => createSuccessfulDeleteClient(calls);
+  bcrypt.compare = async () => true;
+
+  const res = createResponse();
+  await userDeletionController.deleteUser(createRequest(), res);
+
+  assert.equal(res.statusCode, 200);
+  const at = (predicate) => calls.findIndex(predicate);
+  const labels = at(({ sql }) => sql.includes("UPDATE messages") && sql.includes("regexp_replace(content, ('@\\[[^]]+\\]\\(' || $1 || '\\)')"));
+  const notes = at(({ sql }) => sql.includes("DELETE FROM notifications") && sql.includes("COALESCE(title, '') || ' ' || COALESCE(message, '')"));
+  const userRow = at(({ sql }) => sql.includes("DELETE FROM users WHERE id = $1"));
+  assert.ok(labels >= 0 && labels < userRow, "labels are scrubbed inside the transaction");
+  assert.ok(notes >= 0 && notes < userRow, "notifications are deleted inside the transaction");
+  assert.deepEqual(calls[labels].params, ["7", "Former Lomir User"]);
+  assert.deepEqual(calls[notes].params, ["7"]);
+});

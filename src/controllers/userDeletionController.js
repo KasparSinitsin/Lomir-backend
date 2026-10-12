@@ -6,6 +6,7 @@ const { pool } = db;
 const bcrypt = require("bcrypt");
 const fileDeletionQueue = require("../utils/fileDeletionQueue");
 const deletionRecord = require("../utils/deletionRecord");
+const mentionScrub = require("../utils/mentionScrub");
 const {
   buildUserDisplayName,
   toIsoString,
@@ -613,6 +614,11 @@ const runAccountDeletion = async (req, res, { skipPasswordCheck = false } = {}) 
       );
     }
 
+    // @-mention labels in other people's messages, anchored on the id (item
+    // 59, utils/mentionScrub.js): the rest of their text stays untouched.
+    const mentionLabelsScrubbed = await mentionScrub.scrubMentionLabels(client, userId);
+    logDeletionPhase("Phase B - mention labels", { messages: mentionLabelsScrubbed });
+
     logDeletionPhase("Phase C - team ownership cleanup", {
       teamsToDelete: teamsToDelete.length,
       teamsToTransfer: teamsToTransfer.length,
@@ -991,9 +997,14 @@ const runAccountDeletion = async (req, res, { skipPasswordCheck = false } = {}) 
       deletedByName.push(result.rowCount);
     }
 
+    // 3. The rows holding a mention token of this id, whatever name it shows
+    //    (a rename before the deletion leaves the old name in the label).
+    const mentionNotifications = await mentionScrub.deleteNotificationsMentioning(client, userId);
+
     logDeletionPhase("Phase D2 - done", {
       byActor: actorNotifications.rowCount,
       byName: deletedByName,
+      byMention: mentionNotifications,
     });
 
     logDeletionPhase("Phase E - delete user row", { userId });
