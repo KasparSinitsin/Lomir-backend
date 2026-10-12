@@ -3,6 +3,18 @@ const assert = require("node:assert/strict");
 
 const db = require("../src/config/database");
 const cleanupArchivedTeams = require("../src/jobs/cleanupArchivedTeams");
+const fileDeletionQueue = require("../src/utils/fileDeletionQueue");
+const originalProcessSoon = fileDeletionQueue.processFileDeletionsSoon;
+
+// permanentlyDeleteTeam hands the queued ImageKit files over after its commit
+// (item 59). The real hand-over queries the database, so it is recorded instead.
+let handedOver = [];
+test.beforeEach(() => {
+  handedOver = [];
+  fileDeletionQueue.processFileDeletionsSoon = (ids) => {
+    handedOver.push(ids);
+  };
+});
 
 const { purgeExpiredArchivedTeams } = cleanupArchivedTeams;
 
@@ -10,6 +22,7 @@ const originalQuery = db.query;
 const originalConnect = db.pool.connect;
 
 test.afterEach(() => {
+  fileDeletionQueue.processFileDeletionsSoon = originalProcessSoon;
   db.query = originalQuery;
   db.pool.connect = originalConnect;
 });
@@ -26,8 +39,8 @@ test("purgeExpiredArchivedTeams permanently deletes archived teams past the grac
   db.pool.connect = async () => ({
     async query(sql) {
       clientCalls.push(sql);
-      if (sql.includes("teamavatar_url")) {
-        return { rows: [{ teamavatar_url: null, teamavatar_file_id: null }] };
+      if (sql.includes("INSERT INTO pending_file_deletions")) {
+        return { rows: [] };
       }
       return { rows: [] };
     },
@@ -75,9 +88,8 @@ test("purgeExpiredArchivedTeams keeps going and counts only successful purges wh
 
   db.pool.connect = async () => ({
     async query(sql) {
-      if (sql.includes("teamavatar_url")) {
-        // Team 10 blows up while reading its avatar; team 20 succeeds.
-        return { rows: [{ teamavatar_url: null, teamavatar_file_id: null }] };
+      if (sql.includes("INSERT INTO pending_file_deletions")) {
+        return { rows: [] };
       }
       return { rows: [] };
     },

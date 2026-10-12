@@ -3,6 +3,18 @@ const assert = require("node:assert/strict");
 
 const db = require("../src/config/database");
 const teamController = require("../src/controllers/teamController");
+const fileDeletionQueue = require("../src/utils/fileDeletionQueue");
+const originalProcessSoon = fileDeletionQueue.processFileDeletionsSoon;
+
+// permanentlyDeleteTeam hands the queued ImageKit files over after its commit
+// (item 59). The real hand-over queries the database, so it is recorded instead.
+let handedOver = [];
+test.beforeEach(() => {
+  handedOver = [];
+  fileDeletionQueue.processFileDeletionsSoon = (ids) => {
+    handedOver.push(ids);
+  };
+});
 
 const originalQuery = db.pool.query;
 const originalConnect = db.pool.connect;
@@ -36,6 +48,7 @@ function createRequest({ userId = 7, paramId = "10", io = null } = {}) {
 }
 
 test.afterEach(() => {
+  fileDeletionQueue.processFileDeletionsSoon = originalProcessSoon;
   db.pool.query = originalQuery;
   db.pool.connect = originalConnect;
   process.env.NODE_ENV = originalNodeEnv;
@@ -72,8 +85,9 @@ test("deleteTeam permanently deletes a solo team (owner is the only member) inst
   const client = {
     async query(sql, params = []) {
       clientCalls.push({ sql, params });
-      if (sql.includes("teamavatar_url")) {
-        return { rows: [{ teamavatar_url: null, teamavatar_file_id: null }] };
+      if (sql.includes("INSERT INTO pending_file_deletions")) {
+        // chat attachments, then the team avatar
+        return { rows: [{ id: sql.includes("FROM teams t") ? 702 : 701 }] };
       }
       return { rows: [] };
     },
@@ -102,6 +116,17 @@ test("deleteTeam permanently deletes a solo team (owner is the only member) inst
     "expected the team row to be deleted",
   );
   assert.equal(clientCalls.some(({ sql }) => sql === "COMMIT"), true);
+
+  // Its chat files and avatar were queued before the rows went, and handed to
+  // the ImageKit deletion after the commit (item 59).
+  const at = (predicate) => clientCalls.findIndex(predicate);
+  const queuedChat = at(({ sql }) => sql.includes("INSERT INTO pending_file_deletions") && sql.includes("FROM messages m"));
+  const queuedAvatar = at(({ sql }) => sql.includes("INSERT INTO pending_file_deletions") && sql.includes("FROM teams t"));
+  assert.ok(queuedChat >= 0 && queuedChat < at(({ sql }) => sql.includes("DELETE FROM messages WHERE team_id")));
+  assert.ok(queuedAvatar >= 0 && queuedAvatar < at(({ sql }) => sql.includes("DELETE FROM teams WHERE id")));
+  // The route passes the id as the string from the URL, as before; Postgres casts it.
+  assert.deepEqual(clientCalls[queuedChat].params, ["10", "ik.imagekit.io", "team_deletion"]);
+  assert.deepEqual(handedOver, [[701, 702]]);
 
   // ...and the soft-delete/archive path was NOT taken.
   assert.equal(
