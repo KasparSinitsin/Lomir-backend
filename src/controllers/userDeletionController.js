@@ -160,7 +160,14 @@ const getSuccessorCandidatesByTeam = async (queryable, teamIds, excludedUserId) 
  * @route DELETE /api/users/:id
  * @access Private (Requires authentication and authorization)
  */
-const deleteUser = async (req, res) => {
+/**
+ * The account deletion itself. The HTTP route goes through `deleteUser` below,
+ * which always checks the password. `skipPasswordCheck` exists for ONE caller:
+ * `scripts/redelete-after-restore.js`, which repeats a deletion that already
+ * happened once (the person confirmed it then) after a database backup was
+ * restored (STATUS item 59). Never pass it from a request handler.
+ */
+const runAccountDeletion = async (req, res, { skipPasswordCheck = false } = {}) => {
   let client = null;
   let transactionOpen = false;
   let avatarUrl = null;
@@ -189,7 +196,7 @@ const deleteUser = async (req, res) => {
       });
     }
 
-    if (!password) {
+    if (!skipPasswordCheck && !password) {
       return res.status(400).json({
         success: false,
         message: "Password is required",
@@ -250,14 +257,16 @@ const deleteUser = async (req, res) => {
     }
 
     const user = userResult.rows[0];
-    const passwordMatches = await bcrypt.compare(password, user.password_hash);
+    if (!skipPasswordCheck) {
+      const passwordMatches = await bcrypt.compare(password, user.password_hash);
 
-    if (!passwordMatches) {
-      return rollbackAndRespond(401, {
-        success: false,
-        code: AUTH_ERROR_CODES.PASSWORD_INCORRECT,
-        message: "Password is incorrect",
-      });
+      if (!passwordMatches) {
+        return rollbackAndRespond(401, {
+          success: false,
+          code: AUTH_ERROR_CODES.PASSWORD_INCORRECT,
+          message: "Password is incorrect",
+        });
+      }
     }
 
     avatarUrl = user.avatar_url;
@@ -1086,6 +1095,10 @@ const deleteUser = async (req, res) => {
  * @route POST /api/users/:id/deletion-preview
  * @access Private (Requires authentication and password verification)
  */
+// The route handler: two arguments only, so nothing a request carries (nor
+// Express's `next`) can ever reach the options of runAccountDeletion.
+const deleteUser = (req, res) => runAccountDeletion(req, res);
+
 const deletionPreview = async (req, res) => {
   try {
     const userId = parseInt(req.params.id, 10);
@@ -1322,4 +1335,5 @@ const deletionPreview = async (req, res) => {
 module.exports = {
   deleteUser,
   deletionPreview,
+  runAccountDeletion,
 };

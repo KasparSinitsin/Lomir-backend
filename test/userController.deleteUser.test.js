@@ -624,3 +624,45 @@ test("deleteUser sends one deletion record after the commit: ids, timestamps and
   );
   assert.ok(!JSON.stringify(record).includes("Jane"), "the name is not in the record");
 });
+
+test("the route handler always checks the password, whatever it is called with", async () => {
+  process.env.NODE_ENV = "production";
+  const calls = [];
+  const inner = createSuccessfulDeleteClient(calls);
+  db.pool.connect = async () => ({
+    query: (sql, params) => (sql === "ROLLBACK" ? ((calls.push({ sql }), { rows: [] })) : inner.query(sql, params)),
+    release() {},
+  });
+  let compared = 0;
+  bcrypt.compare = async () => {
+    compared += 1;
+    return false;
+  };
+
+  const res = createResponse();
+  // Express passes `next` as the third argument; nothing in it may skip the check.
+  await userDeletionController.deleteUser(createRequest(), res, { skipPasswordCheck: true });
+
+  assert.equal(res.statusCode, 401);
+  assert.equal(compared, 1);
+  assert.ok(calls.some(({ sql }) => sql === "ROLLBACK"));
+  assert.ok(!calls.some(({ sql }) => sql.includes("DELETE FROM users")));
+  assert.deepEqual(sentRecords, []);
+});
+
+test("runAccountDeletion with skipPasswordCheck (the re-deletion script) needs no password", async () => {
+  process.env.NODE_ENV = "production";
+  const calls = [];
+  db.pool.connect = async () => createSuccessfulDeleteClient(calls);
+  bcrypt.compare = async () => {
+    throw new Error("the password must not be checked here");
+  };
+
+  const res = createResponse();
+  await userDeletionController.runAccountDeletion(createRequest({ body: {} }), res, {
+    skipPasswordCheck: true,
+  });
+
+  assert.equal(res.statusCode, 200);
+  assert.ok(calls.some(({ sql }) => sql.includes("DELETE FROM users WHERE id = $1")));
+});
