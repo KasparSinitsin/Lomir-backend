@@ -13,6 +13,18 @@ const originalConnect = db.pool.connect;
 const originalProcess = fileDeletionQueue.processFileDeletions;
 const originalFetch = global.fetch;
 
+// A unit test must never reach a real database: local development points at the
+// live one. Every query path is replaced below; these fail loudly if one is not.
+const originalPoolQuery = db.pool.query;
+test.beforeEach(() => {
+  db.pool.query = async () => {
+    throw new Error("real database call in a unit test");
+  };
+});
+test.after(() => {
+  db.pool.query = originalPoolQuery;
+});
+
 test.beforeEach(() => {
   global.fetch = async () => {
     throw new Error("network call in a cleanup test");
@@ -20,8 +32,13 @@ test.beforeEach(() => {
 });
 
 test.afterEach(() => {
-  db.pool.connect = originalConnect;
+  db.pool.connect = async () => {
+    throw new Error("real database connection in a unit test");
+  };
   fileDeletionQueue.processFileDeletions = originalProcess;
+});
+test.after(() => {
+  db.pool.connect = originalConnect;
 });
 
 test.after(() => {

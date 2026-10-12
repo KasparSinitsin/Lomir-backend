@@ -18,6 +18,18 @@ const originalQuery = db.query;
 const originalDelete = imagekitUtils.deleteImageKitFileWithResult;
 const originalFetch = global.fetch;
 
+// A unit test must never reach a real database: local development points at the
+// live one. Every query path is replaced below; these fail loudly if one is not.
+const originalPoolQuery = db.pool.query;
+test.beforeEach(() => {
+  db.pool.query = async () => {
+    throw new Error("real database call in a unit test");
+  };
+});
+test.after(() => {
+  db.pool.query = originalPoolQuery;
+});
+
 // Nothing here may reach ImageKit (the local .env holds real keys).
 test.beforeEach(() => {
   global.fetch = async () => {
@@ -31,6 +43,7 @@ test.beforeEach(() => {
 test.afterEach(() => {
   db.query = originalQuery;
 });
+// db.query is replaced per test; outside a test it would reach db.pool.query above.
 
 test.after(() => {
   imagekitUtils.deleteImageKitFileWithResult = originalDelete;
