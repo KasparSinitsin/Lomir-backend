@@ -36,6 +36,7 @@ test("a migration that rewrites or deletes rows is never on the list", () => {
     "add_team_ids_to_clipboard_prose_dms",
     "add_team_ids_to_legacy_marker_dms",
     "scrub_real_names_from_deletion_messages",
+    "scrub_mention_labels_of_deleted_accounts",
   ]) {
     assert.ok(!allowed.includes(held), held);
   }
