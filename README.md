@@ -28,8 +28,8 @@ To test the live demo, anyone can just **register their own account** directly i
 
 ## Features
 
-- **Authentication** — JWT-based registration, login, email verification, password reset, and verified email change. The session JWT is delivered as an `httpOnly`, `sameSite` cookie (never in the response body or readable by frontend JavaScript); auth middleware and the Socket.IO handshake read it from the cookie, with the `Authorization: Bearer` header kept as a fallback for API clients. Transactional emails are sent through Brevo's transactional HTTPS API (Render blocks outbound SMTP). Registration protected by Cloudflare Turnstile CAPTCHA (feature-flagged for local dev). Registration requires explicit acceptance of Terms of Service, acknowledgement of the Privacy Policy, and confirmation of minimum age (16+); the version of each legal document is stamped on the user row at sign-up. Unverified accounts are deleted after their verification link expires plus a one-hour buffer, with cleanup running every six hours and once on server startup. Changing an account email is double-opt-in: the current-password-protected request stores the new address as `pending_email` with a 24-hour token and sends a verification link to it, and the account email only switches over once the new address confirms — the old address stays active until then. Expired email-change tokens are cleared by the same cleanup pass as password-reset tokens.
-- **User Profiles** — CRUD with avatar uploads (ImageKit), interest tags, badge portfolios, and user-controlled public/private visibility. Verified accounts remain private by default until the user opts in to public visibility.
+- **Authentication** — JWT-based registration, login, email verification, password reset, and verified email change. The session JWT is delivered as an `httpOnly`, `sameSite` cookie (never in the response body or readable by frontend JavaScript); auth middleware and the Socket.IO handshake read it from the cookie, with the `Authorization: Bearer` header kept as a fallback for API clients. Transactional emails are sent through Brevo's transactional HTTPS API (Render blocks outbound SMTP). Registration protected by Cloudflare Turnstile CAPTCHA (feature-flagged for local dev). Registration requires explicit acceptance of Terms of Service, acknowledgement of the Privacy Policy, and confirmation of minimum age (16+); the version of each legal document is stamped on the user row at sign-up. Unverified accounts are deleted after their verification link expires plus a one-hour buffer, with cleanup running every six hours and once on server startup. Changing an account email is double-opt-in: the current-password-protected request stores the new address as `pending_email` with a 24-hour token and sends a verification link to it, and the account email only switches over once the new address confirms — the old address stays active until then. Expired email-change tokens are cleared by the same cleanup pass as password-reset tokens. Registration takes no avatar: a picture is uploaded from the profile once the email address is confirmed, so an account that is never confirmed leaves no file in ImageKit (the multipart form is still read; a file in it is dropped).
+- **User Profiles** — CRUD with avatar uploads (ImageKit, from the profile after the email confirmation), interest tags, badge portfolios, and user-controlled public/private visibility. Verified accounts remain private by default until the user opts in to public visibility.
 - **Languages (English / German)** — Each user has a `preferred_language`, and the five user-facing transactional emails are sent in it (`config/languages.js`, `services/emailCopy.js`). Email is the one thing the backend words itself: everywhere else it sends data and stable `code`s (`config/teamErrors.js`, `contactErrors.js`, `searchErrors.js`) and the frontend writes the sentence
 - **User Blocking** — Authenticated users can manage a private blocklist. Block relationships hide profiles and user-search results where requester context is available, suppress team application visibility, disable direct messaging, and exclude blocked users from team chat realtime events where needed.
 - **Teams** — Create, join, manage members, assign roles, and archive teams. Deleting a team with other members archives it (read-only for role management and for handling applications and invitations; members can still be removed and can still leave), and everyone with an open application or invitation is told by direct message from the owner — see [Team Deletion](#team-deletion)
@@ -39,8 +39,8 @@ To test the live demo, anyone can just **register their own account** directly i
 - **Chat** — Real-time direct and team group messaging via Socket.IO, including typing indicators, read receipts, message replies (reply-to with sender preview), @mention notifications, and structured system messages for team events (member join/leave/removal, role changes, invitation responses, application decisions, role lifecycle, team deletion)
 - **Badge System** — 30 badges across 5 categories; award badges to teammates with reasons and context
 - **Notifications** — In-app notifications for invitations, applications, badge awards, messages, @mentions, and role lifecycle events; each notification deep-links to the exact message that triggered it. The unread-count response also returns the oldest unread notification per type, so a client can walk a type-group from oldest to newest, and both notifications and messages can be cleared in one call via mark-all-as-read endpoints. Stale notifications are cleaned up automatically on member removal, role deletion, team deletion, once a team application is handled, and once an invitation is resolved (accepted, declined, or withdrawn)
-- **Account Deletion** — Full transactional account deletion with impact preview, automatic team ownership transfer, role reopening, and "Former Lomir User" handling for preserved references
-- **Contact Form & Reports** — Public `/api/contact` endpoint with Joi validation, Turnstile CAPTCHA, in-memory file attachments (up to 3 files, 5 MB each, 10 MB total), and email delivery via Brevo. Abuse/content reports are persisted in `contact_reports` with a reference ID before the email is forwarded, so reports are not lost if email delivery fails; reporters also receive an automated acknowledgement-of-receipt email with their reference ID (sent only for `Report content or abuse` submissions, best-effort so a failed receipt never fails the request); unexpected body fields are stripped defensively so multipart attachment fields cannot break validation; rate-limited to 5 submissions/hr
+- **Account Deletion** — Full transactional account deletion with impact preview, automatic team ownership transfer, role reopening, and "Former Lomir User" handling for preserved references; uploaded files (avatar, direct-message images and files, solo teams' chat files) are deleted through a retried queue, and an id-only deletion record lets the deletion be made again after a backup restore — see [Account Deletion](#account-deletion)
+- **Contact Form & Reports** — Public `/api/contact` endpoint with Joi validation, Turnstile CAPTCHA, in-memory file attachments (up to 3 files, 5 MB each, 10 MB total), and email delivery via Brevo. Abuse/content reports are persisted in `contact_reports` with a reference ID before the email is forwarded, so reports are not lost if email delivery fails; reporters also receive an automated acknowledgement-of-receipt email with their reference ID, which also says they will learn the outcome (sent only for `Report content or abuse` submissions, best-effort so a failed receipt never fails the request); unexpected body fields are stripped defensively so multipart attachment fields cannot break validation; rate-limited to 5 submissions/hr
 - **Geocoding** — Location enrichment via Nominatim: resolves a full location object (postal code, city, district, state, country, coordinates) from partial input. Built-in postal-code-to-district lookup for Berlin and Frankfurt (200+ mappings) used as a fast offline fallback before the API call. Works with country alone — does not require both postal code and city.
 - **Security** — `httpOnly` cookie sessions (JWT not exposed to JavaScript), CSRF origin/referer validation on all state-changing requests, Helmet security headers, request body size cap (1 MB), rate limiting on auth, contact, and geocoding endpoints, credentialed CORS allowlist (applied before body parsing), password policy enforcement, Socket.IO conversation/message authorization, production error message scrubbing
 
@@ -159,6 +159,10 @@ Then start the [frontend](https://github.com/KasparSinitsin/Lomir-frontend) and 
 | `npm start` | Start production server |
 | `npm run demo-db` | Build a NEW, LOCAL database with structure, focus areas, badges and an invented demo world to try the app (`-- --empty`: without the people; see [Getting Started](#getting-started)) |
 | `npm run migrate` | Run the database migrations in order (`scripts/migrate.js`; see [Database Migrations](#database-migrations)) |
+| `npm run migrate:one -- <name>` | Run ONE migration from a short allow-list of additive table migrations (a dry run unless `--run`; prints the database host) |
+| `npm run import:tag-translations` | Import the German focus-area names from `src/database/seeds/tag-translations.de.json` (a dry run unless `--apply`) |
+| `npm run redelete -- --file=<records>` | After a database backup was restored: make the account and team deletions again from the deletion records (a dry run unless `--apply`; see [Account Deletion](#account-deletion)) |
+| `npm run files:orphans` | Read-only count of the ImageKit files nothing in the database points at any more, per folder |
 | `npm test` | Run tests (`node --test`) |
 | `npm run backup` | Create a database dump now (see [Database Backups](#database-backups)) |
 | `npm run backup:status` | List existing dumps with their age |
@@ -168,7 +172,7 @@ Then start the [frontend](https://github.com/KasparSinitsin/Lomir-frontend) and 
 
 ### Test Notes
 
-`npm test` runs every file in `test/` (62 files). They are unit tests: controllers are driven against a mocked database pool and socket layer, and pure helpers run directly. A mock cannot run SQL, so the migration tests read each migration as text (importing one would open the application's database pool) and pin its rules; the SQL itself is exercised separately on a disposable database with synthetic rows, never production.
+`npm test` runs every file in `test/` (90 files). They are unit tests: controllers are driven against a mocked database pool and socket layer, and pure helpers run directly. A mock cannot run SQL, so the migration tests read each migration as text (importing one would open the application's database pool) and pin its rules; the SQL itself is exercised separately on a disposable database with synthetic rows, never production.
 
 For search work, run the focused search suite:
 
@@ -199,6 +203,7 @@ Lomir-backend/
 │   │   ├── database.js         # PostgreSQL connection pool (Neon)
 │   │   ├── imagekit.js         # ImageKit client configuration
 │   │   ├── legalDocuments.js   # Current version constants for Terms, Privacy Policy, and age confirmation
+│   │   ├── authErrors.js       # Failure codes of the account endpoints (registration, login, verification, password and email changes)
 │   │   ├── languages.js        # Languages on offer + country → language map (Joi validation, email template choice)
 │   │   ├── roleDefaults.js     # The name a role carries when nobody gave one (stored data, stays English)
 │   │   ├── contactTopics.js    # Contact-form topics as stable codes (a DSA report is decided by code, not by label)
@@ -269,6 +274,11 @@ Lomir-backend/
 │   │   ├── fileValidation.js
 │   │   ├── fileCleanup.js      # 60-day chat-file expiry (queues the files for deletion) + expiry notices
 │   │   ├── fileDeletionQueue.js # ImageKit files still to delete: queued in the deleting transaction, retried until gone
+│   │   ├── deletionRecord.js   # The id-only record of an account or team deletion, mailed to the operator inbox (re-deletion after a restore)
+│   │   ├── mentionScrub.js     # Gives a deleted person's @-mention labels the placeholder, anchored on the id
+│   │   ├── passwordRules.js    # The password rule in one place (8+ characters, a letter and a number of any script)
+│   │   ├── tagTranslations.js  # The translated focus-area names that `GET /api/tags/translations?lang=` returns
+│   │   ├── tagTranslationImport.js # The rules of `npm run import:tag-translations`, without I/O
 │   │   ├── jwtUtils.js
 │   │   ├── authCookie.js       # httpOnly session-cookie set/clear options + handshake cookie parsing
 │   │   ├── allowedOrigins.js   # Shared CORS/CSRF origin allowlist + Referer parsing
@@ -280,7 +290,8 @@ Lomir-backend/
 │   │   ├── searchQueryBuilder.js # Shared search distance/filter/sort SQL builders
 │   │   ├── search/             # The search controller's pieces: searchParamParser (query string → typed config),
 │   │   │                       #   searchSqlBuilders (filters, ORDER BY), searchExecution (the paginated queries),
-│   │   │                       #   searchResultProcessing (tag/badge enrichment, match scoring, privacy sanitizers)
+│   │   │                       #   searchResultProcessing (tag/badge enrichment, match scoring, privacy sanitizers),
+│   │   │                       #   tagNameMatch and badgeNameTranslations (a German name finds the English-named focus area or badge)
 │   │   ├── user/
 │   │   │   └── userControllerHelpers.js # Pure helpers shared by the profile and account-deletion controllers
 │   │   ├── eventNameToken.js   # Builds the `id:name` token the frontend's event parser reads (renames and deletions resolve at display time)
@@ -304,7 +315,12 @@ Lomir-backend/
 │       │   └── *.js            # One file per step: schema changes, plus data migrations that rewrite stored chat messages
 │       └── seeds/              # `tag-translations.de.json`: the German tag names, imported by `npm run import:tag-translations`
 ├── scripts/                    # EVERY script lives here, never in the repository root (a test enforces it)
+│   ├── README.md                          # What each script does
 │   ├── migrate.js                         # Entry point of `npm run migrate`
+│   ├── run-migration.js                   # Entry point of `npm run migrate:one` (allow-list, dry run unless --run)
+│   ├── import-tag-translations.js         # Entry point of `npm run import:tag-translations`
+│   ├── redelete-after-restore.js          # Entry point of `npm run redelete`; its logic is in `redelete/`
+│   ├── count-orphaned-files.js            # Entry point of `npm run files:orphans`; its counting is in `orphans/`
 │   ├── demo-database.js                   # Entry point of `npm run demo-db`
 │   ├── demo/                              # Everything `npm run demo-db` needs; none of it is loaded by the server
 │   │   ├── guard.js                       # Keeps the command off every database that is not local and empty
@@ -313,8 +329,8 @@ Lomir-backend/
 │   │   ├── reference/                     # Product content, not personal data: `taxonomy.json` (focus areas) and `badges.json`
 │   │   ├── data/                          # The invented world: `demoData.js` (people, teams, awards …) and `demoChat.js` (messages)
 │   │   └── seed/                          # One file per part: people, teams, badges, chat, notifications
-│   ├── backup-db.sh / install-backup-agent.sh # Database backups (see Database Backups)
-├── test/                       # 81 test files, named <subject>.<aspect>.test.js; by area:
+│   └── backup-db.sh / install-backup-agent.sh # Database backups (see Database Backups)
+├── test/                       # 90 test files, named <subject>.<aspect>.test.js; by area:
 │   │                           #   controllers  authController.*, userController.*, teamController.*,
 │   │                           #                teamApplicationsController.archivedTeam, teamReadController.*,
 │   │                           #                invitationController*, vacantRoleController, messageController.*,
@@ -331,6 +347,8 @@ Lomir-backend/
 │   │                           #   infrastructure  csrfProtection, tokenExpiry, cleanupArchivedTeams,
 │   │                           #                cleanupUnverifiedAccounts, replySnapshot
 │   │                           #   location  locationDerivation, postalCodeCountry, geocoding*
+│   │                           #   files and deletion  imagekitUtils.deletion, fileDeletionQueue, fileCleanup.expiredFiles,
+│   │                           #                deletionRecord, redeletion, countOrphans, registration.noAvatar
 │   └── messageController.bodyCasing.test.js # e.g. drives controllers with the snake_case bodies the frontend sends
 ├── nodemon.json                # Dev watcher config (watches src/ only)
 ├── .env                        # Environment variables (not committed)
@@ -365,7 +383,7 @@ All routes are prefixed with `/api`.
 
 ## Error Codes
 
-Failures a normal user can reach carry a stable `code` next to the English `message`: `config/contactErrors.js` (`/api/contact`), `config/searchErrors.js` and `config/teamErrors.js` (invitations, applications, vacant roles, role changes, member changes, team reads). The frontend words the sentence in the reader's language from the code; `message` stays so an older frontend keeps working and no deploy order arises. Only races a user can run into are coded — for example two admins handling the same request, or a team archived while a panel was open. Guards the UI already prevents stay prose. Details that only the backend knows travel in an optional `values` object. Each file's header states the rules; read `contactErrors.js` first, it is the precedent.
+Failures a normal user can reach carry a stable `code` next to the English `message`: `config/authErrors.js` (the account endpoints), `config/contactErrors.js` (`/api/contact`), `config/searchErrors.js` and `config/teamErrors.js` (invitations, applications, vacant roles, role changes, member changes, team reads). The frontend words the sentence in the reader's language from the code; `message` stays so an older frontend keeps working and no deploy order arises. Only races a user can run into are coded — for example two admins handling the same request, or a team archived while a panel was open. Guards the UI already prevents stay prose. Details that only the backend knows travel in an optional `values` object. Each file's header states the rules; read `contactErrors.js` first, it is the precedent.
 
 ---
 
@@ -401,6 +419,7 @@ The team search response intentionally returns `teamavatarUrl` from the SQL alia
 - The runner stops at the first failed step, prints the error and `Migration failed`, and exits with code 1; the steps after it do not run. (Until 2026-10-11 it printed "Migration completed successfully" with exit code 0 after a failure.) Still verify a data migration from outside — a read-only query that counts what is left — rather than trusting the exit code alone.
 - **Order matters.** A step that corrects an earlier one (it recognises a row by the wrong value the first one wrote) must stay after it.
 - A data migration that reads stored text needs the frontend parser that understands the new shape to be live wherever the database is read; run it after that release, not before.
+- **`npm run migrate:one -- <name>`** runs ONE migration, and only one from a short allow-list of additive table migrations (a new empty table may land before the code that writes to it; everything that rewrites rows waits for the full `migrate`). Without `--run` it only shows the migration and the database host.
 - Back up first (see [Database Backups](#database-backups)).
 
 ---
@@ -491,7 +510,7 @@ The public `GET /api/geocoding/postal-code/:code` endpoint is rate-limited (60 r
 | Job | Schedule | Description |
 |---|---|---|
 | File cleanup | Daily at 02:00 (Europe/Berlin) and once on server startup | Expires chat images and files after 60 days, then retries every ImageKit deletion still listed in `pending_file_deletions`; a file leaves that list only when ImageKit confirms it is gone. The startup run matters on hosts that sleep through the cron time |
-| Unverified account cleanup | Every 6 hours and once on server startup | Deletes accounts where email verification expired more than 1 hour ago, including on hosts that may sleep through the cron time |
+| Unverified account cleanup | Every 6 hours and once on server startup | Deletes accounts where email verification expired more than 1 hour ago (an avatar from before registration stopped taking one is queued for deletion), including on hosts that may sleep through the cron time |
 | Archived team cleanup | Daily at 03:30 (Europe/Berlin) and once on server startup | Permanently deletes teams (with their chat, members, and avatar) archived longer than `ARCHIVED_TEAM_GRACE_DAYS` (default 14); safety net for deleted teams whose members never leave, including on hosts that may sleep through the cron time |
 
 The unverified-account cleanup first clears optional references that may point at
@@ -537,7 +556,7 @@ Full transactional account deletion. Key highlights:
 - **Deletion record** — After the commit, one internal mail goes to the operator inbox (`CONTACT_INBOX_EMAIL`, else the sender address) with a JSON line: the account id, its creation time, the chosen successors as id pairs and the solo teams deleted with it. Ids and timestamps only. After a database restore, `npm run redelete` reads these records and makes the deletions again (see `scripts/README.md`). Not sent for a local database
 - **Uploaded files** — The avatar, the images and files of the user's direct messages, and the chat files and avatar of sole-owner teams are queued in `pending_file_deletions` inside the transaction and deleted from ImageKit right after the commit; a failure stays queued for the daily cleanup and the next server start. Files the user posted in team chats stay with their messages and expire after 60 days
 - **Names in stored text** — A person's name is removed from team-chat messages and notifications that mention it. Which stored formats carry a name, whose, and whether the sender is that person is recorded per format in `config/nameBearingMessageFormats.js`; the scrub is derived from that table, so a new event format cannot be forgotten. @-mention tokens (`@[Name](id)`) of the deleted id get the placeholder label in every message, anchored on the id, never on a name (`utils/mentionScrub.js`); notifications holding such a token are deleted
-- **Automated tests** cover the deletion scenarios, the preview, the name scrub (prefixes, spellings, notifications) and the name resolution (`userController.deleteUser`, `deletionPreview`, `resolveNames`, `userDeletion.*`)
+- **Automated tests** cover the deletion scenarios, the preview, the name scrub (prefixes, spellings, notifications), the mention labels, the file queue, the deletion record and the re-deletion (`userController.deleteUser`, `deletionPreview`, `resolveNames`, `userDeletion.*`, `mentionLabels.migration`, `fileDeletionQueue`, `deletionRecord`, `redeletion`)
 
 ---
 
@@ -569,7 +588,7 @@ Covered by `teamController.deleteTeam.test.js`, `teamController.deleteTeam.reque
 | Security headers | Helmet middleware sets standard HTTP security headers (including HSTS) on every response |
 | CSRF protection | Global `csrfProtection` middleware validates the `Origin`/`Referer` of every state-changing request (non-`GET`/`HEAD`/`OPTIONS`) against the CORS allowlist; cookie-authenticated requests without an origin are rejected. Non-browser API clients using `Authorization: Bearer` are unaffected |
 | Request body cap | `express.json` and `express.urlencoded` limited to 1 MB |
-| Rate limiting | 8 req/15 min on login + password reset; 15 req/15 min on authenticated account changes (change email / change password); 10 req/hr on registration; 20 req/hr on username availability; 5 req/hr on contact form; 60 req/15 min on geocoding |
+| Rate limiting | 8 req/15 min on login, password reset and resending the verification email; 15 req/15 min on authenticated account changes (change email / change password); 10 req/hr on registration; 20 req/hr on username availability; 5 req/hr on contact form; 60 req/15 min on geocoding |
 | CAPTCHA | Cloudflare Turnstile on registration and the contact form |
 | CORS | Allowlist: exact match for production URL + regex for Vercel preview deploys |
 | Password policy | Min 8 chars, at least one letter and one number (registration, reset, change) |
@@ -587,7 +606,7 @@ Covered by `teamController.deleteTeam.test.js`, `teamController.deleteTeam.reque
 
 - **`npm install` fails on bcrypt** — Install native build tools (see Prerequisites), then `rm -rf node_modules package-lock.json && npm install`
 - **CORS errors** — Make sure `CLIENT_URL` in `.env` matches your frontend origin (`http://localhost:5173`)
-- **Database connection issues** — Verify `DATABASE_URL` is correct and you have internet access
+- **Database connection issues** — Verify `DATABASE_URL` is correct and that PostgreSQL is running (local) or reachable (remote)
 - **Email provider is not configured** — Set `BREVO_API_KEY` and `BREVO_SENDER_EMAIL` (the sender must be verified in Brevo)
 - **Port already in use** — `lsof -i :5001` to find the process, `kill -9 <PID>` to free the port
 - **CAPTCHA not loading locally** — Expected when no Turnstile key is configured; the CAPTCHA check runs in the deployed environment.
