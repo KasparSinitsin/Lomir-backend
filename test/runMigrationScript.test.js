@@ -15,8 +15,12 @@ const pkg = JSON.parse(read("package.json"));
 const listBlock = script.slice(script.indexOf("const EARLY_SAFE = {"), script.indexOf("};", script.indexOf("const EARLY_SAFE = {")));
 const allowed = [...listBlock.matchAll(/^  (\w+):/gm)].map((m) => m[1]);
 
-test("exactly the two additive table migrations may start early", () => {
-  assert.deepEqual(allowed, ["create_tag_category_tables", "create_tag_translation_tables"]);
+test("exactly the three additive table migrations may start early", () => {
+  assert.deepEqual(allowed, [
+    "create_tag_category_tables",
+    "create_tag_translation_tables",
+    "create_pending_file_deletions",
+  ]);
 });
 
 test("every allowed migration exists and is registered in index.js", () => {

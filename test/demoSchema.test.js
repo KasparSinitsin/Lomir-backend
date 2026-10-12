@@ -29,11 +29,11 @@ test("schema.sql holds the tables the application reads and writes", () => {
   for (const name of [
     "users", "teams", "team_members", "team_tags", "team_vacant_roles", "team_applications", "team_invitations",
     "tags", "tag_categories", "tag_supercategories", "tag_translations", "badges", "badge_awards", "user_tags",
-    "messages", "notifications", "contact_reports", "user_blocks",
+    "messages", "notifications", "contact_reports", "user_blocks", "pending_file_deletions",
   ]) {
     assert.ok(tables.includes(name), `no table ${name}`);
   }
-  assert.equal(tables.length, 24);
+  assert.equal(tables.length, 25);
   assert.match(schema, /CREATE MATERIALIZED VIEW public\.v_user_badges_with_category_totals/);
 });
 

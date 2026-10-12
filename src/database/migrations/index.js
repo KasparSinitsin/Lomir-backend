@@ -68,6 +68,7 @@ const addTeamIdsToClipboardProseDms = require(
 const mergeLegacyTags = require("./merge_legacy_tags");
 const createTagCategoryTables = require("./create_tag_category_tables");
 const createTagTranslationTables = require("./create_tag_translation_tables");
+const createPendingFileDeletions = require("./create_pending_file_deletions");
 
 const runMigrations = async () => {
   try {
@@ -150,6 +151,11 @@ const runMigrations = async () => {
     // The empty tables for the translated tag names (item 11). Needs the category tables
     // above. The German names arrive through scripts/import-tag-translations.js.
     await createTagTranslationTables();
+
+    // The list of ImageKit files still to delete, retried until they are gone
+    // (item 59). Additive and empty; runs before item 35 so a held data
+    // migration never keeps it from being created.
+    await createPendingFileDeletions();
 
     // Team ids into the quoted team of the legacy 📋 prose DMs (item 35).
     // Needs the item-35 frontend parser live. Dry run: deletion-audit/63.

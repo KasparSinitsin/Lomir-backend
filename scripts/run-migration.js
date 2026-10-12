@@ -28,6 +28,8 @@ const EARLY_SAFE = {
   create_tag_category_tables:
     "adds two tables and two columns; moves the one stray tag 21 to another supercategory (a grouping only)",
   create_tag_translation_tables: "adds three EMPTY tables; needs the category tables",
+  create_pending_file_deletions:
+    "adds one EMPTY table, the ImageKit files still to delete (item 59); must exist before that code runs",
 };
 
 const args = process.argv.slice(2);
