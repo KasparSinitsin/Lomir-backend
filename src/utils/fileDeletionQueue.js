@@ -84,6 +84,34 @@ const queueMessageAttachments = async (queryable, { where, params = [] }, source
 };
 
 /**
+ * Queues every ImageKit file of a team that is about to be deleted: the image
+ * and file of each chat message, and the team avatar. Call it inside the
+ * deleting transaction, before the messages and the team row are deleted.
+ *
+ * @returns {Promise<number[]>} the ids of the queued rows
+ */
+const queueTeamFiles = async (queryable, teamId, source) => {
+  const attachmentIds = await queueMessageAttachments(
+    queryable,
+    { where: "m.team_id = $1", params: [teamId] },
+    source,
+  );
+
+  const { rows } = await queryable.query(
+    `INSERT INTO pending_file_deletions (file_url, file_id, source)
+     SELECT t.teamavatar_url, t.teamavatar_file_id, $3::text
+     FROM teams t
+     WHERE t.id = $1
+       AND (t.teamavatar_file_id IS NOT NULL
+            OR position($2::text IN coalesce(t.teamavatar_url, '')) > 0)
+     RETURNING id`,
+    [teamId, imagekitUtils.IMAGEKIT_HOST, source],
+  );
+
+  return [...attachmentIds, ...rows.map((row) => Number(row.id))];
+};
+
+/**
  * Tries to delete queued files. A file that is gone (deleted, not found, or
  * nothing ImageKit could delete) leaves the list; a failure stays on it with
  * the attempt counted.
@@ -174,6 +202,7 @@ module.exports = {
   DEFAULT_BATCH_SIZE,
   queueFiles,
   queueMessageAttachments,
+  queueTeamFiles,
   processFileDeletions,
   processFileDeletionsSoon,
 };

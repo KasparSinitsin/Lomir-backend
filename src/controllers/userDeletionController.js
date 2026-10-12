@@ -4,7 +4,7 @@ const { idNameToken } = require("../utils/eventNameToken");
 const { DEFAULT_ROLE_NAME } = require("../config/roleDefaults");
 const { pool } = db;
 const bcrypt = require("bcrypt");
-const { deleteImageKitFile } = require("../utils/imagekitUtils");
+const fileDeletionQueue = require("../utils/fileDeletionQueue");
 const {
   buildUserDisplayName,
   toIsoString,
@@ -168,6 +168,7 @@ const deleteUser = async (req, res) => {
   let dmPartnerIds = [];
   let ownershipTransferEvents = [];
   let reopenedRoleEvents = [];
+  const queuedFileIds = [];
 
   try {
     const userId = parseInt(req.params.id, 10);
@@ -388,6 +389,20 @@ const deleteUser = async (req, res) => {
       teamCount: memberships.length,
       dmPartnerCount: dmPartnerIds.length,
     });
+
+    // The images and files of these direct messages are queued in this
+    // transaction and deleted from ImageKit after the commit (STATUS item 59,
+    // privacy §16). Once the rows are gone nothing would point at them.
+    queuedFileIds.push(
+      ...(await fileDeletionQueue.queueMessageAttachments(
+        client,
+        {
+          where: "(m.sender_id = $1 OR m.receiver_id = $1) AND m.team_id IS NULL",
+          params: [userId],
+        },
+        fileDeletionQueue.FILE_DELETION_SOURCE.ACCOUNT_DELETION,
+      )),
+    );
 
     await client.query(
       `DELETE FROM messages
@@ -651,6 +666,15 @@ const deleteUser = async (req, res) => {
       await client.query("DELETE FROM team_applications WHERE team_id = $1", [
         team.teamId,
       ]);
+      // This solo team is deleted here, not through permanentlyDeleteTeam, so
+      // its chat attachments and its avatar are queued here (item 59).
+      queuedFileIds.push(
+        ...(await fileDeletionQueue.queueTeamFiles(
+          client,
+          team.teamId,
+          fileDeletionQueue.FILE_DELETION_SOURCE.ACCOUNT_DELETION,
+        )),
+      );
       await client.query("DELETE FROM messages WHERE team_id = $1", [team.teamId]);
       await client.query(
         `
@@ -962,6 +986,14 @@ const deleteUser = async (req, res) => {
 
     logDeletionPhase("Phase E - delete user row", { userId });
 
+    queuedFileIds.push(
+      ...(await fileDeletionQueue.queueFiles(
+        client,
+        [{ url: avatarUrl, fileId: avatarFileId }],
+        fileDeletionQueue.FILE_DELETION_SOURCE.ACCOUNT_DELETION,
+      )),
+    );
+
     await client.query("DELETE FROM users WHERE id = $1", [userId]);
     await client.query("COMMIT");
     transactionOpen = false;
@@ -972,9 +1004,10 @@ const deleteUser = async (req, res) => {
     });
 
     try {
-      if (avatarUrl || avatarFileId) {
-        await deleteImageKitFile(avatarUrl, avatarFileId);
-      }
+      // Avatar, DM attachments and solo-team files: deleted from ImageKit now,
+      // without holding the response; a failure stays queued for the daily
+      // cleanup and the next server start.
+      fileDeletionQueue.processFileDeletionsSoon(queuedFileIds);
 
       const io =
         req.app && typeof req.app.get === "function" ? req.app.get("io") : null;

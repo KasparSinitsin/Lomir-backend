@@ -4,8 +4,25 @@ const assert = require("node:assert/strict");
 const bcrypt = require("bcrypt");
 const db = require("../src/config/database");
 const userDeletionController = require("../src/controllers/userDeletionController");
+const fileDeletionQueue = require("../src/utils/fileDeletionQueue");
 
 const originalConnect = db.pool.connect;
+const originalQuery = db.query;
+const originalProcessSoon = fileDeletionQueue.processFileDeletionsSoon;
+
+// What the controller hands to the ImageKit deletion after the commit. The real
+// function would query the database outside the mocked client, so it is
+// replaced in every test, and db.query fails loudly if anything reaches it.
+let handedOver = [];
+test.beforeEach(() => {
+  handedOver = [];
+  fileDeletionQueue.processFileDeletionsSoon = (ids) => {
+    handedOver.push(ids);
+  };
+  db.query = async () => {
+    throw new Error("real database call in a deleteUser test");
+  };
+});
 const originalCompare = bcrypt.compare;
 const originalNodeEnv = process.env.NODE_ENV;
 
@@ -63,7 +80,7 @@ function createRequest({
 // deleted), one shared team (20, transferred) with two successor candidates —
 // user 11 (admin, earliest joined = the DEFAULT candidates[0]) and user 12
 // (member). Records every query into `calls`.
-function createSuccessfulDeleteClient(calls) {
+function createSuccessfulDeleteClient(calls, { avatarUrl = null, avatarFileId = null } = {}) {
   return {
     async query(sql, params = []) {
       calls.push({ sql, params });
@@ -80,12 +97,33 @@ function createSuccessfulDeleteClient(calls) {
               first_name: "Jane",
               last_name: "Doe",
               username: "janed",
-              avatar_url: null,
-              avatar_file_id: null,
+              avatar_url: avatarUrl,
+              avatar_file_id: avatarFileId,
               password_hash: "stored-hash",
             },
           ],
         };
+      }
+
+      // The ImageKit deletion queue (item 59): DM attachments of user 7, the
+      // solo team 10's chat attachments and avatar, and the user's avatar.
+      if (sql.includes("INSERT INTO pending_file_deletions")) {
+        if (sql.includes("FROM messages m") && sql.includes("m.receiver_id = $1")) {
+          assert.equal(params[0], 7);
+          return { rows: [{ id: 501 }] };
+        }
+        if (sql.includes("FROM messages m") && sql.includes("m.team_id = $1")) {
+          assert.equal(params[0], 10, "only the solo team's chat is queued");
+          return { rows: [{ id: 502 }] };
+        }
+        if (sql.includes("FROM teams t")) {
+          assert.equal(params[0], 10);
+          return { rows: [{ id: 503 }] };
+        }
+        if (sql.includes("unnest")) {
+          return { rows: [{ id: 504 }] };
+        }
+        throw new Error(`Unexpected queue SQL: ${sql}`);
       }
 
       if (sql.includes("FROM team_members tm") && sql.includes("JOIN teams t ON t.id = tm.team_id")) {
@@ -210,6 +248,8 @@ function createSuccessfulDeleteClient(calls) {
 
 test.afterEach(() => {
   db.pool.connect = originalConnect;
+  db.query = originalQuery;
+  fileDeletionQueue.processFileDeletionsSoon = originalProcessSoon;
   bcrypt.compare = originalCompare;
   process.env.NODE_ENV = originalNodeEnv;
 });
@@ -456,4 +496,84 @@ test("deleteUser honors a snake_case ownership override for a non-default succes
     ),
     true,
   );
+});
+
+test("deleteUser queues DM attachments, the solo team's files and the avatar inside the transaction, and hands them over after the commit", async () => {
+  process.env.NODE_ENV = "production";
+
+  const calls = [];
+  const client = createSuccessfulDeleteClient(calls, {
+    avatarUrl: "https://ik.imagekit.io/demo123/lomir/avatars/me_1.png",
+    avatarFileId: "avatar-file-1",
+  });
+  db.pool.connect = async () => client;
+  bcrypt.compare = async () => true;
+
+  const res = createResponse();
+  await userDeletionController.deleteUser(createRequest(), res);
+
+  assert.equal(res.statusCode, 200);
+  const at = (predicate) => calls.findIndex(predicate);
+  const queueDm = at(({ sql }) => sql.includes("INSERT INTO pending_file_deletions") && sql.includes("m.receiver_id = $1"));
+  const deleteDm = at(({ sql }) => sql.includes("DELETE FROM messages") && sql.includes("team_id IS NULL"));
+  const queueTeamChat = at(({ sql }) => sql.includes("INSERT INTO pending_file_deletions") && sql.includes("m.team_id = $1"));
+  const queueTeamAvatar = at(({ sql }) => sql.includes("INSERT INTO pending_file_deletions") && sql.includes("FROM teams t"));
+  const deleteTeamChat = at(({ sql, params }) => sql === "DELETE FROM messages WHERE team_id = $1" && params[0] === 10);
+  const deleteTeam = at(({ sql, params }) => sql.includes("DELETE FROM teams WHERE id = $1") && params[0] === 10);
+  const queueAvatar = at(({ sql }) => sql.includes("INSERT INTO pending_file_deletions") && sql.includes("unnest"));
+  const deleteUserRow = at(({ sql }) => sql.includes("DELETE FROM users WHERE id = $1"));
+  const commit = at(({ sql }) => sql === "COMMIT");
+
+  assert.ok(queueDm >= 0 && queueDm < deleteDm, "DM files are queued before the DMs are deleted");
+  assert.ok(queueTeamChat >= 0 && queueTeamChat < deleteTeamChat, "team chat files before the team chat");
+  assert.ok(queueTeamAvatar > queueTeamChat && queueTeamAvatar < deleteTeam, "the team avatar before the team row");
+  assert.ok(queueAvatar >= 0 && queueAvatar < deleteUserRow, "the avatar before the user row");
+  assert.ok(commit > deleteUserRow);
+  assert.deepEqual(calls[queueAvatar].params, [
+    ["https://ik.imagekit.io/demo123/lomir/avatars/me_1.png"],
+    ["avatar-file-1"],
+    ["account_deletion"],
+  ]);
+  assert.equal(
+    calls.filter(({ sql }) => sql.includes("INSERT INTO pending_file_deletions")).length,
+    4,
+    "the shared team 20 is transferred, not deleted, so its files are not queued",
+  );
+  assert.deepEqual(handedOver, [[501, 502, 503, 504]]);
+});
+
+test("deleteUser hands nothing over when the transaction rolls back", async () => {
+  process.env.NODE_ENV = "production";
+
+  const calls = [];
+  const inner = createSuccessfulDeleteClient(calls);
+  const client = {
+    async query(sql, params) {
+      if (sql === "ROLLBACK") {
+        calls.push({ sql, params });
+        return { rows: [] };
+      }
+      if (sql.includes("DELETE FROM users WHERE id = $1")) {
+        throw new Error("simulated failure before the commit");
+      }
+      return inner.query(sql, params);
+    },
+    release() {},
+  };
+  db.pool.connect = async () => client;
+  bcrypt.compare = async () => true;
+  const originalError = console.error;
+  console.error = () => {};
+
+  const res = createResponse();
+  try {
+    await userDeletionController.deleteUser(createRequest(), res);
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.equal(res.statusCode, 500);
+  assert.ok(calls.some(({ sql }) => sql === "ROLLBACK"));
+  assert.ok(!calls.some(({ sql }) => sql === "COMMIT"));
+  assert.deepEqual(handedOver, [], "a rolled-back deletion deletes no file");
 });

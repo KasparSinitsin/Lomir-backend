@@ -534,6 +534,7 @@ Full transactional account deletion. Key highlights:
 - **Single transaction** — All cleanup runs in one database transaction in phases (A context → B messages and chat → C team ownership → D role and reference cleanup, D2 notifications that name the user → E user row), followed by the Socket.IO events after commit
 - **Badge preservation** — Team names copied to `badge_awards.custom_team_name` before sole-owner teams are deleted
 - **"Former Lomir User"** — Deleted user references display a grey silhouette avatar with no personal info
+- **Uploaded files** — The avatar, the images and files of the user's direct messages, and the chat files and avatar of sole-owner teams are queued in `pending_file_deletions` inside the transaction and deleted from ImageKit right after the commit; a failure stays queued for the daily cleanup and the next server start. Files the user posted in team chats stay with their messages and expire after 60 days
 - **Names in stored text** — A person's name is removed from team-chat messages and notifications that mention it. Which stored formats carry a name, whose, and whether the sender is that person is recorded per format in `config/nameBearingMessageFormats.js`; the scrub is derived from that table, so a new event format cannot be forgotten
 - **Automated tests** cover the deletion scenarios, the preview, the name scrub (prefixes, spellings, notifications) and the name resolution (`userController.deleteUser`, `deletionPreview`, `resolveNames`, `userDeletion.*`)
 
