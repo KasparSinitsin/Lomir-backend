@@ -18,7 +18,6 @@ const {
   resolveUserLanguage,
   warnIfMailLanguageFieldsMissing,
 } = require("../config/languages");
-const { uploadToImageKit } = require("../middlewares/uploadMiddleware");
 const {
   CURRENT_AGE_CONFIRMATION_VERSION,
   CURRENT_PRIVACY_VERSION,
@@ -51,7 +50,6 @@ const registerSchema = Joi.object({
   preferred_language: Joi.string()
     .valid(...SUPPORTED_LANGUAGES)
     .allow("", null),
-  avatar_url: Joi.string().uri().allow(null),
   acceptedTerms: Joi.boolean().truthy("true").valid(true).required().messages({
     "any.only": "Terms of Service must be accepted",
     "any.required": "Terms of Service must be accepted",
@@ -122,21 +120,10 @@ const authController = {
         }
       }
 
-      let avatarUrl = req.body.avatar_url || null;
-
-      if (req.file) {
-        const uploadResult = await uploadToImageKit(
-          req.file.buffer,
-          req.file.originalname,
-        );
-        avatarUrl = uploadResult.url;
-      }
-
       // Prepare user data
       const userData = {
         ...req.body,
         tags: tags || [],
-        avatar_url: avatarUrl,
         acceptedTerms: req.body.acceptedTerms ?? req.body.accepted_terms,
         acceptedPrivacy: req.body.acceptedPrivacy ?? req.body.accepted_privacy,
         confirmedAge16:
@@ -146,6 +133,10 @@ const authController = {
           req.body.confirmedMinimumAge ??
           req.body.confirmed_minimum_age,
       };
+      // No avatar at registration (STATUS item 59): it is uploaded from the
+      // profile after the e-mail confirmation. A URL from an older form is
+      // dropped here rather than refused, so that registration still works.
+      delete userData.avatar_url;
       delete userData.accepted_terms;
       delete userData.accepted_privacy;
       delete userData.confirmed_age_16;

@@ -245,7 +245,7 @@ Lomir-backend/
 │   │   ├── auth.js             # Reads the session JWT from the httpOnly cookie (Bearer header fallback)
 │   │   ├── csrfProtection.js   # Origin/Referer validation on state-changing requests
 │   │   ├── rateLimiter.js      # Rate limiting for auth, contact, and geocoding endpoints
-│   │   └── uploadMiddleware.js # Multer wrapper for file/image uploads
+│   │   └── registrationForm.js # Reads the multipart registration form and drops any file (no avatar at registration)
 │   ├── models/
 │   │   ├── userModel.js         # User row queries + legal-consent persistence
 │   │   └── contactReportModel.js # Persistent abuse/content report records and email status updates
