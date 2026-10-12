@@ -6,10 +6,24 @@ const cleanupUnverifiedAccounts = require("../src/jobs/cleanupUnverifiedAccounts
 
 const { purgeExpiredUnverifiedAccounts } = cleanupUnverifiedAccounts;
 
+const fileDeletionQueue = require("../src/utils/fileDeletionQueue");
+
 const originalConnect = db.pool.connect;
+const originalProcessSoon = fileDeletionQueue.processFileDeletionsSoon;
+
+// The hand-over to the ImageKit deletion after the commit (item 59) queries
+// the database itself, so it is recorded instead.
+let handedOver = [];
+test.beforeEach(() => {
+  handedOver = [];
+  fileDeletionQueue.processFileDeletionsSoon = (ids) => {
+    handedOver.push(ids);
+  };
+});
 
 test.afterEach(() => {
   db.pool.connect = originalConnect;
+  fileDeletionQueue.processFileDeletionsSoon = originalProcessSoon;
 });
 
 test("purgeExpiredUnverifiedAccounts deletes expired unverified accounts", async () => {
@@ -92,7 +106,7 @@ test("purgeExpiredUnverifiedAccounts is a no-op when no accounts expired", async
   assert.deepEqual(calls, [
     "BEGIN",
     `
-      SELECT id
+      SELECT id, avatar_url, avatar_file_id
       FROM users
       WHERE email_verified = FALSE
         AND verification_token_expires IS NOT NULL
@@ -129,4 +143,43 @@ test("purgeExpiredUnverifiedAccounts rolls back when cleanup fails", async () =>
 
   assert.ok(calls.includes("ROLLBACK"));
   assert.equal(calls.includes("COMMIT"), false);
+});
+
+test("purgeExpiredUnverifiedAccounts queues the avatars of the expired accounts before deleting them", async () => {
+  const calls = [];
+  db.pool.connect = async () => ({
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (sql.includes("SELECT id, avatar_url, avatar_file_id") && sql.includes("FROM users")) {
+        return {
+          rows: [
+            { id: 10, avatar_url: "https://ik.imagekit.io/demo123/lomir/avatars/a_10.png", avatar_file_id: null },
+            { id: 20, avatar_url: "https://example.com/not-imagekit.png", avatar_file_id: null },
+            { id: 30, avatar_url: null, avatar_file_id: null },
+          ],
+        };
+      }
+      if (sql.includes("INSERT INTO pending_file_deletions")) {
+        return { rows: [{ id: 801 }] };
+      }
+      if (sql.includes("DELETE FROM users")) {
+        return { rowCount: 3, rows: [] };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  });
+
+  await purgeExpiredUnverifiedAccounts();
+
+  const queueIndex = calls.findIndex(({ sql }) => sql.includes("INSERT INTO pending_file_deletions"));
+  const deleteIndex = calls.findIndex(({ sql }) => sql.includes("DELETE FROM users"));
+  const commitIndex = calls.findIndex(({ sql }) => sql === "COMMIT");
+  assert.ok(queueIndex > 0 && queueIndex < deleteIndex && deleteIndex < commitIndex);
+  assert.deepEqual(calls[queueIndex].params, [
+    ["https://ik.imagekit.io/demo123/lomir/avatars/a_10.png"],
+    [null],
+    ["unverified_account"],
+  ]);
+  assert.deepEqual(handedOver, [[801]]);
 });
