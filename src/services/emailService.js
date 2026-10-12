@@ -65,6 +65,12 @@ const linkFallback = (href, text) => `
               <a href="${href}" style="color: #6366f1;">${href}</a>
             </p>`;
 
+// The operator inbox: contact-form messages and the internal deletion records.
+const operatorInbox = () =>
+  process.env.CONTACT_INBOX_EMAIL ||
+  process.env.BREVO_SENDER_EMAIL ||
+  process.env.SMTP_USER;
+
 const emailService = {
   /**
    * Send verification email to new user
@@ -296,10 +302,7 @@ const emailService = {
 
     try {
       const mailOptions = {
-        to:
-          process.env.CONTACT_INBOX_EMAIL ||
-          process.env.BREVO_SENDER_EMAIL ||
-          process.env.SMTP_USER,
+        to: operatorInbox(),
         replyTo: {
           name: cleanHeaderValue(name),
           address: email,
@@ -348,6 +351,36 @@ const emailService = {
       return await sendEmail(mailOptions);
     } catch (error) {
       console.error("Contact form email send error:", error);
+      return { success: false };
+    }
+  },
+
+  /**
+   * Internal: the record of one account or team deletion, for the operator
+   * inbox (STATUS item 59, utils/deletionRecord.js). Ids and timestamps only.
+   * After a database restore, the re-deletion script reads the JSON line.
+   */
+  async sendDeletionRecordEmail(record) {
+    const kind = record?.kind === "team" ? "team" : "account";
+    const json = JSON.stringify(record);
+
+    try {
+      return await sendEmail({
+        to: operatorInbox(),
+        subject: `Lomir deletion record: ${kind} ${cleanHeaderValue(record?.id)}`,
+        html: layout(
+          [
+            heading("Deletion record"),
+            para(
+              `A Lomir ${kind} was deleted. Keep this mail for at least as long as a database backup could still be restored (about 30 days). After a restore, this deletion is made again with the re-deletion script (see the backup and restore runbook).`,
+            ),
+            para("It holds ids and timestamps only.", { size: 14, color: "#666" }),
+            `            <pre style="font-size: 13px; background-color: #f5f5f5; border-radius: 8px; padding: 16px; white-space: pre-wrap; word-break: break-all;">${escapeHtml(json)}</pre>`,
+          ].join("\n"),
+        ),
+      });
+    } catch (error) {
+      console.error("Deletion record email send error:", error?.message || error);
       return { success: false };
     }
   },

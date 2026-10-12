@@ -9,6 +9,8 @@
     "test": "node --test",
     "migrate": "node scripts/migrate.js",
     "migrate:one": "node scripts/run-migration.js",
+    "redelete": "node scripts/redelete-after-restore.js",
+    "files:orphans": "node scripts/count-orphaned-files.js",
     "demo-db": "node scripts/demo-database.js",
     "import:tag-translations": "node scripts/import-tag-translations.js",
     "backup": "./scripts/backup-db.sh",

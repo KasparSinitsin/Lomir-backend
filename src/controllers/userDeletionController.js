@@ -4,7 +4,9 @@ const { idNameToken } = require("../utils/eventNameToken");
 const { DEFAULT_ROLE_NAME } = require("../config/roleDefaults");
 const { pool } = db;
 const bcrypt = require("bcrypt");
-const { deleteImageKitFile } = require("../utils/imagekitUtils");
+const fileDeletionQueue = require("../utils/fileDeletionQueue");
+const deletionRecord = require("../utils/deletionRecord");
+const mentionScrub = require("../utils/mentionScrub");
 const {
   buildUserDisplayName,
   toIsoString,
@@ -159,7 +161,14 @@ const getSuccessorCandidatesByTeam = async (queryable, teamIds, excludedUserId) 
  * @route DELETE /api/users/:id
  * @access Private (Requires authentication and authorization)
  */
-const deleteUser = async (req, res) => {
+/**
+ * The account deletion itself. The HTTP route goes through `deleteUser` below,
+ * which always checks the password. `skipPasswordCheck` exists for ONE caller:
+ * `scripts/redelete-after-restore.js`, which repeats a deletion that already
+ * happened once (the person confirmed it then) after a database backup was
+ * restored (STATUS item 59). Never pass it from a request handler.
+ */
+const runAccountDeletion = async (req, res, { skipPasswordCheck = false } = {}) => {
   let client = null;
   let transactionOpen = false;
   let avatarUrl = null;
@@ -168,6 +177,7 @@ const deleteUser = async (req, res) => {
   let dmPartnerIds = [];
   let ownershipTransferEvents = [];
   let reopenedRoleEvents = [];
+  const queuedFileIds = [];
 
   try {
     const userId = parseInt(req.params.id, 10);
@@ -187,7 +197,7 @@ const deleteUser = async (req, res) => {
       });
     }
 
-    if (!password) {
+    if (!skipPasswordCheck && !password) {
       return res.status(400).json({
         success: false,
         message: "Password is required",
@@ -234,7 +244,7 @@ const deleteUser = async (req, res) => {
     logDeletionPhase("Phase A - gather context", { userId });
 
     const userResult = await client.query(
-      `SELECT id, first_name, last_name, username, avatar_url, avatar_file_id, password_hash
+      `SELECT id, first_name, last_name, username, avatar_url, avatar_file_id, password_hash, created_at
        FROM users
        WHERE id = $1`,
       [userId],
@@ -248,14 +258,16 @@ const deleteUser = async (req, res) => {
     }
 
     const user = userResult.rows[0];
-    const passwordMatches = await bcrypt.compare(password, user.password_hash);
+    if (!skipPasswordCheck) {
+      const passwordMatches = await bcrypt.compare(password, user.password_hash);
 
-    if (!passwordMatches) {
-      return rollbackAndRespond(401, {
-        success: false,
-        code: AUTH_ERROR_CODES.PASSWORD_INCORRECT,
-        message: "Password is incorrect",
-      });
+      if (!passwordMatches) {
+        return rollbackAndRespond(401, {
+          success: false,
+          code: AUTH_ERROR_CODES.PASSWORD_INCORRECT,
+          message: "Password is incorrect",
+        });
+      }
     }
 
     avatarUrl = user.avatar_url;
@@ -289,6 +301,7 @@ const deleteUser = async (req, res) => {
         SELECT
           t.id AS team_id,
           t.name AS team_name,
+          t.created_at AS team_created_at,
           COUNT(tm_all.user_id)::int AS member_count,
           (COUNT(tm_all.user_id) FILTER (WHERE tm_all.user_id != $1))::int AS other_member_count
         FROM teams t
@@ -297,7 +310,7 @@ const deleteUser = async (req, res) => {
          AND tm_owner.user_id = $1
          AND tm_owner.role = 'owner'
         JOIN team_members tm_all ON tm_all.team_id = t.id
-        GROUP BY t.id, t.name
+        GROUP BY t.id, t.name, t.created_at
         ORDER BY t.name ASC, t.id ASC
         `,
         [userId],
@@ -348,6 +361,7 @@ const deleteUser = async (req, res) => {
     const ownedTeams = ownedTeamsResult.rows.map((row) => ({
       teamId: Number(row.team_id),
       teamName: row.team_name,
+      createdAt: row.team_created_at,
       memberCount: Number(row.member_count),
       otherMemberCount: Number(row.other_member_count),
     }));
@@ -388,6 +402,20 @@ const deleteUser = async (req, res) => {
       teamCount: memberships.length,
       dmPartnerCount: dmPartnerIds.length,
     });
+
+    // The images and files of these direct messages are queued in this
+    // transaction and deleted from ImageKit after the commit (STATUS item 59,
+    // privacy §16). Once the rows are gone nothing would point at them.
+    queuedFileIds.push(
+      ...(await fileDeletionQueue.queueMessageAttachments(
+        client,
+        {
+          where: "(m.sender_id = $1 OR m.receiver_id = $1) AND m.team_id IS NULL",
+          params: [userId],
+        },
+        fileDeletionQueue.FILE_DELETION_SOURCE.ACCOUNT_DELETION,
+      )),
+    );
 
     await client.query(
       `DELETE FROM messages
@@ -586,6 +614,11 @@ const deleteUser = async (req, res) => {
       );
     }
 
+    // @-mention labels in other people's messages, anchored on the id (item
+    // 59, utils/mentionScrub.js): the rest of their text stays untouched.
+    const mentionLabelsScrubbed = await mentionScrub.scrubMentionLabels(client, userId);
+    logDeletionPhase("Phase B - mention labels", { messages: mentionLabelsScrubbed });
+
     logDeletionPhase("Phase C - team ownership cleanup", {
       teamsToDelete: teamsToDelete.length,
       teamsToTransfer: teamsToTransfer.length,
@@ -651,6 +684,15 @@ const deleteUser = async (req, res) => {
       await client.query("DELETE FROM team_applications WHERE team_id = $1", [
         team.teamId,
       ]);
+      // This solo team is deleted here, not through permanentlyDeleteTeam, so
+      // its chat attachments and its avatar are queued here (item 59).
+      queuedFileIds.push(
+        ...(await fileDeletionQueue.queueTeamFiles(
+          client,
+          team.teamId,
+          fileDeletionQueue.FILE_DELETION_SOURCE.ACCOUNT_DELETION,
+        )),
+      );
       await client.query("DELETE FROM messages WHERE team_id = $1", [team.teamId]);
       await client.query(
         `
@@ -955,12 +997,25 @@ const deleteUser = async (req, res) => {
       deletedByName.push(result.rowCount);
     }
 
+    // 3. The rows holding a mention token of this id, whatever name it shows
+    //    (a rename before the deletion leaves the old name in the label).
+    const mentionNotifications = await mentionScrub.deleteNotificationsMentioning(client, userId);
+
     logDeletionPhase("Phase D2 - done", {
       byActor: actorNotifications.rowCount,
       byName: deletedByName,
+      byMention: mentionNotifications,
     });
 
     logDeletionPhase("Phase E - delete user row", { userId });
+
+    queuedFileIds.push(
+      ...(await fileDeletionQueue.queueFiles(
+        client,
+        [{ url: avatarUrl, fileId: avatarFileId }],
+        fileDeletionQueue.FILE_DELETION_SOURCE.ACCOUNT_DELETION,
+      )),
+    );
 
     await client.query("DELETE FROM users WHERE id = $1", [userId]);
     await client.query("COMMIT");
@@ -972,9 +1027,21 @@ const deleteUser = async (req, res) => {
     });
 
     try {
-      if (avatarUrl || avatarFileId) {
-        await deleteImageKitFile(avatarUrl, avatarFileId);
-      }
+      // Avatar, DM attachments and solo-team files: deleted from ImageKit now,
+      // without holding the response; a failure stays queued for the daily
+      // cleanup and the next server start.
+      fileDeletionQueue.processFileDeletionsSoon(queuedFileIds);
+
+      // The internal record for re-deleting after a backup restore (item 59):
+      // ids and timestamps only, mailed to the operator inbox.
+      deletionRecord.sendDeletionRecordSoon(
+        deletionRecord.buildAccountDeletionRecord({
+          userId,
+          createdAt: user.created_at,
+          successors: ownershipTransferEvents,
+          deletedTeams: teamsToDelete,
+        }),
+      );
 
       const io =
         req.app && typeof req.app.get === "function" ? req.app.get("io") : null;
@@ -1039,6 +1106,10 @@ const deleteUser = async (req, res) => {
  * @route POST /api/users/:id/deletion-preview
  * @access Private (Requires authentication and password verification)
  */
+// The route handler: two arguments only, so nothing a request carries (nor
+// Express's `next`) can ever reach the options of runAccountDeletion.
+const deleteUser = (req, res) => runAccountDeletion(req, res);
+
 const deletionPreview = async (req, res) => {
   try {
     const userId = parseInt(req.params.id, 10);
@@ -1275,4 +1346,5 @@ const deletionPreview = async (req, res) => {
 module.exports = {
   deleteUser,
   deletionPreview,
+  runAccountDeletion,
 };

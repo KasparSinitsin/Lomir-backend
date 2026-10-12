@@ -3,6 +3,29 @@ const assert = require("node:assert/strict");
 
 const db = require("../src/config/database");
 const teamController = require("../src/controllers/teamController");
+const fileDeletionQueue = require("../src/utils/fileDeletionQueue");
+const deletionRecord = require("../src/utils/deletionRecord");
+const originalSendRecord = deletionRecord.sendDeletionRecordSoon;
+
+// The deletion record would go out as a real mail (local .env); it is recorded.
+let sentRecords = [];
+test.beforeEach(() => {
+  sentRecords = [];
+  deletionRecord.sendDeletionRecordSoon = (record) => {
+    sentRecords.push(record);
+  };
+});
+const originalProcessSoon = fileDeletionQueue.processFileDeletionsSoon;
+
+// permanentlyDeleteTeam hands the queued ImageKit files over after its commit
+// (item 59). The real hand-over queries the database, so it is recorded instead.
+let handedOver = [];
+test.beforeEach(() => {
+  handedOver = [];
+  fileDeletionQueue.processFileDeletionsSoon = (ids) => {
+    handedOver.push(ids);
+  };
+});
 
 const originalQuery = db.pool.query;
 const originalConnect = db.pool.connect;
@@ -31,6 +54,8 @@ const createRequest = (body = {}) => ({
 });
 
 test.afterEach(() => {
+  fileDeletionQueue.processFileDeletionsSoon = originalProcessSoon;
+  deletionRecord.sendDeletionRecordSoon = originalSendRecord;
   db.pool.query = originalQuery;
   db.pool.connect = originalConnect;
   process.env.NODE_ENV = originalNodeEnv;
@@ -84,8 +109,8 @@ function setup({ otherMembers, openRequests = OPEN_REQUESTS }) {
   db.pool.connect = async () => ({
     async query(sql) {
       clientSql.push(sql);
-      if (sql.includes("teamavatar_url")) {
-        return { rows: [{ teamavatar_url: null, teamavatar_file_id: null }] };
+      if (sql.includes("INSERT INTO pending_file_deletions")) {
+        return { rows: [] };
       }
       return { rows: [] };
     },

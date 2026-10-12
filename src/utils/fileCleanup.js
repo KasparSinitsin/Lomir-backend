@@ -1,90 +1,96 @@
 // Utilities for cleaning up expired chat files
 
 const db = require("../config/database");
-const {
-  deleteImageKitFile,
-  isImageKitUrl,
-} = require("./imagekitUtils");
+const fileDeletionQueue = require("./fileDeletionQueue");
+
+const EXPIRED_BATCH_SIZE = 100;
 
 /**
- * Delete a file from ImageKit
- * @param {string} url - The ImageKit file URL
- * @returns {Promise<boolean>} - Success status
- */
-const deleteFromImageKit = async (url) => {
-  return await deleteImageKitFile(url);
-};
-
-/**
- * Clean up expired files
- * - Deletes files from ImageKit
- * - Updates database to mark files as deleted
+ * Clean up expired chat files.
+ *
+ * In one transaction, the image AND the file of up to 100 expired messages go
+ * onto the deletion queue, and the messages are marked as expired (their URLs
+ * cleared). After the commit the queued files are deleted from ImageKit; a file
+ * that fails stays queued and is retried by the next run (STATUS item 59).
+ *
+ * 🔴 Until 2026-10-12 a message was marked even when ImageKit failed, which left
+ * the file behind with nothing pointing at it, and only one of image and file
+ * was deleted when a message had both.
+ *
  * @returns {Promise<{processed: number, deleted: number, errors: number}>}
+ *   processed = expired messages handled, deleted = files gone,
+ *   errors = files still queued after this run's attempt
  */
 const cleanupExpiredFiles = async () => {
   if (process.env.NODE_ENV !== "production") {
     console.log("[CLEANUP] Starting expired file cleanup...");
   }
 
-  const stats = { processed: 0, deleted: 0, errors: 0 };
+  const client = await db.pool.connect();
+  let messageIds = [];
+  let queuedIds = [];
 
   try {
-    // Find all expired files that haven't been deleted yet
-    const expiredFiles = await db.query(`
-      SELECT id, image_url, file_url
+    await client.query("BEGIN");
+
+    const expired = await client.query(
+      `
+      SELECT id
       FROM messages
       WHERE file_expires_at IS NOT NULL
         AND file_expires_at < NOW()
         AND file_deleted_at IS NULL
         AND (image_url IS NOT NULL OR file_url IS NOT NULL)
-      LIMIT 100
-    `);
+      ORDER BY file_expires_at ASC
+      LIMIT $1
+      FOR UPDATE SKIP LOCKED
+      `,
+      [EXPIRED_BATCH_SIZE],
+    );
 
-    if (process.env.NODE_ENV !== "production") {
-      console.log(
-        `[CLEANUP] Found ${expiredFiles.rows.length} expired files to process`,
+    messageIds = expired.rows.map((row) => Number(row.id));
+
+    if (messageIds.length > 0) {
+      queuedIds = await fileDeletionQueue.queueMessageAttachments(
+        client,
+        { where: "m.id = ANY($1::bigint[])", params: [messageIds] },
+        fileDeletionQueue.FILE_DELETION_SOURCE.CHAT_FILE_EXPIRY,
       );
-    }
 
-    for (const row of expiredFiles.rows) {
-      stats.processed++;
-
-      const url = row.file_url || row.image_url;
-
-      if (isImageKitUrl(url)) {
-        const imagekitDeleted = await deleteFromImageKit(url);
-
-        if (!imagekitDeleted) {
-          console.warn(`[CLEANUP] Could not delete file from ImageKit for message ${row.id}`);
-          stats.errors++;
-        }
-      }
-
-      // Update database to mark as deleted (even if ImageKit delete failed)
-      await db.query(`
+      await client.query(
+        `
         UPDATE messages
         SET file_deleted_at = NOW(),
             image_url = NULL,
             file_url = NULL
-        WHERE id = $1
-      `, [row.id]);
-
-      stats.deleted++;
-      if (process.env.NODE_ENV !== "production") {
-        console.log(`[CLEANUP] Processed message ${row.id}`);
-      }
-    }
-
-    if (process.env.NODE_ENV !== "production") {
-      console.log(
-        `[CLEANUP] Completed. Processed: ${stats.processed}, Deleted: ${stats.deleted}, Errors: ${stats.errors}`,
+        WHERE id = ANY($1::bigint[])
+        `,
+        [messageIds],
       );
     }
-    return stats;
+
+    await client.query("COMMIT");
   } catch (error) {
+    await client.query("ROLLBACK");
     console.error("[CLEANUP] Error during cleanup:", error);
     throw error;
+  } finally {
+    client.release();
   }
+
+  const deletion = await fileDeletionQueue.processFileDeletions({ ids: queuedIds });
+  const stats = {
+    processed: messageIds.length,
+    deleted: deletion.settled,
+    errors: deletion.failed,
+  };
+
+  if (process.env.NODE_ENV !== "production") {
+    console.log(
+      `[CLEANUP] Completed. Expired messages: ${stats.processed}, files gone: ${stats.deleted}, still queued: ${stats.errors}`,
+    );
+  }
+  return stats;
 };
 
 /**
@@ -213,7 +219,6 @@ const createExpirationNotifications = async (days = 7) => {
 };
 
 module.exports = {
-  deleteFromImageKit,
   cleanupExpiredFiles,
   getFilesExpiringSoon,
   createExpirationNotifications,

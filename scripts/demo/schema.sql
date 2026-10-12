@@ -10,6 +10,11 @@
 --
 -- Do not edit by hand. After a migration that changes the structure, take the structure again.
 --
+-- 2026-10-12: `pending_file_deletions` added (migration create_pending_file_deletions, STATUS item 59) before it
+-- exists in the live database: this file was loaded into a throwaway PostgreSQL 17.7, the migration run twice, and
+-- the difference of two `pg_dump --schema-only --no-owner --no-tablespaces` runs applied here. Take the whole
+-- structure again from the live database once the migration has run there.
+--
 -- PostgreSQL database dump
 --
 
@@ -243,6 +248,43 @@ CREATE SEQUENCE public.notifications_id_seq
 --
 
 ALTER SEQUENCE public.notifications_id_seq OWNED BY public.notifications.id;
+
+
+--
+-- Name: pending_file_deletions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pending_file_deletions (
+    id bigint NOT NULL,
+    file_url text,
+    file_id text,
+    source text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    last_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_attempt_at timestamp with time zone,
+    CONSTRAINT pending_file_deletions_has_reference CHECK (((file_url IS NOT NULL) OR (file_id IS NOT NULL))),
+    CONSTRAINT pending_file_deletions_source_format CHECK ((source ~ '^[a-z_]+$'::text))
+);
+
+
+--
+-- Name: pending_file_deletions_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.pending_file_deletions_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: pending_file_deletions_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.pending_file_deletions_id_seq OWNED BY public.pending_file_deletions.id;
 
 
 --
@@ -999,6 +1041,13 @@ ALTER TABLE ONLY public.notifications ALTER COLUMN id SET DEFAULT nextval('publi
 
 
 --
+-- Name: pending_file_deletions id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pending_file_deletions ALTER COLUMN id SET DEFAULT nextval('public.pending_file_deletions_id_seq'::regclass);
+
+
+--
 -- Name: tag_categories id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -1158,6 +1207,14 @@ ALTER TABLE ONLY public.messages
 
 ALTER TABLE ONLY public.notifications
     ADD CONSTRAINT notifications_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: pending_file_deletions pending_file_deletions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pending_file_deletions
+    ADD CONSTRAINT pending_file_deletions_pkey PRIMARY KEY (id);
 
 
 --

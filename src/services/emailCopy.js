@@ -145,7 +145,7 @@ const COPY = {
       subject: "We received your Lomir report ({reference})",
       heading: "We received your report",
       intro:
-        "Hi {name}, thank you for reporting content or abuse on Lomir. This is an automated confirmation that we have received your report and will review it.",
+        "Hi {name}, thank you for reporting content or abuse on Lomir. This is an automated confirmation that we have received your report and will review it. We will let you know the outcome.",
       referenceLabel: "Reference ID:",
       nothingFurther:
         "You do not need to do anything further. Please keep this reference ID in case you want to refer to your report later. If you have more details to add, simply reply to this email.",
@@ -156,7 +156,7 @@ const COPY = {
       subject: "Wir haben deine Lomir-Meldung erhalten ({reference})",
       heading: "Wir haben deine Meldung erhalten",
       intro:
-        "Hallo {name}, danke für deine Meldung zu Inhalten oder Missbrauch auf Lomir. Dies ist eine automatische Bestätigung, dass deine Meldung eingegangen ist und geprüft wird.",
+        "Hallo {name}, danke für deine Meldung zu Inhalten oder Missbrauch auf Lomir. Dies ist eine automatische Bestätigung, dass deine Meldung eingegangen ist und geprüft wird. Über das Ergebnis informieren wir dich.",
       referenceLabel: "Vorgangs-ID:",
       nothingFurther:
         "Du musst nichts weiter tun. Bewahre die Vorgangs-ID auf, falls du später auf deine Meldung Bezug nehmen möchtest. Hast du weitere Angaben, antworte einfach auf diese E-Mail.",

@@ -10,6 +10,8 @@ const {
 const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer");
 const { deleteImageKitFile } = require("../utils/imagekitUtils");
+const fileDeletionQueue = require("../utils/fileDeletionQueue");
+const deletionRecord = require("../utils/deletionRecord");
 const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
 const { TEAM_ERROR_CODES } = require("../config/teamErrors");
 const {
@@ -47,14 +49,21 @@ const permanentlyDeleteTeam = async (teamId) => {
   try {
     await client.query("BEGIN");
 
-    // Fetch team avatar URL before deleting
-    const teamResult = await client.query(
-      `SELECT teamavatar_url, teamavatar_file_id FROM teams WHERE id = $1`,
+    // For the deletion record after the commit (item 59).
+    const teamCreated = await client.query(
+      `SELECT created_at FROM teams WHERE id = $1`,
       [teamId],
     );
 
-    const teamAvatarUrl = teamResult.rows[0]?.teamavatar_url;
-    const teamAvatarFileId = teamResult.rows[0]?.teamavatar_file_id;
+    // The chat images and files and the team avatar go onto the deletion queue
+    // in this transaction; they are deleted from ImageKit after the commit and
+    // retried until they are gone (STATUS item 59). Before, only the avatar was
+    // deleted, with one try, and the chat files stayed in ImageKit.
+    const queuedFileIds = await fileDeletionQueue.queueTeamFiles(
+      client,
+      teamId,
+      fileDeletionQueue.FILE_DELETION_SOURCE.TEAM_DELETION,
+    );
 
     // Delete all related data in order...
     await client.query("DELETE FROM messages WHERE team_id = $1", [teamId]);
@@ -74,11 +83,19 @@ const permanentlyDeleteTeam = async (teamId) => {
 
     await client.query("COMMIT");
 
-    // Delete avatar from ImageKit AFTER successful database deletion
-    // This is done outside the transaction to prevent rollback issues
-    if (teamAvatarUrl || teamAvatarFileId) {
-      await deleteImageKitFile(teamAvatarUrl, teamAvatarFileId);
-    }
+    // ImageKit only AFTER the commit, without holding the caller; a failure
+    // stays queued for the daily cleanup and the next server start.
+    fileDeletionQueue.processFileDeletionsSoon(queuedFileIds);
+
+    // The internal record for re-deleting after a backup restore: covers the
+    // owner's deletion of a solo team, the last member leaving an archived team
+    // and the 14-day purge. Ids and timestamps only.
+    deletionRecord.sendDeletionRecordSoon(
+      deletionRecord.buildTeamDeletionRecord({
+        teamId,
+        createdAt: teamCreated.rows[0]?.created_at,
+      }),
+    );
 
     return true;
   } catch (error) {

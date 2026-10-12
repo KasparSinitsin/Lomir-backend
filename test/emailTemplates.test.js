@@ -146,3 +146,10 @@ test("the report receipt keeps the reference code out of the header raw", async 
   );
   assert.doesNotMatch(out[0].subject, /[\r\n]/, "header injection via reference code");
 });
+
+// Terms §7 promises that the reporter learns the outcome; the receipt says so
+// (finding S6 of the legal-texts review, STATUS item 59, Julia 2026-10-12).
+test("the report receipt promises the outcome, in German and in English", () => {
+  assert.match(COPY.reportReceipt.de.intro, /Über das Ergebnis informieren wir dich\.$/);
+  assert.match(COPY.reportReceipt.en.intro, /We will let you know the outcome\.$/);
+});

@@ -245,7 +245,7 @@ Lomir-backend/
 │   │   ├── auth.js             # Reads the session JWT from the httpOnly cookie (Bearer header fallback)
 │   │   ├── csrfProtection.js   # Origin/Referer validation on state-changing requests
 │   │   ├── rateLimiter.js      # Rate limiting for auth, contact, and geocoding endpoints
-│   │   └── uploadMiddleware.js # Multer wrapper for file/image uploads
+│   │   └── registrationForm.js # Reads the multipart registration form and drops any file (no avatar at registration)
 │   ├── models/
 │   │   ├── userModel.js         # User row queries + legal-consent persistence
 │   │   └── contactReportModel.js # Persistent abuse/content report records and email status updates
@@ -265,9 +265,10 @@ Lomir-backend/
 │   │       └── readHandlers.js         # message:read
 │   ├── utils/
 │   │   ├── booleanSearchParser.js
-│   │   ├── imagekitUtils.js
+│   │   ├── imagekitUtils.js    # ImageKit URL helpers; one deletion with its result (deleted / not found / skipped / failed)
 │   │   ├── fileValidation.js
-│   │   ├── fileCleanup.js      # File expiry check + ImageKit deletion helpers (used by scheduler)
+│   │   ├── fileCleanup.js      # 60-day chat-file expiry (queues the files for deletion) + expiry notices
+│   │   ├── fileDeletionQueue.js # ImageKit files still to delete: queued in the deleting transaction, retried until gone
 │   │   ├── jwtUtils.js
 │   │   ├── authCookie.js       # httpOnly session-cookie set/clear options + handshake cookie parsing
 │   │   ├── allowedOrigins.js   # Shared CORS/CSRF origin allowlist + Referer parsing
@@ -293,7 +294,7 @@ Lomir-backend/
 │   │   ├── badgeVisibilityUtils.js # Helpers for badge award visibility (hidden/shown state)
 │   │   └── geocodingUtil.js    # resolveLocationData (full enrichment) + geocodeAddress (coords only)
 │   ├── jobs/
-│   │   ├── fileCleanupScheduler.js # node-cron job that calls fileCleanup utilities on a schedule
+│   │   ├── fileCleanupScheduler.js # Daily 02:00 + startup: chat-file expiry and queued ImageKit deletions; expiry notices; token cleanup
 │   │   ├── cleanupUnverifiedAccounts.js # Every 6 hours + startup; deletes expired unverified accounts
 │   │   └── cleanupArchivedTeams.js # Daily + startup; permanently deletes teams archived longer than the grace period
 │   └── database/
@@ -489,7 +490,7 @@ The public `GET /api/geocoding/postal-code/:code` endpoint is rate-limited (60 r
 
 | Job | Schedule | Description |
 |---|---|---|
-| File cleanup | Configurable (see `fileCleanupScheduler.js`) | Expires and deletes orphaned ImageKit files |
+| File cleanup | Daily at 02:00 (Europe/Berlin) and once on server startup | Expires chat images and files after 60 days, then retries every ImageKit deletion still listed in `pending_file_deletions`; a file leaves that list only when ImageKit confirms it is gone. The startup run matters on hosts that sleep through the cron time |
 | Unverified account cleanup | Every 6 hours and once on server startup | Deletes accounts where email verification expired more than 1 hour ago, including on hosts that may sleep through the cron time |
 | Archived team cleanup | Daily at 03:30 (Europe/Berlin) and once on server startup | Permanently deletes teams (with their chat, members, and avatar) archived longer than `ARCHIVED_TEAM_GRACE_DAYS` (default 14); safety net for deleted teams whose members never leave, including on hosts that may sleep through the cron time |
 
@@ -533,7 +534,9 @@ Full transactional account deletion. Key highlights:
 - **Single transaction** — All cleanup runs in one database transaction in phases (A context → B messages and chat → C team ownership → D role and reference cleanup, D2 notifications that name the user → E user row), followed by the Socket.IO events after commit
 - **Badge preservation** — Team names copied to `badge_awards.custom_team_name` before sole-owner teams are deleted
 - **"Former Lomir User"** — Deleted user references display a grey silhouette avatar with no personal info
-- **Names in stored text** — A person's name is removed from team-chat messages and notifications that mention it. Which stored formats carry a name, whose, and whether the sender is that person is recorded per format in `config/nameBearingMessageFormats.js`; the scrub is derived from that table, so a new event format cannot be forgotten
+- **Deletion record** — After the commit, one internal mail goes to the operator inbox (`CONTACT_INBOX_EMAIL`, else the sender address) with a JSON line: the account id, its creation time, the chosen successors as id pairs and the solo teams deleted with it. Ids and timestamps only. After a database restore, `npm run redelete` reads these records and makes the deletions again (see `scripts/README.md`). Not sent for a local database
+- **Uploaded files** — The avatar, the images and files of the user's direct messages, and the chat files and avatar of sole-owner teams are queued in `pending_file_deletions` inside the transaction and deleted from ImageKit right after the commit; a failure stays queued for the daily cleanup and the next server start. Files the user posted in team chats stay with their messages and expire after 60 days
+- **Names in stored text** — A person's name is removed from team-chat messages and notifications that mention it. Which stored formats carry a name, whose, and whether the sender is that person is recorded per format in `config/nameBearingMessageFormats.js`; the scrub is derived from that table, so a new event format cannot be forgotten. @-mention tokens (`@[Name](id)`) of the deleted id get the placeholder label in every message, anchored on the id, never on a name (`utils/mentionScrub.js`); notifications holding such a token are deleted
 - **Automated tests** cover the deletion scenarios, the preview, the name scrub (prefixes, spellings, notifications) and the name resolution (`userController.deleteUser`, `deletionPreview`, `resolveNames`, `userDeletion.*`)
 
 ---
@@ -542,7 +545,7 @@ Full transactional account deletion. Key highlights:
 
 When an owner deletes a team (`DELETE /api/teams/:id`), the behaviour depends on whether anyone else is still a member:
 
-- **Solo team (owner is the only member)** — the team is **permanently deleted right away** via `permanentlyDeleteTeam`, removing the team row, its chat messages, invitations/applications, badges, notifications, members, and the ImageKit avatar. Nothing is left behind, so a deleted solo team never leaves an orphaned, unreachable conversation.
+- **Solo team (owner is the only member)** — the team is **permanently deleted right away** via `permanentlyDeleteTeam`, removing the team row, its chat messages, invitations/applications, badges, notifications and members; its chat images and files and its ImageKit avatar are queued in the same transaction and deleted right after the commit, retried until ImageKit confirms they are gone. Like every permanent team deletion (also the last member leaving an archived team, and the 14-day purge), it sends a deletion record with the team id and its creation time to the operator inbox. Nothing is left behind, so a deleted solo team never leaves an orphaned, unreachable conversation.
 - **Team with other members** — the team is **soft-deleted (archived)**: `archived_at`/`status` are set, its open applications and invitations are closed (see below), a `TEAM_DELETED` system message is posted to the chat, and every member is notified. The archived chat stays available to the remaining members as a **"farewell" window**: they can still read **and post** messages until they leave or the grace period ends. Socket and REST team access are gated on current membership (not on `archived_at`), so live messages keep flowing to remaining members. It is permanently purged once the **last** member leaves (`checkAndCleanupArchivedTeam`).
 - **Member visibility of archived teams** — archived teams are still served to their current members (never to outsiders — 404 otherwise, regardless of `is_public`): `getTeamById` and the team badge endpoints return them so members can open the full Team Details modal (info, focus areas, badges, roles, members) for an archived team's chat, and `getConversations`/`getConversationById` expose `archived_at`/`status`. Archived teams where the viewer is the only remaining member are hidden from the conversation list and chat search.
   - Each conversation row in `getConversations` also embeds the entity's `is_synthetic` flag (teams and direct partners) alongside `name`/`avatarUrl`, so the frontend conversation list can render names, avatars, and the demo overlay directly from the list payload instead of issuing a per-conversation `getTeamById`/`getUserById` fetch.

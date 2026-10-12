@@ -9,13 +9,14 @@ const {
   accountChangeLimiter,
   usernameAvailabilityLimiter,
 } = require("../middlewares/rateLimiter");
-const { upload } = require("../middlewares/uploadMiddleware");
+const { parseRegistrationForm } = require("../middlewares/registrationForm");
 
-// Register a new user (with optional avatar upload)
+// Register a new user. The form is multipart; a file in it is ignored (no
+// avatar at registration, see middlewares/registrationForm.js).
 router.post(
   "/register",
   registerLimiter,
-  upload.single("avatar"),
+  parseRegistrationForm,
   authController.register,
 );
 
