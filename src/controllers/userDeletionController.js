@@ -5,6 +5,7 @@ const { DEFAULT_ROLE_NAME } = require("../config/roleDefaults");
 const { pool } = db;
 const bcrypt = require("bcrypt");
 const fileDeletionQueue = require("../utils/fileDeletionQueue");
+const deletionRecord = require("../utils/deletionRecord");
 const {
   buildUserDisplayName,
   toIsoString,
@@ -235,7 +236,7 @@ const deleteUser = async (req, res) => {
     logDeletionPhase("Phase A - gather context", { userId });
 
     const userResult = await client.query(
-      `SELECT id, first_name, last_name, username, avatar_url, avatar_file_id, password_hash
+      `SELECT id, first_name, last_name, username, avatar_url, avatar_file_id, password_hash, created_at
        FROM users
        WHERE id = $1`,
       [userId],
@@ -290,6 +291,7 @@ const deleteUser = async (req, res) => {
         SELECT
           t.id AS team_id,
           t.name AS team_name,
+          t.created_at AS team_created_at,
           COUNT(tm_all.user_id)::int AS member_count,
           (COUNT(tm_all.user_id) FILTER (WHERE tm_all.user_id != $1))::int AS other_member_count
         FROM teams t
@@ -298,7 +300,7 @@ const deleteUser = async (req, res) => {
          AND tm_owner.user_id = $1
          AND tm_owner.role = 'owner'
         JOIN team_members tm_all ON tm_all.team_id = t.id
-        GROUP BY t.id, t.name
+        GROUP BY t.id, t.name, t.created_at
         ORDER BY t.name ASC, t.id ASC
         `,
         [userId],
@@ -349,6 +351,7 @@ const deleteUser = async (req, res) => {
     const ownedTeams = ownedTeamsResult.rows.map((row) => ({
       teamId: Number(row.team_id),
       teamName: row.team_name,
+      createdAt: row.team_created_at,
       memberCount: Number(row.member_count),
       otherMemberCount: Number(row.other_member_count),
     }));
@@ -1008,6 +1011,17 @@ const deleteUser = async (req, res) => {
       // without holding the response; a failure stays queued for the daily
       // cleanup and the next server start.
       fileDeletionQueue.processFileDeletionsSoon(queuedFileIds);
+
+      // The internal record for re-deleting after a backup restore (item 59):
+      // ids and timestamps only, mailed to the operator inbox.
+      deletionRecord.sendDeletionRecordSoon(
+        deletionRecord.buildAccountDeletionRecord({
+          userId,
+          createdAt: user.created_at,
+          successors: ownershipTransferEvents,
+          deletedTeams: teamsToDelete,
+        }),
+      );
 
       const io =
         req.app && typeof req.app.get === "function" ? req.app.get("io") : null;

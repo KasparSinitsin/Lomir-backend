@@ -11,6 +11,7 @@ const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer");
 const { deleteImageKitFile } = require("../utils/imagekitUtils");
 const fileDeletionQueue = require("../utils/fileDeletionQueue");
+const deletionRecord = require("../utils/deletionRecord");
 const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
 const { TEAM_ERROR_CODES } = require("../config/teamErrors");
 const {
@@ -48,6 +49,12 @@ const permanentlyDeleteTeam = async (teamId) => {
   try {
     await client.query("BEGIN");
 
+    // For the deletion record after the commit (item 59).
+    const teamCreated = await client.query(
+      `SELECT created_at FROM teams WHERE id = $1`,
+      [teamId],
+    );
+
     // The chat images and files and the team avatar go onto the deletion queue
     // in this transaction; they are deleted from ImageKit after the commit and
     // retried until they are gone (STATUS item 59). Before, only the avatar was
@@ -79,6 +86,16 @@ const permanentlyDeleteTeam = async (teamId) => {
     // ImageKit only AFTER the commit, without holding the caller; a failure
     // stays queued for the daily cleanup and the next server start.
     fileDeletionQueue.processFileDeletionsSoon(queuedFileIds);
+
+    // The internal record for re-deleting after a backup restore: covers the
+    // owner's deletion of a solo team, the last member leaving an archived team
+    // and the 14-day purge. Ids and timestamps only.
+    deletionRecord.sendDeletionRecordSoon(
+      deletionRecord.buildTeamDeletionRecord({
+        teamId,
+        createdAt: teamCreated.rows[0]?.created_at,
+      }),
+    );
 
     return true;
   } catch (error) {

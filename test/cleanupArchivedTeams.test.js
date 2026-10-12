@@ -4,6 +4,17 @@ const assert = require("node:assert/strict");
 const db = require("../src/config/database");
 const cleanupArchivedTeams = require("../src/jobs/cleanupArchivedTeams");
 const fileDeletionQueue = require("../src/utils/fileDeletionQueue");
+const deletionRecord = require("../src/utils/deletionRecord");
+const originalSendRecord = deletionRecord.sendDeletionRecordSoon;
+
+// The deletion record would go out as a real mail (local .env); it is recorded.
+let sentRecords = [];
+test.beforeEach(() => {
+  sentRecords = [];
+  deletionRecord.sendDeletionRecordSoon = (record) => {
+    sentRecords.push(record);
+  };
+});
 const originalProcessSoon = fileDeletionQueue.processFileDeletionsSoon;
 
 // permanentlyDeleteTeam hands the queued ImageKit files over after its commit
@@ -23,6 +34,7 @@ const originalConnect = db.pool.connect;
 
 test.afterEach(() => {
   fileDeletionQueue.processFileDeletionsSoon = originalProcessSoon;
+  deletionRecord.sendDeletionRecordSoon = originalSendRecord;
   db.query = originalQuery;
   db.pool.connect = originalConnect;
 });
@@ -54,6 +66,8 @@ test("purgeExpiredArchivedTeams permanently deletes archived teams past the grac
   assert.match(selectSql, /archived_at < NOW\(\) - INTERVAL/);
 
   assert.deepEqual(result, { found: 2, deleted: 2 });
+  // The 14-day purge sends a deletion record per team (item 59).
+  assert.deepEqual(sentRecords.map((record) => [record.kind, record.id]), [["team", 10], ["team", 20]]);
 
   // Each selected team was hard-deleted (team row removed once per team).
   const teamDeletes = clientCalls.filter((sql) =>

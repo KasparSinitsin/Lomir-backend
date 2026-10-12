@@ -5,6 +5,17 @@ const bcrypt = require("bcrypt");
 const db = require("../src/config/database");
 const userDeletionController = require("../src/controllers/userDeletionController");
 const fileDeletionQueue = require("../src/utils/fileDeletionQueue");
+const deletionRecord = require("../src/utils/deletionRecord");
+const originalSendRecord = deletionRecord.sendDeletionRecordSoon;
+
+// The deletion record would go out as a real mail (local .env); it is recorded.
+let sentRecords = [];
+test.beforeEach(() => {
+  sentRecords = [];
+  deletionRecord.sendDeletionRecordSoon = (record) => {
+    sentRecords.push(record);
+  };
+});
 
 const originalConnect = db.pool.connect;
 const originalQuery = db.query;
@@ -100,6 +111,7 @@ function createSuccessfulDeleteClient(calls, { avatarUrl = null, avatarFileId = 
               avatar_url: avatarUrl,
               avatar_file_id: avatarFileId,
               password_hash: "stored-hash",
+              created_at: new Date("2025-05-05T10:00:00.000Z"),
             },
           ],
         };
@@ -139,7 +151,7 @@ function createSuccessfulDeleteClient(calls, { avatarUrl = null, avatarFileId = 
       if (sql.includes("JOIN team_members tm_owner")) {
         return {
           rows: [
-            { team_id: 10, team_name: "Solo Team", member_count: 1, other_member_count: 0 },
+            { team_id: 10, team_name: "Solo Team", team_created_at: new Date("2025-06-06T08:00:00.000Z"), member_count: 1, other_member_count: 0 },
             { team_id: 20, team_name: "Shared Team", member_count: 3, other_member_count: 2 },
           ],
         };
@@ -250,6 +262,7 @@ test.afterEach(() => {
   db.pool.connect = originalConnect;
   db.query = originalQuery;
   fileDeletionQueue.processFileDeletionsSoon = originalProcessSoon;
+  deletionRecord.sendDeletionRecordSoon = originalSendRecord;
   bcrypt.compare = originalCompare;
   process.env.NODE_ENV = originalNodeEnv;
 });
@@ -576,4 +589,38 @@ test("deleteUser hands nothing over when the transaction rolls back", async () =
   assert.ok(calls.some(({ sql }) => sql === "ROLLBACK"));
   assert.ok(!calls.some(({ sql }) => sql === "COMMIT"));
   assert.deepEqual(handedOver, [], "a rolled-back deletion deletes no file");
+  assert.deepEqual(sentRecords, [], "and sends no deletion record");
+});
+
+test("deleteUser sends one deletion record after the commit: ids, timestamps and the chosen successors only", async () => {
+  process.env.NODE_ENV = "production";
+
+  const calls = [];
+  db.pool.connect = async () => createSuccessfulDeleteClient(calls);
+  bcrypt.compare = async () => true;
+
+  const res = createResponse();
+  await userDeletionController.deleteUser(
+    createRequest({
+      body: { password: "secret123", ownership_overrides: [{ team_id: 20, successor_id: 12 }] },
+    }),
+    res,
+  );
+
+  assert.equal(res.statusCode, 200);
+  assert.equal(sentRecords.length, 1);
+  const record = sentRecords[0];
+  assert.equal(record.v, 1);
+  assert.equal(record.kind, "account");
+  assert.equal(record.id, 7);
+  assert.equal(record.createdAt, "2025-05-05T10:00:00.000Z");
+  assert.match(record.deletedAt, /^\d{4}-\d{2}-\d{2}T/);
+  assert.deepEqual(record.successors, [{ team: 20, user: 12 }]);
+  assert.deepEqual(record.teams, [{ id: 10, createdAt: "2025-06-06T08:00:00.000Z" }]);
+  assert.deepEqual(
+    Object.keys(record).sort(),
+    ["createdAt", "db", "deletedAt", "id", "kind", "successors", "teams", "v"],
+    "nothing else, in particular no name and no e-mail address",
+  );
+  assert.ok(!JSON.stringify(record).includes("Jane"), "the name is not in the record");
 });

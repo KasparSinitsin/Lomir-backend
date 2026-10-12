@@ -4,6 +4,17 @@ const assert = require("node:assert/strict");
 const db = require("../src/config/database");
 const teamController = require("../src/controllers/teamController");
 const fileDeletionQueue = require("../src/utils/fileDeletionQueue");
+const deletionRecord = require("../src/utils/deletionRecord");
+const originalSendRecord = deletionRecord.sendDeletionRecordSoon;
+
+// The deletion record would go out as a real mail (local .env); it is recorded.
+let sentRecords = [];
+test.beforeEach(() => {
+  sentRecords = [];
+  deletionRecord.sendDeletionRecordSoon = (record) => {
+    sentRecords.push(record);
+  };
+});
 const originalProcessSoon = fileDeletionQueue.processFileDeletionsSoon;
 
 // permanentlyDeleteTeam hands the queued ImageKit files over after its commit
@@ -49,6 +60,7 @@ function createRequest({ userId = 7, paramId = "10", io = null } = {}) {
 
 test.afterEach(() => {
   fileDeletionQueue.processFileDeletionsSoon = originalProcessSoon;
+  deletionRecord.sendDeletionRecordSoon = originalSendRecord;
   db.pool.query = originalQuery;
   db.pool.connect = originalConnect;
   process.env.NODE_ENV = originalNodeEnv;
@@ -85,6 +97,9 @@ test("deleteTeam permanently deletes a solo team (owner is the only member) inst
   const client = {
     async query(sql, params = []) {
       clientCalls.push({ sql, params });
+      if (sql.includes("SELECT created_at FROM teams")) {
+        return { rows: [{ created_at: new Date("2025-07-07T07:00:00.000Z") }] };
+      }
       if (sql.includes("INSERT INTO pending_file_deletions")) {
         // chat attachments, then the team avatar
         return { rows: [{ id: sql.includes("FROM teams t") ? 702 : 701 }] };
@@ -127,6 +142,13 @@ test("deleteTeam permanently deletes a solo team (owner is the only member) inst
   // The route passes the id as the string from the URL, as before; Postgres casts it.
   assert.deepEqual(clientCalls[queuedChat].params, ["10", "ik.imagekit.io", "team_deletion"]);
   assert.deepEqual(handedOver, [[701, 702]]);
+
+  // One deletion record, ids and timestamps only (item 59).
+  assert.equal(sentRecords.length, 1);
+  assert.equal(sentRecords[0].kind, "team");
+  assert.equal(sentRecords[0].id, 10);
+  assert.equal(sentRecords[0].createdAt, "2025-07-07T07:00:00.000Z");
+  assert.deepEqual(Object.keys(sentRecords[0]).sort(), ["createdAt", "db", "deletedAt", "id", "kind", "v"]);
 
   // ...and the soft-delete/archive path was NOT taken.
   assert.equal(
