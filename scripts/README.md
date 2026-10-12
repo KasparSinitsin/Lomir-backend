@@ -15,6 +15,7 @@ Run scripts from the repository root: they read `.env` from the working director
 | `migrate:one` → `run-migration.js` | `npm run migrate:one -- <name>`: ONE named migration from an allow-list |
 | `demo-database.js` (+ `demo/`) | `npm run demo-db`: structure, taxonomy, badges and an invented demo world (people, teams, roles, applications, awards, chat, notifications) for a NEW LOCAL database; `-- --empty` leaves out the people. Refuses any database that is not local and empty. Writes only invented data from this repository |
 | `import-tag-translations.js` | `npm run import:tag-translations`: imports the translated tag names (a dry run unless `--apply`) |
+| `redelete-after-restore.js` (+ `redelete/`) | `npm run redelete -- --file=<records>`: after a database backup was restored, makes the account and team deletions again that happened after the backup, from the deletion records mailed to the operator inbox (a dry run unless `--apply`; `--from-db=<host>` after a restore into a new host). Refuses an id whose creation time differs (handed out again). Ids only in the output |
 | `backup-db.sh`, `install-backup-agent.sh` | Database backups, below |
 
 The schema changes that used to have a SQL script here (columns, indexes, constraints) are part of the
