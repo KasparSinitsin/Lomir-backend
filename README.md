@@ -265,9 +265,10 @@ Lomir-backend/
 │   │       └── readHandlers.js         # message:read
 │   ├── utils/
 │   │   ├── booleanSearchParser.js
-│   │   ├── imagekitUtils.js
+│   │   ├── imagekitUtils.js    # ImageKit URL helpers; one deletion with its result (deleted / not found / skipped / failed)
 │   │   ├── fileValidation.js
-│   │   ├── fileCleanup.js      # File expiry check + ImageKit deletion helpers (used by scheduler)
+│   │   ├── fileCleanup.js      # 60-day chat-file expiry (queues the files for deletion) + expiry notices
+│   │   ├── fileDeletionQueue.js # ImageKit files still to delete: queued in the deleting transaction, retried until gone
 │   │   ├── jwtUtils.js
 │   │   ├── authCookie.js       # httpOnly session-cookie set/clear options + handshake cookie parsing
 │   │   ├── allowedOrigins.js   # Shared CORS/CSRF origin allowlist + Referer parsing
@@ -293,7 +294,7 @@ Lomir-backend/
 │   │   ├── badgeVisibilityUtils.js # Helpers for badge award visibility (hidden/shown state)
 │   │   └── geocodingUtil.js    # resolveLocationData (full enrichment) + geocodeAddress (coords only)
 │   ├── jobs/
-│   │   ├── fileCleanupScheduler.js # node-cron job that calls fileCleanup utilities on a schedule
+│   │   ├── fileCleanupScheduler.js # Daily 02:00 + startup: chat-file expiry and queued ImageKit deletions; expiry notices; token cleanup
 │   │   ├── cleanupUnverifiedAccounts.js # Every 6 hours + startup; deletes expired unverified accounts
 │   │   └── cleanupArchivedTeams.js # Daily + startup; permanently deletes teams archived longer than the grace period
 │   └── database/
@@ -489,7 +490,7 @@ The public `GET /api/geocoding/postal-code/:code` endpoint is rate-limited (60 r
 
 | Job | Schedule | Description |
 |---|---|---|
-| File cleanup | Configurable (see `fileCleanupScheduler.js`) | Expires and deletes orphaned ImageKit files |
+| File cleanup | Daily at 02:00 (Europe/Berlin) and once on server startup | Expires chat images and files after 60 days, then retries every ImageKit deletion still listed in `pending_file_deletions`; a file leaves that list only when ImageKit confirms it is gone. The startup run matters on hosts that sleep through the cron time |
 | Unverified account cleanup | Every 6 hours and once on server startup | Deletes accounts where email verification expired more than 1 hour ago, including on hosts that may sleep through the cron time |
 | Archived team cleanup | Daily at 03:30 (Europe/Berlin) and once on server startup | Permanently deletes teams (with their chat, members, and avatar) archived longer than `ARCHIVED_TEAM_GRACE_DAYS` (default 14); safety net for deleted teams whose members never leave, including on hosts that may sleep through the cron time |
 
