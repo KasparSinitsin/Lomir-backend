@@ -35,7 +35,7 @@ To test the live demo, anyone can just **register their own account** directly i
 - **Teams** — Create, join, manage members, assign roles, and archive teams. Deleting a team with other members archives it (read-only for role management and for handling applications and invitations; members can still be removed and can still leave), and everyone with an open application or invitation is told by direct message from the owner — see [Team Deletion](#team-deletion)
 - **Vacant Roles** — Post open positions on teams with desired tags, badges, and location preferences
 - **Matching Engine** — Score users against roles (and vice versa) using weighted tag/badge/distance criteria
-- **Search** — Global search across teams, users, and roles with boolean queries, tag/badge/location filtering, proximity sorting, and "Best Match" scoring
+- **Search** — Global search across teams, users, and roles with boolean queries, tag/badge/location filtering, proximity sorting, and "Best Match" scoring. Text matching ignores accents (`Kunstler` finds `Künstler`) and also accepts the German way of writing ä, ö, ü and ß out (`Mueller` finds `Müller`); it needs the PostgreSQL extension `unaccent`
 - **Chat** — Real-time direct and team group messaging via Socket.IO, including typing indicators, read receipts, message replies (reply-to with sender preview), @mention notifications, and structured system messages for team events (member join/leave/removal, role changes, invitation responses, application decisions, role lifecycle, team deletion)
 - **Badge System** — 30 badges across 5 categories; award badges to teammates with reasons and context
 - **Notifications** — In-app notifications for invitations, applications, badge awards, messages, @mentions, and role lifecycle events; each notification deep-links to the exact message that triggered it. The unread-count response also returns the oldest unread notification per type, so a client can walk a type-group from oldest to newest, and both notifications and messages can be cleared in one call via mark-all-as-read endpoints. Stale notifications are cleaned up automatically on member removal, role deletion, team deletion, once a team application is handled, and once an invitation is resolved (accepted, declined, or withdrawn)
@@ -74,7 +74,7 @@ servers or accounts.
 ### Prerequisites
 
 - **Node.js** v18+ and npm
-- **PostgreSQL**, running locally (tested with 17)
+- **PostgreSQL**, running locally (tested with 17), with the `unaccent` extension available (part of PostgreSQL's standard `contrib` modules; `npm run migrate` creates it, which needs the right to create extensions)
 - Native build tools for `bcrypt`:
   - macOS: `xcode-select --install`
   - Windows: Visual Studio Build Tools with C++ workload
@@ -159,7 +159,7 @@ Then start the [frontend](https://github.com/KasparSinitsin/Lomir-frontend) and 
 | `npm start` | Start production server |
 | `npm run demo-db` | Build a NEW, LOCAL database with structure, focus areas, badges and an invented demo world to try the app (`-- --empty`: without the people; see [Getting Started](#getting-started)) |
 | `npm run migrate` | Run the database migrations in order (`scripts/migrate.js`; see [Database Migrations](#database-migrations)) |
-| `npm run migrate:one -- <name>` | Run ONE migration from a short allow-list of additive table migrations (a dry run unless `--run`; prints the database host) |
+| `npm run migrate:one -- <name>` | Run ONE migration from a short allow-list of additive migrations (a dry run unless `--run`; prints the database host) |
 | `npm run import:tag-translations` | Import the German focus-area names from `src/database/seeds/tag-translations.de.json` (a dry run unless `--apply`) |
 | `npm run redelete -- --file=<records>` | After a database backup was restored: make the account and team deletions again from the deletion records (a dry run unless `--apply`; see [Account Deletion](#account-deletion)) |
 | `npm run files:orphans` | Read-only count of the ImageKit files nothing in the database points at any more, per folder |
@@ -419,7 +419,7 @@ The team search response intentionally returns `teamavatarUrl` from the SQL alia
 - The runner stops at the first failed step, prints the error and `Migration failed`, and exits with code 1; the steps after it do not run. (Until 2026-10-11 it printed "Migration completed successfully" with exit code 0 after a failure.) Still verify a data migration from outside — a read-only query that counts what is left — rather than trusting the exit code alone.
 - **Order matters.** A step that corrects an earlier one (it recognises a row by the wrong value the first one wrote) must stay after it.
 - A data migration that reads stored text needs the frontend parser that understands the new shape to be live wherever the database is read; run it after that release, not before.
-- **`npm run migrate:one -- <name>`** runs ONE migration, and only one from a short allow-list of additive table migrations (a new empty table may land before the code that writes to it; everything that rewrites rows waits for the full `migrate`). Without `--run` it only shows the migration and the database host.
+- **`npm run migrate:one -- <name>`** runs ONE migration, and only one from a short allow-list of additive migrations (a new empty table or the `unaccent` extension may land before the code that needs it; everything that rewrites rows waits for the full `migrate`). Without `--run` it only shows the migration and the database host.
 - Back up first (see [Database Backups](#database-backups)).
 
 ---
