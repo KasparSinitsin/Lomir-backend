@@ -31,6 +31,10 @@ SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
 
+-- 2026-10-13: the accent-insensitive search (item 52) needs this extension; the live database gets it with
+-- `migrate:one create_unaccent_extension`. Keep this line when the structure is taken again.
+CREATE EXTENSION IF NOT EXISTS unaccent;
+
 
 SET default_table_access_method = heap;
 
