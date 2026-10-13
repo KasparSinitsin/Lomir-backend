@@ -3,8 +3,13 @@ const emailService = require("../services/emailService");
 const contactReportModel = require("../models/contactReportModel");
 const { verifyTurnstileToken } = require("../utils/turnstileVerify");
 const { validateContactAttachments } = require("../utils/contactAttachments");
-
-const REPORT_TOPIC = "Report content or abuse";
+const { DEFAULT_LANGUAGE, isSupportedLanguage } = require("../config/languages");
+const { CONTACT_ERROR_CODES } = require("../config/contactErrors");
+const {
+  LEGACY_REPORT_TOPIC,
+  isReportTopic,
+  resolveTopicLabel,
+} = require("../config/contactTopics");
 
 const contactSchema = Joi.object({
   name: Joi.string().trim().min(1).max(120).required(),
@@ -12,6 +17,17 @@ const contactSchema = Joi.object({
   topic: Joi.string().trim().max(150).allow("", null),
   message: Joi.string().trim().min(1).max(5000).required(),
   turnstile_token: Joi.string().optional(),
+  // The language the reporter's UI was in, so the receipt email matches the
+  // page they filed from. There is no user row to resolve it from — a DSA
+  // report may be filed without an account — so it has to travel with the
+  // request.
+  //
+  // ⚠️ Deliberately NOT `.valid(...SUPPORTED_LANGUAGES)`, unlike the
+  // registration schema. That rule would turn an unexpected code into a 400 and
+  // reject the whole report over the language of its acknowledgement. This is
+  // the abuse channel: it must accept the report and get the language wrong,
+  // never the reverse. `resolveReceiptLanguage` below drops anything unknown.
+  language: Joi.string().trim().max(35).allow("", null),
 });
 
 const successResponse = {
@@ -25,8 +41,6 @@ const getAttachmentMetadata = (files = []) =>
     mimeType: file.mimetype,
     size: file.size,
   }));
-
-const isReportTopic = (topic = "") => topic.trim() === REPORT_TOPIC;
 
 const getReportSuccessResponse = (referenceId) => ({
   success: true,
@@ -46,14 +60,25 @@ const updateReportEmailStatus = async (report, statusUpdate) => {
   }
 };
 
+// An unsupported or absent code becomes the default rather than travelling on
+// as-is. `emailCopy()` would fall back too, but doing it here keeps the choice
+// visible at the point where it is made and is what the tests pin down.
+const resolveReceiptLanguage = (language) =>
+  isSupportedLanguage(language) ? language : DEFAULT_LANGUAGE;
+
 // Acknowledge receipt to the reporter. Best-effort: the report is already
 // persisted and its reference ID shown on screen, so a failed receipt email
 // must never fail the request.
-const sendReportReceipt = async (report, { name, email }) => {
+const sendReportReceipt = async (report, { name, email, language }) => {
   if (!report) return;
 
   try {
-    await emailService.sendReportReceiptEmail(name, email, report.reference_code);
+    await emailService.sendReportReceiptEmail(
+      name,
+      email,
+      report.reference_code,
+      resolveReceiptLanguage(language),
+    );
   } catch (receiptError) {
     console.error("Failed to send report receipt email:", receiptError);
   }
@@ -71,7 +96,11 @@ const contactController = {
 
         return res.status(400).json({
           success: false,
+          code: CONTACT_ERROR_CODES.INVALID_INPUT,
           message: "Invalid input data",
+          // ⚠️ Raw Joi text, and developer-facing. No frontend renders it —
+          // Contact.jsx reads `message` only — so it is deliberately left
+          // untranslated rather than given codes of its own.
           errors: error.details.map((detail) => detail.message),
         });
       }
@@ -80,18 +109,24 @@ const contactController = {
       if (!attachmentValidation.valid) {
         return res.status(400).json({
           success: false,
+          code: attachmentValidation.code,
+          values: attachmentValidation.values,
           message: attachmentValidation.error,
         });
       }
 
-      const { name, email, topic, message, turnstile_token } = value;
-      const shouldPersistReport = isReportTopic(topic || "");
+      const { name, email, topic, message, turnstile_token, language } = value;
+      // The code decides; the label is only ever written down. Keeping the two
+      // apart is what lets the dropdown be translated - see contactTopics.js.
+      const topicLabel = resolveTopicLabel(topic);
+      const shouldPersistReport = isReportTopic(topic);
       let report = null;
 
       if (process.env.TURNSTILE_SECRET_KEY) {
         if (!turnstile_token) {
           return res.status(400).json({
             success: false,
+            code: CONTACT_ERROR_CODES.CAPTCHA_REQUIRED,
             message: "CAPTCHA verification is required",
           });
         }
@@ -105,6 +140,7 @@ const contactController = {
 
           return res.status(400).json({
             success: false,
+            code: CONTACT_ERROR_CODES.CAPTCHA_FAILED,
             message: "CAPTCHA verification failed. Please try again.",
           });
         }
@@ -115,7 +151,7 @@ const contactController = {
           report = await contactReportModel.createReport({
             name,
             email,
-            topic: topic || REPORT_TOPIC,
+            topic: topicLabel || LEGACY_REPORT_TOPIC,
             message,
             attachments: getAttachmentMetadata(req.files),
           });
@@ -124,6 +160,7 @@ const contactController = {
 
           return res.status(500).json({
             success: false,
+            code: CONTACT_ERROR_CODES.REPORT_PERSIST_FAILED,
             message:
               "Failed to receive your report. Please try again in a few minutes.",
           });
@@ -132,8 +169,8 @@ const contactController = {
 
       try {
         const emailTopic = report
-          ? `${topic || REPORT_TOPIC} (${report.reference_code})`
-          : topic;
+          ? `${topicLabel || LEGACY_REPORT_TOPIC} (${report.reference_code})`
+          : topicLabel;
         const emailResult = await emailService.sendContactFormEmail(
           name,
           email,
@@ -162,7 +199,7 @@ const contactController = {
         });
       }
 
-      await sendReportReceipt(report, { name, email });
+      await sendReportReceipt(report, { name, email, language });
 
       if (report) {
         return res
@@ -176,6 +213,7 @@ const contactController = {
 
       return res.status(500).json({
         success: false,
+        code: CONTACT_ERROR_CODES.CONTACT_FAILED,
         message: "Failed to submit contact form",
       });
     }

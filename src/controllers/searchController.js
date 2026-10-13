@@ -9,6 +9,7 @@ const {
   scoreUserAgainstRole,
 } = require("../utils/matchingScorer");
 const { parseSearchParams } = require("../utils/search/searchParamParser");
+const { SEARCH_ERROR_CODES } = require("../config/searchErrors");
 const {
   getRolesSortDir,
   normalizeJsonArray,
@@ -124,6 +125,7 @@ const searchController = {
       if (!query || query.trim().length < 2) {
         return res.status(400).json({
           success: false,
+          code: SEARCH_ERROR_CODES.QUERY_TOO_SHORT,
           message: "Search query must be at least 2 characters long",
         });
       }
@@ -181,6 +183,8 @@ const searchController = {
         if (!validation.valid) {
           return res.status(400).json({
             success: false,
+            code: validation.code,
+            ...(validation.values && { values: validation.values }),
             message: "Invalid boolean search query",
             error: validation.message,
           });
@@ -462,6 +466,7 @@ const searchController = {
       console.error("Search error:", error);
       res.status(500).json({
         success: false,
+        code: SEARCH_ERROR_CODES.SEARCH_FAILED,
         message: "Error performing search",
         ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });
@@ -831,6 +836,7 @@ const searchController = {
       console.error("Error fetching all users and teams:", error);
       res.status(500).json({
         success: false,
+        code: SEARCH_ERROR_CODES.SEARCH_FAILED,
         message: "Error fetching data",
         ...(process.env.NODE_ENV === "development" && { error: error.message }),
       });

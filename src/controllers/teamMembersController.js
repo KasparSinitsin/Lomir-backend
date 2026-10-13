@@ -1,4 +1,5 @@
 const db = require("../config/database");
+const { TEAM_ERROR_CODES } = require("../config/teamErrors");
 const Joi = require("joi");
 const {
   createNotification,
@@ -6,6 +7,7 @@ const {
 } = require("./notificationController");
 const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
 const { checkAndCleanupArchivedTeam } = require("./teamController");
+const { DEFAULT_ROLE_NAME } = require("../config/roleDefaults");
 
 const reopenRolesFilledByMember = async (queryRunner, teamId, memberId) => {
   const result = await queryRunner.query(
@@ -31,7 +33,7 @@ const buildRoleReopenedLeaveMessage = ({
   memberId,
   memberName,
 }) =>
-  `🔓 ROLE_REOPENED: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || "Vacant Role"} | ${memberId}:${memberName || "Someone"}`;
+  `🔓 ROLE_REOPENED: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || DEFAULT_ROLE_NAME} | ${memberId}:${memberName || "Someone"}`;
 
 const notifyRemainingMembersOfReopenedRoles = async ({
   req,
@@ -62,8 +64,8 @@ const notifyRemainingMembersOfReopenedRoles = async ({
       await createNotification({
         userId: member.user_id,
         type: "role_reopened",
-        title: `${memberName} left the role ${event.roleName || "Vacant Role"} in ${teamName}`,
-        message: `${event.roleName || "Vacant Role"} is open again to be filled.`,
+        title: `${memberName} left the role ${event.roleName || DEFAULT_ROLE_NAME} in ${teamName}`,
+        message: `${event.roleName || DEFAULT_ROLE_NAME} is open again to be filled.`,
         referenceType: "message",
         referenceId: event.messageRow?.id || event.roleId,
         teamId: parseInt(teamId, 10),
@@ -754,6 +756,7 @@ const removeTeamMember = async (req, res) => {
         io?.to(`user:${memberId}`).emit("notification:new", {
           type: "member_removed",
           teamId: parseInt(teamId),
+          teamName,
           title: `You were removed from ${teamName}`,
           actorName: removerName,
         });
@@ -833,6 +836,7 @@ const updateMemberRole = async (req, res) => {
     if (authCheck.rows.length === 0) {
       return res.status(403).json({
         success: false,
+        code: TEAM_ERROR_CODES.ROLE_CHANGE_NOT_ALLOWED,
         message: "Not authorized to change member roles in this team",
       });
     }
@@ -851,11 +855,39 @@ const updateMemberRole = async (req, res) => {
     if (memberCheck.rows.length === 0) {
       return res.status(404).json({
         success: false,
+        code: TEAM_ERROR_CODES.MEMBER_UNAVAILABLE,
         message: "Member not found in this team",
       });
     }
 
     const memberCurrentRole = memberCheck.rows[0].role;
+
+    /**
+     * The owner's role is not someone else's to change.
+     *
+     * Authorisation above allows owner *and* admin, and every guard after it
+     * asks who is calling, never whom the call hits - so an admin could set
+     * the owner to 'member'. No UI offers that (checked in the browser,
+     * 2026-09-26), but a hand-made request reached it, and the result was a
+     * team nobody could recover: no row with role 'owner' while
+     * `teams.owner_id` still names the demoted person, so neither a transfer
+     * nor a deletion is possible any more - both require an owner.
+     *
+     * The rule this enforces (Julia, 2026-09-26): an owner's status changes
+     * only by transferring ownership or by leaving the team. Transferring
+     * runs its own branch below and never arrives here; leaving is
+     * `removeTeamMember`, which has guarded the last owner all along.
+     *
+     * ⚠️ Deliberately prose without a code: no surface can reach it, and a
+     * code nobody's UI can show is a translation key nobody reads (E2).
+     */
+    if (memberCurrentRole === "owner") {
+      return res.status(403).json({
+        success: false,
+        message:
+          "The team owner's role cannot be changed here. Transfer ownership instead.",
+      });
+    }
 
     // Commented out restrictions for team role changes to enable more flexible role management
 
@@ -879,6 +911,7 @@ const updateMemberRole = async (req, res) => {
     if (new_role === "owner" && userRole !== "owner") {
       return res.status(403).json({
         success: false,
+        code: TEAM_ERROR_CODES.OWNERSHIP_TRANSFER_NOT_ALLOWED,
         message: "Only the team owner can transfer ownership",
       });
     }
@@ -984,7 +1017,7 @@ const updateMemberRole = async (req, res) => {
           }
 
           // Team chat message for everyone
-          const teamChatMessage = `👑 OWNERSHIP_TEAM: ${prevOwnerName} | ${newOwnerName}`;
+          const teamChatMessage = `👑 OWNERSHIP_TEAM: ${prevToken} | ${newToken}`;
           const ownershipTeamMessageResult = await db.pool.query(
             `INSERT INTO messages (sender_id, team_id, content, sent_at)
          VALUES ($1, $2, $3, NOW())

@@ -6,6 +6,9 @@ const {
 const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer");
 const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
+const { idNameToken } = require("../utils/eventNameToken");
+const { TEAM_ERROR_CODES } = require("../config/teamErrors");
+const { DEFAULT_ROLE_NAME } = require("../config/roleDefaults");
 
 // Remove an invitee's now-stale invitation notifications — the bell entries that
 // pointed at an invitation which has since been accepted, declined, or cancelled.
@@ -31,7 +34,7 @@ const buildRoleReopenedMessage = ({
   userId,
   userName,
 }) =>
-  `🔓 ROLE_REOPENED: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || "Vacant Role"} | ${userId}:${userName || "Someone"}`;
+  `🔓 ROLE_REOPENED: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || DEFAULT_ROLE_NAME} | ${userId}:${userName || "Someone"}`;
 
 const buildRoleInvitationFilledMessage = ({
   teamId,
@@ -41,7 +44,7 @@ const buildRoleInvitationFilledMessage = ({
   userId,
   userName,
 }) =>
-  `✅ ROLE_INVITATION_FILLED: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || "Vacant Role"} | ${userId}:${userName || "Someone"}`;
+  `✅ ROLE_INVITATION_FILLED: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || DEFAULT_ROLE_NAME} | ${userId}:${userName || "Someone"}`;
 
 /**
  * Send a team invitation to a user
@@ -80,6 +83,7 @@ const sendTeamInvitation = async (req, res) => {
     if (teamCheck.rows.length === 0) {
       return res.status(404).json({
         success: false,
+        code: TEAM_ERROR_CODES.TEAM_NOT_FOUND,
         message: "Team not found",
       });
     }
@@ -111,6 +115,7 @@ const sendTeamInvitation = async (req, res) => {
       if (roleCheck.rows.length === 0) {
         return res.status(400).json({
           success: false,
+          code: TEAM_ERROR_CODES.ROLE_NOT_OPEN,
           message: "Vacant role not found for this team",
         });
       }
@@ -118,6 +123,7 @@ const sendTeamInvitation = async (req, res) => {
       if (roleCheck.rows[0].status !== "open") {
         return res.status(400).json({
           success: false,
+          code: TEAM_ERROR_CODES.ROLE_NOT_OPEN,
           message: "Vacant role is no longer open",
         });
       }
@@ -150,6 +156,7 @@ const sendTeamInvitation = async (req, res) => {
     if (isInternalInvite && !finalRoleId) {
       return res.status(400).json({
         success: false,
+        code: TEAM_ERROR_CODES.INVITEE_ALREADY_MEMBER,
         message: "User is already a member of this team",
       });
     }
@@ -167,6 +174,7 @@ const sendTeamInvitation = async (req, res) => {
       ) {
         return res.status(400).json({
           success: false,
+          code: TEAM_ERROR_CODES.TEAM_FULL,
           message: "Team is already at maximum capacity",
         });
       }
@@ -184,6 +192,7 @@ const sendTeamInvitation = async (req, res) => {
       if (existingRoleInvitation.rows.length > 0) {
         return res.status(400).json({
           success: false,
+          code: TEAM_ERROR_CODES.INVITATION_ALREADY_PENDING,
           message: "A pending invitation for this role already exists for this member",
         });
       }
@@ -197,6 +206,7 @@ const sendTeamInvitation = async (req, res) => {
       if (existingInvitation.rows.length > 0) {
         return res.status(400).json({
           success: false,
+          code: TEAM_ERROR_CODES.INVITATION_ALREADY_PENDING,
           message: "An invitation is already pending for this user",
         });
       }
@@ -220,6 +230,7 @@ const sendTeamInvitation = async (req, res) => {
       if (existingApplication.rows.length > 0) {
         return res.status(400).json({
           success: false,
+          code: TEAM_ERROR_CODES.INVITEE_HAS_PENDING_APPLICATION,
           message: "This user already has a pending application for this team.",
         });
       }
@@ -264,7 +275,9 @@ const sendTeamInvitation = async (req, res) => {
           io.to(`user:${finalInviteeId}`).emit("notification:new", {
             type: "role_invitation",
             teamId: parseInt(teamId),
+            teamName: team.name,
             roleId: finalRoleId,
+            roleName,
             title: `You've been invited to fill the role '${roleName}' in ${team.name}`,
             actorName: inviterName,
           });
@@ -285,6 +298,7 @@ const sendTeamInvitation = async (req, res) => {
           io.to(`user:${finalInviteeId}`).emit("notification:new", {
             type: "invitation_received",
             teamId: parseInt(teamId),
+            teamName: team.name,
             title: finalRoleId && roleName
               ? `You've been invited to join ${team.name} as ${roleName}!`
               : `You've been invited to join ${team.name}!`,
@@ -904,6 +918,7 @@ const respondToInvitation = async (req, res) => {
     if (invitationResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
+        code: TEAM_ERROR_CODES.INVITATION_UNAVAILABLE,
         message: "Invitation not found or already responded to",
       });
     }
@@ -950,6 +965,7 @@ const respondToInvitation = async (req, res) => {
             await client.query("ROLLBACK");
             return res.status(400).json({
               success: false,
+              code: TEAM_ERROR_CODES.TEAM_FULL,
               message: "Team is now at maximum capacity",
             });
           }
@@ -990,6 +1006,8 @@ const respondToInvitation = async (req, res) => {
               await client.query("ROLLBACK");
               return res.status(409).json({
                 success: false,
+                code: TEAM_ERROR_CODES.ALREADY_FILLING_ROLE,
+                values: { roleName: existingFilledRoleResult.rows[0].role_name },
                 message: `You are already filling ${existingFilledRoleResult.rows[0].role_name} in this team. Leave that role before accepting this role offer.`,
                 data: {
                   currentRoleId: existingFilledRoleResult.rows[0].id,
@@ -1002,6 +1020,7 @@ const respondToInvitation = async (req, res) => {
               await client.query("ROLLBACK");
               return res.status(400).json({
                 success: false,
+                code: TEAM_ERROR_CODES.ROLE_OFFER_UNAVAILABLE,
                 message: "This role offer is no longer available.",
               });
             }
@@ -1029,6 +1048,7 @@ const respondToInvitation = async (req, res) => {
               await client.query("ROLLBACK");
               return res.status(400).json({
                 success: false,
+                code: TEAM_ERROR_CODES.ROLE_OFFER_UNAVAILABLE,
                 message: "This role offer is no longer available.",
               });
             }
@@ -1110,15 +1130,22 @@ const respondToInvitation = async (req, res) => {
             await emitInsertedMessage(req, responseMessageResult.rows[0]);
           }
         } else {
+          // The id travels with the name so the chat can resolve the CURRENT
+          // name at display time; without it these four banners froze whoever
+          // joined under the name they had that day. `idNameToken` falls back
+          // to the bare name if the id is not a positive integer, which is
+          // exactly the old output.
+          const inviteeToken = idNameToken(invitation.invitee_id, inviteeName);
+
           let joinLine;
           if (isInternalAccept && roleFilled) {
-            joinLine = `🎯 ${inviteeName} was assigned the role ${filledRoleName}!`;
+            joinLine = `🎯 ${inviteeToken} was assigned the role ${filledRoleName}!`;
           } else if (isInternalAccept) {
-            joinLine = `🎯 ${inviteeName} accepted a role invitation!`;
+            joinLine = `🎯 ${inviteeToken} accepted a role invitation!`;
           } else if (roleFilled) {
-            joinLine = `👋 ${inviteeName} joined the team as ${filledRoleName}!`;
+            joinLine = `👋 ${inviteeToken} joined the team as ${filledRoleName}!`;
           } else {
-            joinLine = `👋 ${inviteeName} joined the team!`;
+            joinLine = `👋 ${inviteeToken} joined the team!`;
           }
           const formattedMessage =
             response_message && response_message.trim()
@@ -1225,6 +1252,7 @@ const respondToInvitation = async (req, res) => {
               io.to(`user:${invitation.inviter_id}`).emit("notification:new", {
                 type: "invitation_accepted",
                 teamId: invitation.team_id,
+                teamName: invitation.team_name,
                 roleFilled,
                 filledRoleName,
                 title: filledRoleName
@@ -1313,6 +1341,7 @@ const respondToInvitation = async (req, res) => {
             io.to(`user:${invitation.inviter_id}`).emit("notification:new", {
               type: "invitation_declined",
               teamId: invitation.team_id,
+              teamName: invitation.team_name,
               title: invitation.role_id && invitation.role_name
                 ? `Your invitation to join ${invitation.team_name} as ${invitation.role_name} was declined`
                 : `Your invitation to ${invitation.team_name} was declined`,
@@ -1394,6 +1423,7 @@ const cancelInvitation = async (req, res) => {
     if (invitationResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
+        code: TEAM_ERROR_CODES.INVITATION_UNAVAILABLE,
         message: "Invitation not found or already responded to",
       });
     }
@@ -1482,6 +1512,7 @@ const cancelInvitation = async (req, res) => {
         io.to(`user:${invitation.invitee_id}`).emit("notification:new", {
           type: "invitation_cancelled",
           teamId: teamId,
+          teamName: invitation.team_name,
           title: invitation.role_id && invitation.role_name
             ? `Your invitation to join ${invitation.team_name} as ${invitation.role_name} was cancelled`
             : `Your invitation to ${invitation.team_name} was cancelled`,
@@ -1545,6 +1576,7 @@ const cancelRoleInvitation = async (req, res) => {
     if (invitationResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
+        code: TEAM_ERROR_CODES.INVITATION_UNAVAILABLE,
         message: "Invitation not found or already responded to",
       });
     }
@@ -1552,9 +1584,13 @@ const cancelRoleInvitation = async (req, res) => {
     const invitation = invitationResult.rows[0];
     const teamId = invitation.team_id;
 
+    // Reachable: for an invitee outside the team, cancelling the role only
+    // unlinks it and the team invitation stays pending — so a second admin
+    // cancelling the same role invitation lands here.
     if (!invitation.role_id) {
       return res.status(400).json({
         success: false,
+        code: TEAM_ERROR_CODES.ROLE_INVITATION_WITHDRAWN,
         message: "This invitation is not linked to a role",
       });
     }

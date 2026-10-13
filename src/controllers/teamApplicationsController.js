@@ -1,5 +1,6 @@
 const db = require("../config/database");
 const Joi = require("joi");
+const { idNameToken } = require("../utils/eventNameToken");
 const {
   createNotification,
   notifyTeamMembers,
@@ -8,6 +9,8 @@ const {
 const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer");
 const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
+const { TEAM_ERROR_CODES } = require("../config/teamErrors");
+const { DEFAULT_ROLE_NAME } = require("../config/roleDefaults");
 
 const buildRoleApplicationDeferredInviteMessage = ({
   teamId,
@@ -21,7 +24,7 @@ const buildRoleApplicationDeferredInviteMessage = ({
   currentRoleId,
   currentRoleName,
 }) =>
-  `📬 ROLE_APPLICATION_DEFERRED_INVITE: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || "Vacant Role"} | ${applicantId}:${applicantName || "Someone"} | ${approverId}:${approverName || "Someone"} | ${currentRoleId}:${currentRoleName || "their current role"}`;
+  `📬 ROLE_APPLICATION_DEFERRED_INVITE: ${teamId}:${teamName || "your team"} | ${roleId}:${roleName || DEFAULT_ROLE_NAME} | ${applicantId}:${applicantName || "Someone"} | ${approverId}:${approverName || "Someone"} | ${currentRoleId}:${currentRoleName || "their current role"}`;
 
 const getUserPendingApplications = async (req, res) => {
   try {
@@ -308,6 +311,7 @@ const cancelApplication = async (req, res) => {
     if (applicationResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
+        code: TEAM_ERROR_CODES.APPLICATION_UNAVAILABLE,
         message: "Application not found or cannot be canceled",
       });
     }
@@ -638,6 +642,10 @@ const getTeamApplications = async (req, res) => {
 };
 
 
+// An application is handled once. Approved, declined or withdrawn (a withdrawn
+// application is deleted) all answer the same way.
+const APPLICATION_NOT_PENDING_MESSAGE = "Application not found or already handled";
+
 const handleTeamApplication = async (req, res) => {
   try {
     const applicationId = req.params.applicationId;
@@ -658,14 +666,20 @@ const handleTeamApplication = async (req, res) => {
    LEFT JOIN team_vacant_roles vr ON ta.role_id = vr.id
    JOIN users applicant ON ta.applicant_id = applicant.id
    LEFT JOIN team_members tm ON t.id = tm.team_id AND tm.user_id = $1
-   WHERE ta.id = $2`,
+   WHERE ta.id = $2 AND ta.status = 'pending'
+   AND t.archived_at IS NULL`,
       [userId, applicationId],
     );
 
+    // An archived team is read-only (STATUS item 40): its pending applications
+    // can no longer be approved or declined, same as invitations to it can no
+    // longer be answered. Approving one used to add the applicant to the
+    // archived team.
     if (applicationResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "Application not found",
+        code: TEAM_ERROR_CODES.APPLICATION_UNAVAILABLE,
+        message: APPLICATION_NOT_PENDING_MESSAGE,
       });
     }
 
@@ -733,6 +747,7 @@ const handleTeamApplication = async (req, res) => {
             await client.query("ROLLBACK");
             return res.status(400).json({
               success: false,
+              code: TEAM_ERROR_CODES.TEAM_FULL,
               message: "Team is already at maximum capacity",
             });
           }
@@ -753,13 +768,25 @@ const handleTeamApplication = async (req, res) => {
           );
         }
 
-        // Update application status — runs for both internal and external
-        await client.query(
+        // Update application status — runs for both internal and external.
+        // Conditional on 'pending': a second admin approving at the same
+        // moment must not add the applicant twice.
+        const approvedResult = await client.query(
           `UPDATE team_applications
    SET status = 'approved', reviewed_at = NOW(), reviewed_by = $1
-   WHERE id = $2`,
+   WHERE id = $2 AND status = 'pending'
+   RETURNING id`,
           [userId, applicationId],
         );
+
+        if (approvedResult.rows.length === 0) {
+          await client.query("ROLLBACK");
+          return res.status(404).json({
+            success: false,
+            code: TEAM_ERROR_CODES.APPLICATION_UNAVAILABLE,
+            message: APPLICATION_NOT_PENDING_MESSAGE,
+          });
+        }
 
         // Add system message to team chat for approved application
         const applicantName =
@@ -775,7 +802,17 @@ const handleTeamApplication = async (req, res) => {
         let teamMessageResult = null;
 
         if (!isInternalRoleApp) {
-          const systemMessage = `🎉 ${applicantName} has applied successfully to your team and has been added as a team member by ${approverName}. Say hello to them!`;
+          // Both people get an id token, so a later rename or deletion reaches
+          // this banner at display time instead of needing the stored row
+          // rewritten. The approver is the acting user; the applicant comes
+          // off the application row.
+          const applicantToken = idNameToken(
+            application.applicant_id,
+            applicantName,
+          );
+          const approverToken = idNameToken(userId, approverName);
+
+          const systemMessage = `🎉 ${applicantToken} has applied successfully to your team and has been added as a team member by ${approverToken}. Say hello to them!`;
 
           teamMessageResult = await client.query(
             `INSERT INTO messages (sender_id, team_id, content, sent_at)
@@ -856,6 +893,7 @@ const handleTeamApplication = async (req, res) => {
               io.to(`user:${application.applicant_id}`).emit("notification:new", {
                 type: "application_approved",
                 teamId: application.team_id,
+                teamName: application.team_name,
                 title: approvalTitle,
                 actorName: approverName,
                 ...(application.role_id && application.role_name
@@ -1029,6 +1067,7 @@ const handleTeamApplication = async (req, res) => {
             io.to(`user:${deferredInviteSocketData.applicantId}`).emit("notification:new", {
               type: "role_application_deferred_invite",
               teamId: deferredInviteSocketData.teamId,
+              teamName: deferredInviteSocketData.teamName,
               roleId: deferredInviteSocketData.roleId,
               roleName: deferredInviteSocketData.roleName,
               title: `Your application for ${deferredInviteSocketData.roleName} in ${deferredInviteSocketData.teamName} is now a role offer`,
@@ -1060,13 +1099,24 @@ const handleTeamApplication = async (req, res) => {
             ? `${approver.first_name} ${approver.last_name}`
             : approver.username;
 
-        // Update application status
-        await client.query(
+        // Update application status. Conditional on 'pending': declining an
+        // application another admin just approved must not mark a member rejected.
+        const declinedResult = await client.query(
           `UPDATE team_applications 
            SET status = 'rejected', reviewed_at = NOW(), reviewed_by = $1
-           WHERE id = $2`,
+           WHERE id = $2 AND status = 'pending'
+           RETURNING id`,
           [userId, applicationId],
         );
+
+        if (declinedResult.rows.length === 0) {
+          await client.query("ROLLBACK");
+          return res.status(404).json({
+            success: false,
+            code: TEAM_ERROR_CODES.APPLICATION_UNAVAILABLE,
+            message: APPLICATION_NOT_PENDING_MESSAGE,
+          });
+        }
 
         // Get applicant's name for the message
         const applicantName =
@@ -1120,6 +1170,7 @@ const handleTeamApplication = async (req, res) => {
             io.to(`user:${application.applicant_id}`).emit("notification:new", {
               type: "application_rejected",
               teamId: application.team_id,
+              teamName: application.team_name,
               title: `Your application to ${application.team_name} was declined`,
               actorName: approverName,
             });
@@ -1208,6 +1259,7 @@ const applyToJoinTeam = async (req, res) => {
     if (teamCheck.rows.length === 0) {
       return res.status(404).json({
         success: false,
+        code: TEAM_ERROR_CODES.TEAM_NOT_FOUND,
         message: "Team not found",
       });
     }
@@ -1225,6 +1277,7 @@ const applyToJoinTeam = async (req, res) => {
       if (roleCheck.rows.length === 0) {
         return res.status(400).json({
           success: false,
+          code: TEAM_ERROR_CODES.ROLE_NOT_OPEN,
           message: "Vacant role not found or is no longer open for this team",
         });
       }
@@ -1241,6 +1294,7 @@ const applyToJoinTeam = async (req, res) => {
     if (isAlreadyMember && !normalizedRoleId) {
       return res.status(400).json({
         success: false,
+        code: TEAM_ERROR_CODES.ALREADY_MEMBER,
         message: "You are already a member of this team. To apply for a role, please select a specific vacant role.",
       });
     }
@@ -1258,6 +1312,7 @@ const applyToJoinTeam = async (req, res) => {
       ) {
         return res.status(400).json({
           success: false,
+          code: TEAM_ERROR_CODES.TEAM_FULL,
           message: "Team is already at maximum capacity",
         });
       }
@@ -1274,6 +1329,7 @@ const applyToJoinTeam = async (req, res) => {
       if (existingRoleAppCheck.rows.length > 0) {
         return res.status(400).json({
           success: false,
+          code: TEAM_ERROR_CODES.APPLICATION_ALREADY_PENDING,
           message: "You already have a pending application for this role",
         });
       }
@@ -1288,6 +1344,7 @@ const applyToJoinTeam = async (req, res) => {
       if (existingApplicationCheck.rows.length > 0) {
         return res.status(400).json({
           success: false,
+          code: TEAM_ERROR_CODES.APPLICATION_ALREADY_PENDING,
           message: "You already have a pending application for this team",
         });
       }
@@ -1327,8 +1384,9 @@ const applyToJoinTeam = async (req, res) => {
               ? `${applicant.first_name} ${applicant.last_name}`
               : applicant.username;
 
-          await notifyTeamAdmins({
+          const adminNotifications = await notifyTeamAdmins({
             teamId: parseInt(teamId),
+            excludeUserId: applicantId,
             type: "application_received",
             title: isAlreadyMember
               ? `${applicantName} applied for a role in ${team.name}`
@@ -1339,17 +1397,31 @@ const applyToJoinTeam = async (req, res) => {
             actorId: applicantId,
           });
 
-          // Emit socket events to team admins
+          // Emit to exactly the owners/admins who got the stored notification.
+          // ⚠️ Not `team:${teamId}`: that room holds every member, and plain
+          // members got a "New Application" toast they cannot act on.
           const io = req.app.get("io");
           if (io) {
-            io.to(`team:${teamId}`).emit("notification:new", {
+            const socketPayload = {
               type: "application_received",
               teamId: parseInt(teamId),
+              teamName: team.name,
+              // The title's two variants: a member applying for a role, or
+              // someone applying to join.
+              isRoleApplication: isAlreadyMember,
               title: isAlreadyMember
                 ? `New role application for ${team.name}`
                 : `New application to join ${team.name}`,
               actorName: applicantName,
-            });
+            };
+            const adminIds = new Set(
+              adminNotifications
+                .map((notification) => notification?.user_id)
+                .filter((id) => id != null),
+            );
+            for (const adminId of adminIds) {
+              io.to(`user:${adminId}`).emit("notification:new", socketPayload);
+            }
           }
         } catch (notificationError) {
           console.error(

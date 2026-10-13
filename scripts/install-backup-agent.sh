@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Installs (or refreshes) the launchd agent that runs the database backup daily.
+# Installs (or refreshes) the launchd agent that runs the database backup at
+# several fixed times each day.
 #
 #   npm run backup:install     install / update the agent
 #   npm run backup:uninstall   remove it again
@@ -38,7 +39,16 @@ AGENT_CONFIG="$INSTALL_DIR/backup.env"
 LABEL="com.lomir.backup"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 BACKUP_DIR="${LOMIR_BACKUP_DIR:-$HOME/LomirBackups}"
-HOUR="${LOMIR_BACKUP_HOUR:-10}"
+
+# Three slots a day rather than one. A single 10:00 run is missed whenever the
+# laptop is asleep at that moment, and launchd then fires it on wake, before
+# Wi-Fi is up - pg_dump fails to resolve the database host and no backup is
+# written. That is what left 2026-07-29 and 07-30 without one. Later slots cost
+# about 1 MB each and turn a missed slot into a retry a few hours later.
+#
+# Override with LOMIR_BACKUP_HOURS as a comma-separated list of hours, e.g.
+# LOMIR_BACKUP_HOURS=9,21. The older singular LOMIR_BACKUP_HOUR still works.
+HOURS="${LOMIR_BACKUP_HOURS:-${LOMIR_BACKUP_HOUR:-10,14,17}}"
 
 die() {
   printf 'ERROR: %s\n' "$1" >&2
@@ -78,6 +88,33 @@ case ":$BASE_PATH:" in
 *":$PG_BIN:"*) AGENT_PATH="$BASE_PATH" ;;
 *) AGENT_PATH="$PG_BIN:$BASE_PATH" ;;
 esac
+
+# --- build the schedule ------------------------------------------------------
+#
+# Validated here rather than left to launchd: plutil accepts an out-of-range
+# hour, and the agent then simply never fires.
+
+CALENDAR_ENTRIES=""
+HOURS_HUMAN=""
+IFS=',' read -r -a HOUR_LIST <<<"$HOURS"
+for RAW_HOUR in "${HOUR_LIST[@]}"; do
+  HOUR="${RAW_HOUR//[[:space:]]/}"
+  [ -n "$HOUR" ] || continue
+  case "$HOUR" in
+  *[!0-9]*) die "invalid backup hour '$HOUR' in '$HOURS': use comma-separated hours 0-23" ;;
+  esac
+  # Base 10 explicitly, so a written-out 09 is nine and not an octal error.
+  HOUR="$((10#$HOUR))"
+  { [ "$HOUR" -ge 0 ] && [ "$HOUR" -le 23 ]; } ||
+    die "backup hour '$HOUR' is out of range 0-23"
+  CALENDAR_ENTRIES="$CALENDAR_ENTRIES
+    <dict>
+      <key>Hour</key><integer>$HOUR</integer>
+      <key>Minute</key><integer>0</integer>
+    </dict>"
+  HOURS_HUMAN="${HOURS_HUMAN:+$HOURS_HUMAN, }$(printf '%02d:00' "$HOUR")"
+done
+[ -n "$CALENDAR_ENTRIES" ] || die "no valid backup hours in '$HOURS'"
 
 # --- provision the runtime copy ----------------------------------------------
 
@@ -124,14 +161,14 @@ cat >"$PLIST" <<PLIST_EOF
     <string>$BACKUP_DIR</string>
   </dict>
 
-  <!-- Daily. Unlike cron, launchd remembers a missed occurrence and runs the
-       job once shortly after the next boot or wake, coalescing several missed
-       runs into one. A laptop that was off for weeks backs up on next start. -->
+  <!-- Several times a day, so one missed slot is retried a few hours later
+       instead of costing the whole day. Unlike cron, launchd remembers missed
+       occurrences and runs the job once shortly after the next boot or wake,
+       coalescing them - a laptop that was off for weeks backs up once on next
+       start, not once per slot it slept through. -->
   <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key><integer>$HOUR</integer>
-    <key>Minute</key><integer>0</integer>
-  </dict>
+  <array>$CALENDAR_ENTRIES
+  </array>
 
   <key>StandardOutPath</key>
   <string>$BACKUP_DIR/backup.log</string>
@@ -174,7 +211,7 @@ rm -f "$MARKER"
 
 if [ "$FRESH" -gt 0 ]; then
   cat "$BACKUP_DIR/backup.log"
-  printf '\nVerified: the agent produced a backup. It will run daily at %s:00.\n' "$HOUR"
+  printf '\nVerified: the agent produced a backup. It will run daily at %s.\n' "$HOURS_HUMAN"
   printf 'Log: %s\n' "$BACKUP_DIR/backup.log"
 else
   printf 'The agent did NOT produce a backup. Log follows:\n\n'

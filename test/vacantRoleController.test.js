@@ -310,3 +310,31 @@ test("updateVacantRoleStatus clears filled_by and returns filled_by_user null wh
   assert.equal(res.body.data.filled_by, null);
   assert.equal(res.body.data.filled_by_user, null);
 });
+
+test("every role endpoint keeps a role whose creator was deleted", async () => {
+  // Item 39: account deletion sets team_vacant_roles.created_by NULL. An INNER
+  // join on the creator dropped such roles from the list, the ?ids= lookup and
+  // the single-role read alike (6 of 150 roles, deletion-audit 59).
+  const sqls = [];
+  db.pool.query = async (sql) => {
+    sqls.push(sql);
+    return { rows: [] };
+  };
+
+  await vacantRoleController.getVacantRoles(
+    createRequest({ query: { status: "all" } }),
+    createResponse(),
+  );
+  await vacantRoleController.getVacantRoles(
+    createRequest({ query: { ids: "1,2" } }),
+    createResponse(),
+  );
+  await vacantRoleController.getVacantRoleById(createRequest(), createResponse());
+
+  const roleReads = sqls.filter((sql) => sql.includes("FROM team_vacant_roles vr"));
+  assert.equal(roleReads.length, 3, "expected the list, the ids lookup and the single read");
+  for (const sql of roleReads) {
+    assert.match(sql, /LEFT JOIN users u ON vr\.created_by = u\.id/);
+    assert.doesNotMatch(sql, /(^|[^T] )JOIN users u ON vr\.created_by/m);
+  }
+});

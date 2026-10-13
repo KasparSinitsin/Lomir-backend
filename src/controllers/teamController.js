@@ -1,4 +1,5 @@
 const db = require("../config/database");
+const { idNameToken } = require("../utils/eventNameToken");
 const Joi = require("joi");
 const { resolveLocationData } = require("../utils/geocodingUtil");
 const {
@@ -9,7 +10,16 @@ const {
 const { computeDistanceScore, WEIGHTS } = require("./matchingController");
 const { serializeEmbeddedVacantRole } = require("../utils/vacantRoleSerializer");
 const { deleteImageKitFile } = require("../utils/imagekitUtils");
+const fileDeletionQueue = require("../utils/fileDeletionQueue");
+const deletionRecord = require("../utils/deletionRecord");
 const { emitInsertedMessage } = require("../utils/socketMessageEmitter");
+const { TEAM_ERROR_CODES } = require("../config/teamErrors");
+const {
+  MAX_PERSONAL_MESSAGE_LENGTH,
+  collectOpenRequests,
+  closeOpenRequests,
+  sendRequestVoidMessages,
+} = require("../utils/teamDeletionRequests");
 
 const TEAM_RETURNING_FIELDS = `
   id,
@@ -39,14 +49,21 @@ const permanentlyDeleteTeam = async (teamId) => {
   try {
     await client.query("BEGIN");
 
-    // Fetch team avatar URL before deleting
-    const teamResult = await client.query(
-      `SELECT teamavatar_url, teamavatar_file_id FROM teams WHERE id = $1`,
+    // For the deletion record after the commit (item 59).
+    const teamCreated = await client.query(
+      `SELECT created_at FROM teams WHERE id = $1`,
       [teamId],
     );
 
-    const teamAvatarUrl = teamResult.rows[0]?.teamavatar_url;
-    const teamAvatarFileId = teamResult.rows[0]?.teamavatar_file_id;
+    // The chat images and files and the team avatar go onto the deletion queue
+    // in this transaction; they are deleted from ImageKit after the commit and
+    // retried until they are gone (STATUS item 59). Before, only the avatar was
+    // deleted, with one try, and the chat files stayed in ImageKit.
+    const queuedFileIds = await fileDeletionQueue.queueTeamFiles(
+      client,
+      teamId,
+      fileDeletionQueue.FILE_DELETION_SOURCE.TEAM_DELETION,
+    );
 
     // Delete all related data in order...
     await client.query("DELETE FROM messages WHERE team_id = $1", [teamId]);
@@ -66,11 +83,19 @@ const permanentlyDeleteTeam = async (teamId) => {
 
     await client.query("COMMIT");
 
-    // Delete avatar from ImageKit AFTER successful database deletion
-    // This is done outside the transaction to prevent rollback issues
-    if (teamAvatarUrl || teamAvatarFileId) {
-      await deleteImageKitFile(teamAvatarUrl, teamAvatarFileId);
-    }
+    // ImageKit only AFTER the commit, without holding the caller; a failure
+    // stays queued for the daily cleanup and the next server start.
+    fileDeletionQueue.processFileDeletionsSoon(queuedFileIds);
+
+    // The internal record for re-deleting after a backup restore: covers the
+    // owner's deletion of a solo team, the last member leaving an archived team
+    // and the 14-day purge. Ids and timestamps only.
+    deletionRecord.sendDeletionRecordSoon(
+      deletionRecord.buildTeamDeletionRecord({
+        teamId,
+        createdAt: teamCreated.rows[0]?.created_at,
+      }),
+    );
 
     return true;
   } catch (error) {
@@ -439,6 +464,26 @@ const updateTeam = async (req, res) => {
       });
     }
 
+    // A maximum below the current member count would leave the team over
+    // capacity ("9/7"). The form prevents it; this answers a stale form, e.g.
+    // someone joined while it was open. `null` (unlimited) is always allowed.
+    if (value.max_members !== undefined && value.max_members !== null) {
+      const memberCountResult = await db.pool.query(
+        `SELECT COUNT(*) AS count FROM team_members WHERE team_id = $1`,
+        [teamId],
+      );
+      const memberCount = parseInt(memberCountResult.rows[0].count, 10);
+
+      if (value.max_members < memberCount) {
+        return res.status(400).json({
+          success: false,
+          code: TEAM_ERROR_CODES.MAX_MEMBERS_BELOW_MEMBER_COUNT,
+          values: { memberCount },
+          message: `This team already has ${memberCount} members. The maximum cannot be lower.`,
+        });
+      }
+    }
+
     // Normalize location rules:
     // - If is_remote is true: clear location fields
     // - Convert empty strings to null so DB stores NULL instead of ""
@@ -752,6 +797,32 @@ const deleteTeam = async (req, res) => {
       });
     }
 
+    // Optional note from the owner to everyone whose application or
+    // invitation this deletion voids (STATUS item 40b).
+    const personalMessage =
+      typeof req.body?.message === "string" ? req.body.message.trim() : "";
+    if (personalMessage.length > MAX_PERSONAL_MESSAGE_LENGTH) {
+      return res.status(400).json({
+        success: false,
+        message: `The message must be at most ${MAX_PERSONAL_MESSAGE_LENGTH} characters`,
+      });
+    }
+
+    // Before anything is touched: a permanent delete takes these rows along.
+    const { recipients } = await collectOpenRequests(db.pool, teamId);
+    const requestOwner = { id: userId, name: null };
+    const loadOwnerName = async () => {
+      const ownerRow = (
+        await db.pool.query(
+          `SELECT first_name, last_name, username FROM users WHERE id = $1`,
+          [userId],
+        )
+      ).rows[0];
+      return ownerRow?.first_name && ownerRow?.last_name
+        ? `${ownerRow.first_name} ${ownerRow.last_name}`
+        : ownerRow?.username || null;
+    };
+
     // If the owner is the only remaining member, there is no one left to be
     // notified or to read a "team deleted" message — skip the soft-delete/archive
     // path and permanently remove the team right away. This also purges the team
@@ -766,6 +837,40 @@ const deleteTeam = async (req, res) => {
 
     if (otherMembersResult.rows[0].count === 0) {
       await permanentlyDeleteTeam(teamId);
+
+      if (recipients.length > 0) {
+        requestOwner.name = await loadOwnerName();
+        await sendRequestVoidMessages({
+          req,
+          queryable: db.pool,
+          team: { id: teamCheck.rows[0].id, name: teamCheck.rows[0].name },
+          owner: requestOwner,
+          recipients,
+          mode: "deleted",
+          personalMessage,
+        });
+      }
+
+      /**
+       * Nobody else needs telling - but the owner's own chat page does.
+       *
+       * This branch used to emit nothing at all. The conversation therefore
+       * stayed in the deleter's list until something happened to hit a 404:
+       * opening it, or the membership poll, which runs every 60s while the
+       * socket is connected and only for the *active* team chat. The archive
+       * branch below has always emitted (`notification:new`); this one never
+       * did, which is why only the solo case looked broken.
+       *
+       * No deploy order: a frontend that does not listen ignores the event,
+       * and a backend that does not send it leaves the old 404 path in place.
+       */
+      const io = req.app.get("io");
+      if (io) {
+        io.to(`user:${userId}`).emit("team:deleted", {
+          teamId: parseInt(teamId, 10),
+        });
+      }
+
       return res.status(200).json({
         success: true,
         message: "Team deleted successfully",
@@ -789,7 +894,31 @@ const deleteTeam = async (req, res) => {
         [teamId],
       );
 
+      await closeOpenRequests(client, teamId);
+
       await client.query("COMMIT");
+
+      // The people whose application or invitation was just closed hear it
+      // from the owner, in a DM of their own.
+      if (recipients.length > 0) {
+        try {
+          requestOwner.name = await loadOwnerName();
+          await sendRequestVoidMessages({
+            req,
+            queryable: db.pool,
+            team: { id: teamCheck.rows[0].id, name: teamCheck.rows[0].name },
+            owner: requestOwner,
+            recipients,
+            mode: "archived",
+            personalMessage,
+          });
+        } catch (requestNoticeError) {
+          console.error(
+            "Error notifying applicants and invitees of the deleted team:",
+            requestNoticeError,
+          );
+        }
+      }
 
       // === CREATE NOTIFICATIONS FOR ALL TEAM MEMBERS ===
       try {
@@ -813,7 +942,7 @@ const deleteTeam = async (req, res) => {
         );
 
         // Send ONE system message to the team chat (not DM)
-        const deleteMessage = `🗑️ TEAM_DELETED: ${teamName} | ${ownerName}`;
+        const deleteMessage = `🗑️ TEAM_DELETED: ${idNameToken(teamId, teamName)} | ${idNameToken(userId, ownerName)}`;
 
         const deleteMessageResult = await db.pool.query(
           `INSERT INTO messages (sender_id, team_id, content, sent_at)

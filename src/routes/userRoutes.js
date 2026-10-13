@@ -14,6 +14,22 @@ const router = express.Router();
 // Access: Public (or add auth.authenticateToken if needed)
 router.get("/", userController.getUsers);
 
+// POST /api/users/resolve-names - the names a batch of ids display under today
+// Access: Private (any authenticated user)
+//
+// ⚠️ Registered ABOVE the "/:id" routes on purpose. Nothing shadows it today
+// because "/:id" has no POST handler, but a literal path placed after a
+// parameterized one is a trap waiting for the next person who adds
+// `router.post("/:id", ...)` - at which point "resolve-names" would start
+// arriving as an id, and `Number.parseInt("resolve-names")` is NaN, so the
+// controller would answer 200 with an empty result and every mention would
+// quietly render as a deleted account. Keep it here.
+router.post(
+  "/resolve-names",
+  auth.authenticateToken,
+  userController.resolveDisplayNames,
+);
+
 // GET /api/users/:id - Get a specific user by their ID
 // Access: Public, with optional auth for own-profile hidden award visibility
 router.get("/:id", auth.optionalAuthenticateToken, userController.getUserById);

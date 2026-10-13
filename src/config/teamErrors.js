@@ -1,0 +1,64 @@
+/**
+ * The failure codes the team endpoints (invitations, applications, vacant
+ * roles) can answer with.
+ *
+ * Same shape and rules as `config/contactErrors.js` — read its header first:
+ * `code` is stable and never shown, `values` carries only what the backend
+ * alone knows, `message` stays so an old frontend keeps working and no deploy
+ * order arises, and every payload key is camelCase.
+ *
+ * ⚠️ **Only the failures a normal user can reach carry a code** (plan decision
+ * E2): races between two windows or two admins, where the UI was right when it
+ * rendered and the data moved underneath it. Guards the UI already prevents —
+ * authorisation, id and action validation, message length — stay prose, and
+ * the frontend shows its own translated fallback for them, never `message`.
+ * Do not add a code for a guard nobody can reach; it is a key nobody reads.
+ *
+ * Perspective is part of the code: `ALREADY_MEMBER` is the person acting,
+ * `INVITEE_ALREADY_MEMBER` the person being invited.
+ */
+
+const TEAM_ERROR_CODES = {
+  // Also answered by GET /api/teams/:id for a team that no longer exists —
+  // hard-deleted, or archived (scheduled for deletion) to a non-member.
+  TEAM_NOT_FOUND: "TEAM_NOT_FOUND",
+  // GET /api/teams/:id only: the team exists but is private and the reader is
+  // not a member. Chat events name such teams; the frontend keeps them as
+  // links instead of treating them as gone (item 34). Reveals that the id
+  // exists, never anything about the team.
+  TEAM_NOT_ACCESSIBLE: "TEAM_NOT_ACCESSIBLE",
+  TEAM_FULL: "TEAM_FULL",
+  // values: { memberCount } — a new maximum below the current member count
+  MAX_MEMBERS_BELOW_MEMBER_COUNT: "MAX_MEMBERS_BELOW_MEMBER_COUNT",
+
+  ROLE_NOT_FOUND: "ROLE_NOT_FOUND",
+  ROLE_NOT_OPEN: "ROLE_NOT_OPEN",
+  ROLE_OFFER_UNAVAILABLE: "ROLE_OFFER_UNAVAILABLE",
+  // values: { roleName } — the role the user already fills
+  ALREADY_FILLING_ROLE: "ALREADY_FILLING_ROLE",
+
+  ALREADY_MEMBER: "ALREADY_MEMBER",
+  INVITEE_ALREADY_MEMBER: "INVITEE_ALREADY_MEMBER",
+
+  INVITATION_ALREADY_PENDING: "INVITATION_ALREADY_PENDING",
+  INVITATION_UNAVAILABLE: "INVITATION_UNAVAILABLE",
+  // The role part of a still-pending team invitation was already withdrawn.
+  ROLE_INVITATION_WITHDRAWN: "ROLE_INVITATION_WITHDRAWN",
+  INVITEE_HAS_PENDING_APPLICATION: "INVITEE_HAS_PENDING_APPLICATION",
+
+  APPLICATION_ALREADY_PENDING: "APPLICATION_ALREADY_PENDING",
+  APPLICATION_UNAVAILABLE: "APPLICATION_UNAVAILABLE",
+
+  // The person whose role was being changed is no longer in the team: they
+  // left, or someone removed them, while the dialog was open.
+  MEMBER_UNAVAILABLE: "MEMBER_UNAVAILABLE",
+  // The actor may no longer change roles here — demoted to member, removed
+  // from the team, or the team was archived while the panel was open.
+  ROLE_CHANGE_NOT_ALLOWED: "ROLE_CHANGE_NOT_ALLOWED",
+  // Ownership can only be handed on by the current owner. Reachable the same
+  // way: a second owner window transferred it away first, leaving this one an
+  // admin — the role check above still passes for an admin.
+  OWNERSHIP_TRANSFER_NOT_ALLOWED: "OWNERSHIP_TRANSFER_NOT_ALLOWED",
+};
+
+module.exports = { TEAM_ERROR_CODES };

@@ -1,6 +1,8 @@
 const { pool } = require("../config/database");
 const {
   ensureBadgeVisibilityColumns,
+  visibleAwardCondition,
+  visibleFocusAreaCondition,
 } = require("../utils/badgeVisibilityUtils");
 
 /**
@@ -56,43 +58,64 @@ const getUserTags = async (req, res) => {
         t.supercategory,
         ut.experience_level,
         ut.interest_level,
+        -- Which kind of focus area this is. The owner's own views need it: a
+        -- self-chosen one shows even while its only award is hidden, an
+        -- award-created one does not exist until that award does. A stranger
+        -- never sees the second kind at all, so for them this is redundant —
+        -- it is sent either way to keep one payload shape.
+        ut.source,
         COALESCE(tag_award_stats.badge_credits, 0)::INT AS badge_credits,
         tag_award_stats.dominant_badge_category,
         COALESCE(tag_award_stats.linked_badge_count, 0)::INT AS linked_badge_count,
-        COALESCE(tag_award_stats.awarder_count, 0)::INT AS awarder_count
+        COALESCE(tag_award_stats.awarder_count, 0)::INT AS awarder_count,
+        COALESCE(tag_award_stats.hidden_badge_credits, 0)::INT AS hidden_badge_credits,
+        COALESCE(tag_award_stats.hidden_linked_badge_count, 0)::INT AS hidden_linked_badge_count
       FROM user_tags ut
       JOIN users u ON u.id = ut.user_id
       JOIN tags t ON ut.tag_id = t.id
       LEFT JOIN LATERAL (
         SELECT
-          COALESCE(SUM(ba.credits), 0)::INT AS badge_credits,
-          COUNT(*)::INT AS linked_badge_count,
-          COUNT(DISTINCT ba.awarded_by_user_id)::INT AS awarder_count,
+          COALESCE(SUM(ba.credits) FILTER (WHERE ba_shown), 0)::INT AS badge_credits,
+          COUNT(*) FILTER (WHERE ba_shown)::INT AS linked_badge_count,
+          COUNT(DISTINCT ba.awarded_by_user_id) FILTER (WHERE ba_shown)::INT AS awarder_count,
+          COALESCE(SUM(ba.credits) FILTER (WHERE NOT ba_shown), 0)::INT AS hidden_badge_credits,
+          COUNT(*) FILTER (WHERE NOT ba_shown)::INT AS hidden_linked_badge_count,
           (
             SELECT b2.category
             FROM badge_awards ba2
             JOIN badges b2 ON b2.id = ba2.badge_id
             WHERE ba2.tag_id = t.id
               AND ba2.awarded_to_user_id = ut.user_id
-              AND (
-                $2::BOOLEAN = TRUE
-                OR COALESCE(u.hide_badges, FALSE) = TRUE
-                OR NOT (ba2.id = ANY(COALESCE(u.hidden_award_ids, '{}'::INTEGER[])))
-              )
+              AND ${visibleAwardCondition({
+                awardAlias: "ba2",
+                userAlias: "u",
+              })}
             GROUP BY b2.category
             ORDER BY SUM(ba2.credits) DESC, b2.category ASC
             LIMIT 1
           ) AS dominant_badge_category
         FROM badge_awards ba
+        CROSS JOIN LATERAL (
+          SELECT ${visibleAwardCondition({
+            awardAlias: "ba",
+            userAlias: "u",
+          })} AS ba_shown
+        ) shown_flag
         WHERE ba.tag_id = t.id
           AND ba.awarded_to_user_id = ut.user_id
-          AND (
-            $2::BOOLEAN = TRUE
-            OR COALESCE(u.hide_badges, FALSE) = TRUE
-            OR NOT (ba.id = ANY(COALESCE(u.hidden_award_ids, '{}'::INTEGER[])))
-          )
+          AND ${visibleAwardCondition({
+            awardAlias: "ba",
+            userAlias: "u",
+            viewerIsOwnerExpr: "$2::BOOLEAN",
+          })}
       ) tag_award_stats ON TRUE
       WHERE ut.user_id = $1
+        AND ${visibleFocusAreaCondition({
+          userAlias: "u",
+          tagAlias: "t",
+          linkAlias: "ut",
+          viewerIsOwnerExpr: "$2::BOOLEAN",
+        })}
     `,
       [userId, canViewHiddenAwards],
     );
@@ -106,6 +129,8 @@ const getUserTags = async (req, res) => {
             dominant_badge_category: null,
             linked_badge_count: 0,
             awarder_count: 0,
+            hidden_badge_credits: 0,
+            hidden_linked_badge_count: 0,
           }))
         : result.rows,
     });
@@ -170,16 +195,35 @@ const updateUserTags = async (req, res) => {
       }
     }
 
-    // Delete existing tags for this user
-    await client.query("DELETE FROM user_tags WHERE user_id = $1", [userId]);
+    // Replace the user's OWN focus areas, and only those.
+    // 🔴 **This used to delete every row and re-insert the submitted list**,
+    // which is how the distinction between a chosen focus area and one an award
+    // created was destroyed: the form shows both, so saving the profile silently
+    // adopted the award-created ones as the user's, permanently and with the
+    // default levels stamped on. Measured on user 374, 2026-09-28 — all three of
+    // their focus areas carried `interest 3 / experience 2`.
+    // `'award'` rows are not the user's list and are left where they are;
+    // `badgeController` owns them.
+    await client.query(
+      "DELETE FROM user_tags WHERE user_id = $1 AND source = 'user'",
+      [userId],
+    );
 
     // Insert new tags
     if (tags && tags.length > 0) {
       const tagInserts = tags.map((tag) =>
         client.query(
           `
-          INSERT INTO user_tags (user_id, tag_id, experience_level, interest_level, badge_credits, dominant_badge_category)
-          VALUES ($1, $2, $3, $4, $5, $6)
+          INSERT INTO user_tags (user_id, tag_id, experience_level, interest_level, badge_credits, dominant_badge_category, source)
+          VALUES ($1, $2, $3, $4, $5, $6, 'user')
+          -- A submitted tag that already exists as 'award' becomes the user's.
+          -- The form no longer offers the award-created ones, so putting one in
+          -- the list is a deliberate claim: they are saying this is theirs, and
+          -- it should stop depending on whether that badge is shown.
+          ON CONFLICT (user_id, tag_id) DO UPDATE SET
+            experience_level = EXCLUDED.experience_level,
+            interest_level = EXCLUDED.interest_level,
+            source = 'user'
         `,
           [
             userId,
@@ -207,6 +251,7 @@ const updateUserTags = async (req, res) => {
   t.supercategory,
   ut.experience_level,
   ut.interest_level,
+  ut.source,
   ut.badge_credits,
   ut.dominant_badge_category,
   (SELECT COUNT(*) FROM badge_awards ba WHERE ba.tag_id = t.id AND ba.awarded_to_user_id = ut.user_id) AS linked_badge_count,
@@ -274,6 +319,21 @@ const updateUserBadgeVisibility = async (req, res) => {
       });
     }
 
+    // ✅ **Visibility does not change `user_tags.source`. Julia, 2026-09-29 —
+    // asked, weighed, decided against.** The obvious-looking improvement is to
+    // promote an award-created focus area to `'user'` when its award is made
+    // visible, on the grounds that showing a badge is how you confirm it. It
+    // was rejected because it breaks the retraction: once promoted, hiding the
+    // award again would leave the focus area standing, and "a hidden award
+    // takes its focus area with it" (BE #336) would no longer hold for that
+    // path. Doing it symmetrically instead — promote on show, demote on hide —
+    // needs a third `source` value, because a plain demotion would also strip
+    // focus areas the user chose themselves, which is the exact defect this
+    // column was added to remove.
+    // ⚠️ The known cost, accepted: an award-created focus area cannot be
+    // removed in the profile editor. It belongs to its award, and the levers
+    // are the award's — hide it, and the focus area goes with it; delete it,
+    // and the row goes too.
     const result = await pool.query(
       hidden
         ? `UPDATE users
@@ -388,6 +448,9 @@ const getUserBadges = async (req, res) => {
         ba.team_id,
         ba.custom_team_name,
         ba.project_name,
+        -- the id lets the client show the focus area in the set language; it
+        -- keeps using the stored name to match and group
+        ba.tag_id,
         tag.name AS tag_name,
         tag.category AS tag_category,
         COALESCE(t.name, ba.custom_team_name) AS team_name,
@@ -407,10 +470,11 @@ const getUserBadges = async (req, res) => {
       LEFT JOIN tags tag ON ba.tag_id = tag.id
       LEFT JOIN users awardee ON awardee.id = ba.awarded_to_user_id
       WHERE ba.awarded_to_user_id = $1
-        AND (
-          $2::BOOLEAN = TRUE
-          OR NOT (ba.id = ANY(COALESCE(awardee.hidden_award_ids, '{}'::INTEGER[])))
-        )
+        AND ${visibleAwardCondition({
+          awardAlias: "ba",
+          userAlias: "awardee",
+          viewerIsOwnerExpr: "$2::BOOLEAN",
+        })}
       ORDER BY ba.created_at DESC, ba.id DESC
       `,
       [userId, canViewHiddenAwards],

@@ -1,7 +1,7 @@
 /**
  * Boolean Search Query Parser
  *
- * Supports:
+ * Supports (operators in CAPITALS only; see classifyToken):
  * - AND operator (default between terms, or explicit "AND")
  * - OR operator
  * - NOT operator (or "-" prefix)
@@ -15,6 +15,8 @@
  * - react -angular → same as above
  * - "full stack" OR backend → phrase OR single term
  */
+
+const { SEARCH_ERROR_CODES } = require("../config/searchErrors");
 
 const OPERATORS = {
   AND: "AND",
@@ -98,19 +100,26 @@ function tokenize(query) {
 }
 
 /**
- * Classify a token as operator or term
+ * Classify a token as operator or term.
+ *
+ * Operators are written in CAPITALS only (Julia, 2026-10-09): `and`, `or` and
+ * `not` are ordinary words, in German `und`, `oder` and `nicht` even more so,
+ * and one rule has to hold in every language. A lowercase `and` is therefore
+ * searched for like any other word. Words of other languages never reach this
+ * function: the frontend turns the operators of the interface language into
+ * AND / OR / NOT before it sends the query, so the backend knows no language.
+ *
  * @param {string} token - Token string
  * @returns {Object} Token object with type and value
  */
 function classifyToken(token) {
-  const upper = token.toUpperCase();
-  if (upper === "AND" || upper === "&&") {
+  if (token === "AND" || token === "&&") {
     return { type: "OPERATOR", value: OPERATORS.AND };
   }
-  if (upper === "OR" || upper === "||") {
+  if (token === "OR" || token === "||") {
     return { type: "OPERATOR", value: OPERATORS.OR };
   }
-  if (upper === "NOT" || upper === "!") {
+  if (token === "NOT" || token === "!") {
     return { type: "OPERATOR", value: OPERATORS.NOT };
   }
   return { type: "TERM", value: token };
@@ -362,14 +371,22 @@ function validateBooleanQuery(query) {
   const tokens = tokenize(query);
 
   if (!tokens.length) {
-    return { valid: false, message: "Search query is empty." };
+    return {
+      valid: false,
+      code: SEARCH_ERROR_CODES.QUERY_EMPTY,
+      message: "Search query is empty.",
+    };
   }
 
   // quick mismatched quotes check
   const doubleQuotes = (query.match(/"/g) || []).length;
   const singleQuotes = (query.match(/'/g) || []).length;
   if (doubleQuotes % 2 !== 0 || singleQuotes % 2 !== 0) {
-    return { valid: false, message: "Unclosed quote in search query." };
+    return {
+      valid: false,
+      code: SEARCH_ERROR_CODES.UNCLOSED_QUOTE,
+      message: "Unclosed quote in search query.",
+    };
   }
 
   const isOp = (t) => t.type === "OPERATOR";
@@ -382,6 +399,8 @@ function validateBooleanQuery(query) {
   ) {
     return {
       valid: false,
+      code: SEARCH_ERROR_CODES.STARTS_WITH_OPERATOR,
+      values: { operator: tokens[0].value },
       message: `Query cannot start with "${tokens[0].value}".`,
     };
   }
@@ -390,6 +409,8 @@ function validateBooleanQuery(query) {
   if (isOp(tokens[tokens.length - 1])) {
     return {
       valid: false,
+      code: SEARCH_ERROR_CODES.ENDS_WITH_OPERATOR,
+      values: { operator: tokens[tokens.length - 1].value },
       message: `Query cannot end with "${tokens[tokens.length - 1].value}".`,
     };
   }
@@ -405,6 +426,7 @@ function validateBooleanQuery(query) {
         if (!next || !isTerm(next)) {
           return {
             valid: false,
+            code: SEARCH_ERROR_CODES.NOT_WITHOUT_TERM,
             message: `NOT must be followed by a search term.`,
           };
         }
@@ -412,6 +434,8 @@ function validateBooleanQuery(query) {
         if (!prev || !isTerm(prev) || !next || !isTerm(next)) {
           return {
             valid: false,
+            code: SEARCH_ERROR_CODES.OPERATOR_WITHOUT_TERMS,
+            values: { operator: t.value },
             message: `${t.value} must be between two search terms.`,
           };
         }

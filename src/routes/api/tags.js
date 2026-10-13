@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const db = require('../../config/database');
 const { authenticateToken } = require('../../middlewares/auth');
+const { parseLanguage, loadDictionary } = require('../../utils/tagTranslations');
+const { tagRelevanceJoinSQL } = require('../../utils/search/tagNameMatch');
 
 // GET /api/tags/structured
 router.get('/structured', async (req, res) => {
@@ -73,6 +75,21 @@ router.get('/structured', async (req, res) => {
   }
 });
 
+// GET /api/tags/translations?lang=de
+// The translated names of the taxonomy (tags by id, categories and supercategories by their
+// English text). English, an unknown language or a missing table give empty maps, status 200:
+// the frontend then shows the stored names.
+router.get('/translations', async (req, res) => {
+  try {
+    const dictionary = await loadDictionary(db, parseLanguage(req.query.lang));
+    res.set('Cache-Control', 'public, max-age=300');
+    res.json(dictionary);
+  } catch (error) {
+    console.error('Error fetching tag translations:', error);
+    res.status(500).json({ error: 'Failed to fetch tag translations' });
+  }
+});
+
 // POST /api/tags/create
 router.post('/create', authenticateToken, async (req, res) => {
   try {
@@ -101,13 +118,16 @@ router.get('/search', async (req, res) => {
   try {
     const query = req.query.query || '';
 
+    // Matches the stored name and every translation; best match first.
     const searchQuery = `
-      SELECT id, name, category, supercategory
-      FROM tags
-      WHERE LOWER(name) LIKE $1
+      SELECT t.id, t.name, t.category, t.supercategory
+      FROM tags t
+      ${tagRelevanceJoinSQL('t', '$1')}
+      WHERE tm.relevance IS NOT NULL
+      ORDER BY tm.relevance ASC, t.name ASC
       LIMIT 20
     `;
-    const result = await db.query(searchQuery, [`%${query.toLowerCase()}%`]);
+    const result = await db.query(searchQuery, [query]);
 
     res.json(result.rows);
   } catch (error) {
@@ -152,16 +172,13 @@ router.get('/suggestions', async (req, res) => {
       SELECT 
         t.id, t.name, t.category, t.supercategory,
         COUNT(ut.user_id) as usage_count,
-        CASE
-          WHEN LOWER(t.name) = LOWER($1) THEN 1
-          WHEN LOWER(t.name) LIKE LOWER($1) || '%' THEN 2
-          ELSE 3
-        END as relevance
+        tm.relevance as relevance
       FROM tags t
+      ${tagRelevanceJoinSQL('t', '$1')}
       LEFT JOIN user_tags ut ON t.id = ut.tag_id
-      WHERE LOWER(t.name) LIKE '%' || LOWER($1) || '%'
+      WHERE tm.relevance IS NOT NULL
       ${excludeIds.length > 0 ? `AND t.id NOT IN (${excludeIds.join(',')})` : ''}
-      GROUP BY t.id, t.name, t.category, t.supercategory
+      GROUP BY t.id, t.name, t.category, t.supercategory, tm.relevance
       ORDER BY relevance ASC, usage_count DESC, t.name ASC
       LIMIT $2
     `;

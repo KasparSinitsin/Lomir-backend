@@ -6,10 +6,18 @@ const { scoreUserAgainstRole } = require("../matchingScorer");
 const { parseBooleanSearch } = require("../booleanSearchParser");
 const { deriveLocationFromPostalCode } = require("../locationDerivation");
 const {
+  visibleAwardCondition,
+  visibleFocusAreaCondition,
+} = require("../badgeVisibilityUtils");
+const {
   normalizeRoleSearchRow,
   normalizeNullableNumber,
   roundOverlapScore,
 } = require("./searchSqlBuilders");
+const {
+  BADGE_NAME_TRANSLATIONS_VALUES_SQL,
+} = require("./badgeNameTranslations");
+const { tagNameMatchSQL } = require("./tagNameMatch");
 
 function computeJaccardOverlap(baseSet, candidateIds) {
   const candidateSet = new Set(
@@ -180,9 +188,9 @@ function appendTeamSearchClause({
     const teamTagConfig = {
       tagColumn: "tag.name",
       existsTemplate:
-        "EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND t2.name ILIKE $PARAM)",
+        `EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND ${tagNameMatchSQL("t2", "$PARAM")})`,
       notExistsTemplate:
-        "NOT EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND t2.name ILIKE $PARAM)",
+        `NOT EXISTS (SELECT 1 FROM team_tags tt2 JOIN tags t2 ON tt2.tag_id = t2.id WHERE tt2.team_id = t.id AND ${tagNameMatchSQL("t2", "$PARAM")})`,
     };
     const teamSearch = parseBooleanSearch(
       query,
@@ -199,7 +207,7 @@ function appendTeamSearchClause({
             t.name ILIKE $${nextParamIndex} OR
             t.description ILIKE $${nextParamIndex} OR
             t.city ILIKE $${nextParamIndex} OR
-            tag.name ILIKE $${nextParamIndex}
+            ${tagNameMatchSQL("tag", `$${nextParamIndex}`)}
           )
         `;
     teamParams.push(searchTerm);
@@ -208,6 +216,53 @@ function appendTeamSearchClause({
 
   return { nextParamIndex, query: teamQuery };
 }
+
+// A user is findable by a badge name only through the awards the searcher is
+// allowed to see. The `v_user_badges_with_totals` view cannot express this —
+// it has already aggregated awards into per-badge rows, losing the award ids
+// the per-award switch works on — so this reads `badge_awards` directly.
+// Without it, searching a badge name returned the people who had switched that
+// badge off, with an empty badge list on the row: the hidden award was still
+// there to be inferred (found 2026-09-28, alongside the search display leak).
+//
+// A term is matched against the English name AND the German one, so a German
+// "Empathisch" finds "Empathetic". `param` appears ONCE: the boolean parser
+// substitutes its `$PARAM` placeholder with `String.replace`, which replaces
+// the first occurrence only, and a second one would reach postgres as text.
+const visibleBadgeNameMatchSQL = (param) => `
+              SELECT 1
+              FROM badge_awards ba_name
+              JOIN badges b_name ON b_name.id = ba_name.badge_id
+              LEFT JOIN (VALUES ${BADGE_NAME_TRANSLATIONS_VALUES_SQL})
+                AS m_name(en, de) ON m_name.en = b_name.name
+              JOIN users u_name ON u_name.id = ba_name.awarded_to_user_id
+              WHERE ba_name.awarded_to_user_id = u.id
+                AND EXISTS (
+                  SELECT 1
+                  FROM unnest(ARRAY[b_name.name, m_name.de]) AS cand(label)
+                  WHERE cand.label ILIKE ${param}
+                )
+                AND ${visibleAwardCondition({
+                  awardAlias: "ba_name",
+                  userAlias: "u_name",
+                })}`;
+
+// The same rule for focus areas. A focus area that every hidden award has taken
+// with it is not shown anywhere, so matching on its name would put it back
+// within reach: the row would come up under a search for a focus area the
+// profile does not admit to. Self-declared focus areas with no awards, and ones
+// with a shown award, match as they always did.
+const visibleFocusAreaMatchSQL = (param) => `
+              SELECT 1
+              FROM user_tags ut2
+              JOIN tags t2 ON ut2.tag_id = t2.id
+              WHERE ut2.user_id = u.id
+                AND ${tagNameMatchSQL("t2", param)}
+                AND ${visibleFocusAreaCondition({
+                  userAlias: "u",
+                  tagAlias: "t2",
+                  linkAlias: "ut2",
+                })}`;
 
 function appendUserSearchClause({
   userQuery,
@@ -230,15 +285,13 @@ function appendUserSearchClause({
     ];
     const userTagConfig = {
       tagColumn: "t.name",
-      existsTemplate:
-        "EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
-      notExistsTemplate:
-        "NOT EXISTS (SELECT 1 FROM user_tags ut2 JOIN tags t2 ON ut2.tag_id = t2.id WHERE ut2.user_id = u.id AND t2.name ILIKE $PARAM)",
+      existsTemplate: `EXISTS (${visibleFocusAreaMatchSQL("$PARAM")})`,
+      notExistsTemplate: `NOT EXISTS (${visibleFocusAreaMatchSQL("$PARAM")})`,
       extraExistsTemplates: [
-        "EXISTS (SELECT 1 FROM v_user_badges_with_totals ubt WHERE ubt.user_id = u.id AND ubt.badge_name ILIKE $PARAM)",
+        `EXISTS (${visibleBadgeNameMatchSQL("$PARAM")})`,
       ],
       extraNotExistsTemplates: [
-        "NOT EXISTS (SELECT 1 FROM v_user_badges_with_totals ubt WHERE ubt.user_id = u.id AND ubt.badge_name ILIKE $PARAM)",
+        `NOT EXISTS (${visibleBadgeNameMatchSQL("$PARAM")})`,
       ],
     };
     const userSearch = parseBooleanSearch(
@@ -258,13 +311,8 @@ function appendUserSearchClause({
             u.last_name ILIKE $${nextParamIndex} OR
             u.bio ILIKE $${nextParamIndex} OR
             u.city ILIKE $${nextParamIndex} OR
-            t.name ILIKE $${nextParamIndex} OR
-            EXISTS (
-              SELECT 1
-              FROM v_user_badges_with_totals ubt
-              WHERE ubt.user_id = u.id
-                AND ubt.badge_name ILIKE $${nextParamIndex}
-            )
+            EXISTS (${visibleFocusAreaMatchSQL(`$${nextParamIndex}`)}) OR
+            EXISTS (${visibleBadgeNameMatchSQL(`$${nextParamIndex}`)})
           )
         `;
     userParams.push(searchTerm);

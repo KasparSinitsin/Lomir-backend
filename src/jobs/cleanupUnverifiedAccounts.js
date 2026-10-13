@@ -1,5 +1,6 @@
 const cron = require("node-cron");
 const db = require("../config/database");
+const fileDeletionQueue = require("../utils/fileDeletionQueue");
 
 const BUFFER_HOURS = 1;
 const debugLog = (...args) => {
@@ -16,7 +17,7 @@ const purgeExpiredUnverifiedAccounts = async () => {
 
     const expiredUsersResult = await client.query(
       `
-      SELECT id
+      SELECT id, avatar_url, avatar_file_id
       FROM users
       WHERE email_verified = FALSE
         AND verification_token_expires IS NOT NULL
@@ -30,6 +31,18 @@ const purgeExpiredUnverifiedAccounts = async () => {
       await client.query("COMMIT");
       return { deleted: 0, accounts: [] };
     }
+
+    // Accounts registered before 2026-10-12 could carry an avatar uploaded at
+    // registration; it is queued here and deleted after the commit (STATUS
+    // item 59). Registration no longer accepts one.
+    const queuedFileIds = await fileDeletionQueue.queueFiles(
+      client,
+      expiredUsersResult.rows.map((row) => ({
+        url: row.avatar_url,
+        fileId: row.avatar_file_id,
+      })),
+      fileDeletionQueue.FILE_DELETION_SOURCE.UNVERIFIED_ACCOUNT,
+    );
 
     await client.query(
       `UPDATE teams SET owner_id = NULL WHERE owner_id = ANY($1::int[])`,
@@ -66,6 +79,8 @@ const purgeExpiredUnverifiedAccounts = async () => {
     );
 
     await client.query("COMMIT");
+
+    fileDeletionQueue.processFileDeletionsSoon(queuedFileIds);
 
     return {
       deleted: result.rowCount || 0,

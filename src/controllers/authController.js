@@ -5,9 +5,19 @@ const { generateToken } = require("../utils/jwtUtils");
 const { setAuthCookie, clearAuthCookie } = require("../utils/authCookie");
 const emailService = require("../services/emailService");
 const db = require("../config/database");
+const { AUTH_ERROR_CODES } = require("../config/authErrors");
 const { resolveLocationData } = require("../utils/geocodingUtil");
 const { verifyTurnstileToken } = require("../utils/turnstileVerify");
-const { uploadToImageKit } = require("../middlewares/uploadMiddleware");
+const {
+  PASSWORD_MIN_LENGTH,
+  PASSWORD_LETTER_AND_NUMBER,
+  isAcceptablePassword,
+} = require("../utils/passwordRules");
+const {
+  SUPPORTED_LANGUAGES,
+  resolveUserLanguage,
+  warnIfMailLanguageFieldsMissing,
+} = require("../config/languages");
 const {
   CURRENT_AGE_CONFIRMATION_VERSION,
   CURRENT_PRIVACY_VERSION,
@@ -19,8 +29,8 @@ const registerSchema = Joi.object({
   username: Joi.string().alphanum().min(3).max(30).required(),
   email: Joi.string().email().required(),
   password: Joi.string()
-    .min(8)
-    .pattern(/^(?=.*[a-zA-Z])(?=.*[0-9])/)
+    .min(PASSWORD_MIN_LENGTH)
+    .pattern(PASSWORD_LETTER_AND_NUMBER)
     .required()
     .messages({
       "string.min": "Password must be at least 8 characters",
@@ -35,7 +45,11 @@ const registerSchema = Joi.object({
   state: Joi.string().allow("", null),
   district: Joi.string().allow("", null),
   country: Joi.string().allow("", null),
-  avatar_url: Joi.string().uri().allow(null),
+  // Only sent when the visitor actually saw the picker. Absent means "never
+  // chose one", which is stored as NULL and leaves the country rule in charge.
+  preferred_language: Joi.string()
+    .valid(...SUPPORTED_LANGUAGES)
+    .allow("", null),
   acceptedTerms: Joi.boolean().truthy("true").valid(true).required().messages({
     "any.only": "Terms of Service must be accepted",
     "any.required": "Terms of Service must be accepted",
@@ -106,21 +120,10 @@ const authController = {
         }
       }
 
-      let avatarUrl = req.body.avatar_url || null;
-
-      if (req.file) {
-        const uploadResult = await uploadToImageKit(
-          req.file.buffer,
-          req.file.originalname,
-        );
-        avatarUrl = uploadResult.url;
-      }
-
       // Prepare user data
       const userData = {
         ...req.body,
         tags: tags || [],
-        avatar_url: avatarUrl,
         acceptedTerms: req.body.acceptedTerms ?? req.body.accepted_terms,
         acceptedPrivacy: req.body.acceptedPrivacy ?? req.body.accepted_privacy,
         confirmedAge16:
@@ -130,6 +133,10 @@ const authController = {
           req.body.confirmedMinimumAge ??
           req.body.confirmed_minimum_age,
       };
+      // No avatar at registration (STATUS item 59): it is uploaded from the
+      // profile after the e-mail confirmation. A URL from an older form is
+      // dropped here rather than refused, so that registration still works.
+      delete userData.avatar_url;
       delete userData.accepted_terms;
       delete userData.accepted_privacy;
       delete userData.confirmed_age_16;
@@ -157,6 +164,7 @@ const authController = {
         if (!turnstile_token) {
           return res.status(400).json({
             success: false,
+            code: AUTH_ERROR_CODES.CAPTCHA_REQUIRED,
             message: "CAPTCHA verification is required",
           });
         }
@@ -173,6 +181,7 @@ const authController = {
 
           return res.status(400).json({
             success: false,
+            code: AUTH_ERROR_CODES.CAPTCHA_FAILED,
             message: "CAPTCHA verification failed. Please try again.",
           });
         }
@@ -191,6 +200,7 @@ const authController = {
       if (existingUserByUsername) {
         return res.status(400).json({
           success: false,
+          code: AUTH_ERROR_CODES.USERNAME_TAKEN,
           message: "User with this username already exists",
         });
       }
@@ -260,10 +270,12 @@ const authController = {
       );
 
       // Send verification email
+      warnIfMailLanguageFieldsMissing(user, "register");
       const emailResult = await emailService.sendVerificationEmail(
         user.email,
         verificationToken,
         user.username,
+        resolveUserLanguage(user),
       );
 
       if (!emailResult.success) {
@@ -283,6 +295,7 @@ const authController = {
         if (constraint === "users_username_unique_ci") {
           return res.status(400).json({
             success: false,
+            code: AUTH_ERROR_CODES.USERNAME_TAKEN,
             message: "User with this username already exists",
           });
         }
@@ -348,6 +361,7 @@ const authController = {
       if (!token) {
         return res.status(400).json({
           success: false,
+          code: AUTH_ERROR_CODES.VERIFICATION_TOKEN_INVALID,
           message: "Verification token is required",
         });
       }
@@ -364,6 +378,7 @@ const authController = {
       if (result.rows.length === 0) {
         return res.status(400).json({
           success: false,
+          code: AUTH_ERROR_CODES.VERIFICATION_TOKEN_INVALID,
           message: "Invalid or expired verification token",
         });
       }
@@ -419,7 +434,7 @@ const authController = {
 
       // Find user by email
       const result = await db.query(
-        `SELECT id, username, email, email_verified 
+        `SELECT id, username, email, email_verified, preferred_language, country
    FROM users 
    WHERE LOWER(email) = LOWER($1)`,
         [email],
@@ -449,10 +464,12 @@ const authController = {
       );
 
       // Send verification email
+      warnIfMailLanguageFieldsMissing(user, "resend verification");
       const emailResult = await emailService.sendVerificationEmail(
         user.email,
         verificationToken,
         user.username,
+        resolveUserLanguage(user),
       );
 
       if (!emailResult.success) {
@@ -490,6 +507,7 @@ const authController = {
       if (!user) {
         return res.status(401).json({
           success: false,
+          code: AUTH_ERROR_CODES.INVALID_CREDENTIALS,
           message: INVALID_LOGIN_MESSAGE,
         });
       }
@@ -502,6 +520,7 @@ const authController = {
       if (!isValidPassword) {
         return res.status(401).json({
           success: false,
+          code: AUTH_ERROR_CODES.INVALID_CREDENTIALS,
           message: INVALID_LOGIN_MESSAGE,
         });
       }
@@ -510,6 +529,7 @@ const authController = {
       if (!user.email_verified) {
         return res.status(403).json({
           success: false,
+          code: AUTH_ERROR_CODES.EMAIL_NOT_VERIFIED,
           message: "Please verify your email before logging in. Check your inbox for the verification link — it expires 24 hours after registration.",
           requiresVerification: true,
         });
@@ -536,6 +556,7 @@ const authController = {
             postal_code: user.postal_code,
             city: user.city,
             country: user.country,
+            preferred_language: user.preferred_language,
             avatar_url: user.avatar_url,
             is_public: user.is_public,
             is_synthetic: user.is_synthetic,
@@ -593,6 +614,7 @@ const authController = {
             bio: user.bio,
             city: user.city,
             country: user.country,
+            preferred_language: user.preferred_language,
             postalCode: user.postal_code,
             avatarUrl: user.avatar_url,
             isPublic: user.is_public,
@@ -626,7 +648,7 @@ const authController = {
       }
 
       const result = await db.query(
-        `SELECT id, username, email 
+        `SELECT id, username, email, preferred_language, country
    FROM users 
    WHERE LOWER(email) = LOWER($1)`,
         [email],
@@ -652,10 +674,12 @@ const authController = {
         [resetToken, tokenExpires, user.id],
       );
 
+      warnIfMailLanguageFieldsMissing(user, "password reset");
       const emailResult = await emailService.sendPasswordResetEmail(
         user.email,
         resetToken,
         user.username,
+        resolveUserLanguage(user),
       );
 
       if (!emailResult.success) {
@@ -691,10 +715,7 @@ const authController = {
         });
       }
 
-      if (
-        password.length < 8 ||
-        !/^(?=.*[a-zA-Z])(?=.*[0-9])/.test(password)
-      ) {
+      if (!isAcceptablePassword(password)) {
         return res.status(400).json({
           success: false,
           message:
@@ -711,8 +732,33 @@ const authController = {
       );
 
       if (result.rows.length === 0) {
+        // The client is told the same thing either way, on purpose: an answer
+        // that distinguished an unknown token from an expired one would confirm
+        // which reset links exist. The server log may distinguish them, and
+        // has to — when a reset failed on 2026-09-27 neither the message nor
+        // the log could tell a stale link from an expired one, and the cause
+        // was only findable by reading the row in the database. Every
+        // `forgotPassword` call overwrites `password_reset_token`, so a link
+        // from an earlier request is unknown rather than expired.
+        const known = await db.query(
+          `SELECT id, password_reset_expires FROM users
+           WHERE password_reset_token = $1`,
+          [token],
+        );
+
+        if (known.rows.length === 0) {
+          console.warn(
+            "Password reset rejected: token not found (superseded by a newer request, already used, or never issued)",
+          );
+        } else {
+          console.warn(
+            `Password reset rejected: token expired at ${known.rows[0].password_reset_expires?.toISOString?.() ?? known.rows[0].password_reset_expires} for user ${known.rows[0].id}`,
+          );
+        }
+
         return res.status(400).json({
           success: false,
+          code: AUTH_ERROR_CODES.RESET_TOKEN_INVALID,
           message: "Invalid or expired reset token",
         });
       }
@@ -763,10 +809,7 @@ const authController = {
         });
       }
 
-      if (
-        newPassword.length < 8 ||
-        !/^(?=.*[a-zA-Z])(?=.*[0-9])/.test(newPassword)
-      ) {
+      if (!isAcceptablePassword(newPassword)) {
         return res.status(400).json({
           success: false,
           message:
@@ -775,7 +818,7 @@ const authController = {
       }
 
       const result = await db.query(
-        "SELECT id, username, email, password_hash FROM users WHERE id = $1",
+        "SELECT id, username, email, password_hash, preferred_language, country FROM users WHERE id = $1",
         [userId],
       );
 
@@ -795,6 +838,7 @@ const authController = {
       if (!isValid) {
         return res.status(401).json({
           success: false,
+          code: AUTH_ERROR_CODES.PASSWORD_INCORRECT,
           message: "Current password is incorrect",
         });
       }
@@ -807,6 +851,7 @@ const authController = {
       if (isSameAsCurrent) {
         return res.status(400).json({
           success: false,
+          code: AUTH_ERROR_CODES.PASSWORD_UNCHANGED,
           message: "New password must be different from your current password",
         });
       }
@@ -827,9 +872,11 @@ const authController = {
       // Notify the user so a compromised account can be recovered quickly.
       // A failed notification must not fail the password change itself.
       try {
+        warnIfMailLanguageFieldsMissing(user, "password changed");
         const notifyResult = await emailService.sendPasswordChangedEmail(
           user.email,
           user.username,
+          resolveUserLanguage(user),
         );
         if (!notifyResult.success) {
           console.error("Failed to send password changed notification email");
@@ -879,7 +926,7 @@ const authController = {
       }
 
       const result = await db.query(
-        "SELECT id, username, password_hash, email FROM users WHERE id = $1",
+        "SELECT id, username, password_hash, email, preferred_language, country FROM users WHERE id = $1",
         [userId],
       );
 
@@ -897,6 +944,7 @@ const authController = {
       if (!isValid) {
         return res.status(401).json({
           success: false,
+          code: AUTH_ERROR_CODES.PASSWORD_INCORRECT,
           message: "Current password is incorrect",
         });
       }
@@ -904,6 +952,7 @@ const authController = {
       if (newEmail.toLowerCase() === result.rows[0].email.toLowerCase()) {
         return res.status(400).json({
           success: false,
+          code: AUTH_ERROR_CODES.EMAIL_UNCHANGED,
           message: "New email must be different from your current email",
         });
       }
@@ -929,6 +978,7 @@ const authController = {
       if (emailCheck.rows.length > 0) {
         return res.status(409).json({
           success: false,
+          code: AUTH_ERROR_CODES.EMAIL_IN_USE,
           message: "This email address is already in use or pending verification",
         });
       }
@@ -946,10 +996,12 @@ const authController = {
         [newEmail, verificationToken, tokenExpires, userId],
       );
 
+      warnIfMailLanguageFieldsMissing(result.rows[0], "email change");
       const emailResult = await emailService.sendEmailChangeVerificationEmail(
         newEmail,
         verificationToken,
         result.rows[0].username,
+        resolveUserLanguage(result.rows[0]),
       );
 
       if (!emailResult.success) {
@@ -1003,6 +1055,7 @@ const authController = {
       if (!token) {
         return res.status(400).json({
           success: false,
+          code: AUTH_ERROR_CODES.EMAIL_CHANGE_TOKEN_INVALID,
           message: "Verification token is required",
         });
       }
@@ -1019,6 +1072,7 @@ const authController = {
       if (pendingResult.rows.length === 0) {
         return res.status(400).json({
           success: false,
+          code: AUTH_ERROR_CODES.EMAIL_CHANGE_TOKEN_INVALID,
           message: "Invalid or expired email change token",
         });
       }
@@ -1047,6 +1101,7 @@ const authController = {
 
         return res.status(409).json({
           success: false,
+          code: AUTH_ERROR_CODES.EMAIL_IN_USE,
           message: "This email address is already in use",
         });
       }
@@ -1077,6 +1132,7 @@ const authController = {
       if (error.code === "23505") {
         return res.status(409).json({
           success: false,
+          code: AUTH_ERROR_CODES.EMAIL_IN_USE,
           message: "This email address is already in use",
         });
       }

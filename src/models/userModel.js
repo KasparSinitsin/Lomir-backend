@@ -15,6 +15,7 @@ const CREATED_USER_FIELDS = `
   state,
   district,
   country,
+  preferred_language,
   avatar_url,
   accepted_terms_at,
   accepted_privacy_at,
@@ -43,6 +44,7 @@ const AUTH_USER_FIELDS = `
   state,
   district,
   country,
+  preferred_language,
   avatar_url,
   accepted_terms_at,
   accepted_privacy_at,
@@ -69,6 +71,7 @@ const CURRENT_USER_FIELDS = `
   state,
   district,
   country,
+  preferred_language,
   avatar_url,
   accepted_terms_at,
   accepted_privacy_at,
@@ -116,9 +119,10 @@ const userModel = {
           email_verified,
           is_public,
           created_at,
-          updated_at
+          updated_at,
+          preferred_language
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),NOW(),NOW(),$15,$16,$17,FALSE,FALSE,NOW(),NOW())
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),NOW(),NOW(),$15,$16,$17,FALSE,FALSE,NOW(),NOW(),$18)
         RETURNING ${CREATED_USER_FIELDS}
         `,
         [
@@ -139,6 +143,9 @@ const userModel = {
           userData.accepted_terms_version,
           userData.accepted_privacy_version,
           userData.confirmed_age_16_version,
+          // NULL means the user never chose a language, which is what lets the
+          // country rule apply later. An empty string would not.
+          userData.preferred_language || null,
         ],
       );
 
@@ -251,6 +258,63 @@ const userModel = {
       [userId],
     );
     return result.rows.map((row) => row.id);
+  },
+
+  // Id + current name for every user in a block relationship with `userId`,
+  // either direction. Some stored chat events are old prose with a name but
+  // no id ("... by Anna Kowalski"), and the id-only anonymization check
+  // (getBlockRelationshipIds + a live team roster) fails once that person has
+  // since left the team the message is in — there is no id to resolve. This
+  // gives the client a name to match on directly, independent of any roster.
+  async getBlockRelationships(userId) {
+    const result = await db.query(
+      `SELECT u.id, u.first_name, u.last_name, u.username
+       FROM users u
+       WHERE u.id IN (
+         SELECT blocked_id FROM user_blocks WHERE blocker_id = $1
+         UNION
+         SELECT blocker_id FROM user_blocks WHERE blocked_id = $1
+       )`,
+      [userId],
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      username: row.username,
+    }));
+  },
+
+  // Resolves a batch of user ids to the names they display under TODAY.
+  //
+  // 🔴 It returns ONE ROW PER SURVIVING id and nothing at all for the rest,
+  // and that asymmetry is the whole point: `deleteUser` hard-deletes the row
+  // (`userDeletionController.js`, Phase E - `DELETE FROM users WHERE id = $1`),
+  // so **absence is the only signal that an account is gone**. There is no
+  // flag to read and no anonymized row left behind.
+  //
+  // ⚠️ Do not "helpfully" return a placeholder row for a missing id. The
+  // caller renders the placeholder as a translated string; a wire-level
+  // English name would be the `DELETED_USER_DISPLAY_NAME` trap again, where a
+  // label that must never be translated travels as data.
+  //
+  // The columns are the three `GET /api/users/:id` already serves publicly,
+  // so nothing here is newly exposed - see the controller for why the batch
+  // size is capped anyway.
+  async resolveDisplayNames(ids) {
+    if (!Array.isArray(ids) || ids.length === 0) return [];
+    const result = await db.query(
+      `SELECT u.id, u.first_name, u.last_name, u.username
+         FROM users u
+        WHERE u.id = ANY($1::int[])`,
+      [ids],
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      username: row.username,
+    }));
   },
 
   // True when either user has blocked the other.

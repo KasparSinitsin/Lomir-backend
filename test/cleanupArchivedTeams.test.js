@@ -3,6 +3,29 @@ const assert = require("node:assert/strict");
 
 const db = require("../src/config/database");
 const cleanupArchivedTeams = require("../src/jobs/cleanupArchivedTeams");
+const fileDeletionQueue = require("../src/utils/fileDeletionQueue");
+const deletionRecord = require("../src/utils/deletionRecord");
+const originalSendRecord = deletionRecord.sendDeletionRecordSoon;
+
+// The deletion record would go out as a real mail (local .env); it is recorded.
+let sentRecords = [];
+test.beforeEach(() => {
+  sentRecords = [];
+  deletionRecord.sendDeletionRecordSoon = (record) => {
+    sentRecords.push(record);
+  };
+});
+const originalProcessSoon = fileDeletionQueue.processFileDeletionsSoon;
+
+// permanentlyDeleteTeam hands the queued ImageKit files over after its commit
+// (item 59). The real hand-over queries the database, so it is recorded instead.
+let handedOver = [];
+test.beforeEach(() => {
+  handedOver = [];
+  fileDeletionQueue.processFileDeletionsSoon = (ids) => {
+    handedOver.push(ids);
+  };
+});
 
 const { purgeExpiredArchivedTeams } = cleanupArchivedTeams;
 
@@ -10,6 +33,8 @@ const originalQuery = db.query;
 const originalConnect = db.pool.connect;
 
 test.afterEach(() => {
+  fileDeletionQueue.processFileDeletionsSoon = originalProcessSoon;
+  deletionRecord.sendDeletionRecordSoon = originalSendRecord;
   db.query = originalQuery;
   db.pool.connect = originalConnect;
 });
@@ -26,8 +51,8 @@ test("purgeExpiredArchivedTeams permanently deletes archived teams past the grac
   db.pool.connect = async () => ({
     async query(sql) {
       clientCalls.push(sql);
-      if (sql.includes("teamavatar_url")) {
-        return { rows: [{ teamavatar_url: null, teamavatar_file_id: null }] };
+      if (sql.includes("INSERT INTO pending_file_deletions")) {
+        return { rows: [] };
       }
       return { rows: [] };
     },
@@ -41,6 +66,8 @@ test("purgeExpiredArchivedTeams permanently deletes archived teams past the grac
   assert.match(selectSql, /archived_at < NOW\(\) - INTERVAL/);
 
   assert.deepEqual(result, { found: 2, deleted: 2 });
+  // The 14-day purge sends a deletion record per team (item 59).
+  assert.deepEqual(sentRecords.map((record) => [record.kind, record.id]), [["team", 10], ["team", 20]]);
 
   // Each selected team was hard-deleted (team row removed once per team).
   const teamDeletes = clientCalls.filter((sql) =>
@@ -75,9 +102,8 @@ test("purgeExpiredArchivedTeams keeps going and counts only successful purges wh
 
   db.pool.connect = async () => ({
     async query(sql) {
-      if (sql.includes("teamavatar_url")) {
-        // Team 10 blows up while reading its avatar; team 20 succeeds.
-        return { rows: [{ teamavatar_url: null, teamavatar_file_id: null }] };
+      if (sql.includes("INSERT INTO pending_file_deletions")) {
+        return { rows: [] };
       }
       return { rows: [] };
     },

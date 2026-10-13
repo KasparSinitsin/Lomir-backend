@@ -1,4 +1,7 @@
-const { initScheduledJobs } = require("./jobs/fileCleanupScheduler");
+const {
+  initScheduledJobs,
+  runStartupFileCleanup,
+} = require("./jobs/fileCleanupScheduler");
 
 require("dotenv").config();
 
@@ -31,6 +34,9 @@ initSocket(server, app);
 
 // Initialize scheduled jobs
 initScheduledJobs();
+// The daily 02:00 run rarely fires while Render's free tier sleeps; every start
+// (= every wake-up) does the same work once. Never throws.
+runStartupFileCleanup();
 
 const cleanupUnverifiedAccounts = require("./jobs/cleanupUnverifiedAccounts");
 cleanupUnverifiedAccounts();

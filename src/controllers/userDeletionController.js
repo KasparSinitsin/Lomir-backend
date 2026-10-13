@@ -1,13 +1,66 @@
 const db = require("../config/database");
+const { AUTH_ERROR_CODES } = require("../config/authErrors");
+const { idNameToken } = require("../utils/eventNameToken");
+const { DEFAULT_ROLE_NAME } = require("../config/roleDefaults");
 const { pool } = db;
 const bcrypt = require("bcrypt");
-const { deleteImageKitFile } = require("../utils/imagekitUtils");
+const fileDeletionQueue = require("../utils/fileDeletionQueue");
+const deletionRecord = require("../utils/deletionRecord");
+const mentionScrub = require("../utils/mentionScrub");
 const {
   buildUserDisplayName,
   toIsoString,
 } = require("../utils/user/userControllerHelpers");
 
 const DELETED_USER_DISPLAY_NAME = "Former Lomir User";
+
+/**
+ * What the name scrub below matches on, all derived from the traced table of
+ * stored formats in `config/nameBearingMessageFormats.js` rather than
+ * maintained by hand here. That table records, per format, its write site, how
+ * the row is stored, and whether the name in the content belongs to the row's
+ * `sender_id` — read it before changing anything about this scrub.
+ *
+ * ⚠️ DM-stored formats are deliberately absent from the scrub match lists: those rows
+ * are deleted outright a few lines below (`team_id IS NULL`), so the name goes
+ * with the row. The derivations filter on team storage to keep that distinction
+ * in one place instead of a comment.
+ *
+ * 🟡 One DM case is NOT covered by that reasoning and is still open: two
+ * `🚫 INVITATION_CANCELLED` rows have `receiver_id IS NULL` and name a third
+ * party, so the person named is not a party to their own message and the
+ * wholesale DM delete misses them. Bounded at two rows, measured 2026-10-01;
+ * `DM_ROWS_NAMING_A_NON_PARTY_2026_10_01` records their ids. `storage: "dm"`
+ * is a hint, not a guarantee.
+ *
+ * 🔴 What is still open after this scrub: `👋`, `🎉` and `❌` prose rows that
+ * name someone other than their sender —
+ * `FORMATS_STILL_UNREACHABLE_AFTER_ANCHORING` enumerates them. They have no
+ * marker to anchor on and the sender condition does not reach them.
+ * Audit: `lomir-docs-internal/HANDOVER-Privacy-Security-Hardening.md` and
+ * `lomir-docs-internal/deletion-audit/`.
+ */
+const { escapeForPosixRegex } = require("../utils/escapeForPosixRegex");
+
+const {
+  SCRUB_ANCHORED_PREFIXES,
+  SCRUB_ANCHORED_GLOBAL_PREFIXES,
+  SCRUB_ANCHORED_SLOT_TARGETS,
+  SCRUB_ID_LESS_TARGETS,
+  SCRUB_PROSE_EMOJI_PREFIXES,
+  buildScrubNameCandidates,
+} = require("../config/nameBearingMessageFormats");
+
+/**
+ * `left(content, length(x)) = x` rather than `content LIKE x || '%'`.
+ *
+ * ⚠️ Every marker contains `_`, which is a LIKE wildcard matching any single
+ * character — so `LIKE '🆕 ROLE_CREATED:%'` would also match `🆕 ROLEXCREATED:`.
+ * Comparing a left-slice needs no escaping and cannot be got wrong.
+ */
+const startsWithParam = (placeholder) =>
+  `left(content, length(${placeholder})) = ${placeholder}`;
+
 
 const logDeletionPhase = (phase, details) => {
   if (process.env.NODE_ENV === "production") {
@@ -108,7 +161,14 @@ const getSuccessorCandidatesByTeam = async (queryable, teamIds, excludedUserId) 
  * @route DELETE /api/users/:id
  * @access Private (Requires authentication and authorization)
  */
-const deleteUser = async (req, res) => {
+/**
+ * The account deletion itself. The HTTP route goes through `deleteUser` below,
+ * which always checks the password. `skipPasswordCheck` exists for ONE caller:
+ * `scripts/redelete-after-restore.js`, which repeats a deletion that already
+ * happened once (the person confirmed it then) after a database backup was
+ * restored (STATUS item 59). Never pass it from a request handler.
+ */
+const runAccountDeletion = async (req, res, { skipPasswordCheck = false } = {}) => {
   let client = null;
   let transactionOpen = false;
   let avatarUrl = null;
@@ -117,6 +177,7 @@ const deleteUser = async (req, res) => {
   let dmPartnerIds = [];
   let ownershipTransferEvents = [];
   let reopenedRoleEvents = [];
+  const queuedFileIds = [];
 
   try {
     const userId = parseInt(req.params.id, 10);
@@ -136,7 +197,7 @@ const deleteUser = async (req, res) => {
       });
     }
 
-    if (!password) {
+    if (!skipPasswordCheck && !password) {
       return res.status(400).json({
         success: false,
         message: "Password is required",
@@ -183,7 +244,7 @@ const deleteUser = async (req, res) => {
     logDeletionPhase("Phase A - gather context", { userId });
 
     const userResult = await client.query(
-      `SELECT id, first_name, last_name, username, avatar_url, avatar_file_id, password_hash
+      `SELECT id, first_name, last_name, username, avatar_url, avatar_file_id, password_hash, created_at
        FROM users
        WHERE id = $1`,
       [userId],
@@ -197,13 +258,16 @@ const deleteUser = async (req, res) => {
     }
 
     const user = userResult.rows[0];
-    const passwordMatches = await bcrypt.compare(password, user.password_hash);
+    if (!skipPasswordCheck) {
+      const passwordMatches = await bcrypt.compare(password, user.password_hash);
 
-    if (!passwordMatches) {
-      return rollbackAndRespond(401, {
-        success: false,
-        message: "Password is incorrect",
-      });
+      if (!passwordMatches) {
+        return rollbackAndRespond(401, {
+          success: false,
+          code: AUTH_ERROR_CODES.PASSWORD_INCORRECT,
+          message: "Password is incorrect",
+        });
+      }
     }
 
     avatarUrl = user.avatar_url;
@@ -237,6 +301,7 @@ const deleteUser = async (req, res) => {
         SELECT
           t.id AS team_id,
           t.name AS team_name,
+          t.created_at AS team_created_at,
           COUNT(tm_all.user_id)::int AS member_count,
           (COUNT(tm_all.user_id) FILTER (WHERE tm_all.user_id != $1))::int AS other_member_count
         FROM teams t
@@ -245,7 +310,7 @@ const deleteUser = async (req, res) => {
          AND tm_owner.user_id = $1
          AND tm_owner.role = 'owner'
         JOIN team_members tm_all ON tm_all.team_id = t.id
-        GROUP BY t.id, t.name
+        GROUP BY t.id, t.name, t.created_at
         ORDER BY t.name ASC, t.id ASC
         `,
         [userId],
@@ -296,6 +361,7 @@ const deleteUser = async (req, res) => {
     const ownedTeams = ownedTeamsResult.rows.map((row) => ({
       teamId: Number(row.team_id),
       teamName: row.team_name,
+      createdAt: row.team_created_at,
       memberCount: Number(row.member_count),
       otherMemberCount: Number(row.other_member_count),
     }));
@@ -337,6 +403,20 @@ const deleteUser = async (req, res) => {
       dmPartnerCount: dmPartnerIds.length,
     });
 
+    // The images and files of these direct messages are queued in this
+    // transaction and deleted from ImageKit after the commit (STATUS item 59,
+    // privacy §16). Once the rows are gone nothing would point at them.
+    queuedFileIds.push(
+      ...(await fileDeletionQueue.queueMessageAttachments(
+        client,
+        {
+          where: "(m.sender_id = $1 OR m.receiver_id = $1) AND m.team_id IS NULL",
+          params: [userId],
+        },
+        fileDeletionQueue.FILE_DELETION_SOURCE.ACCOUNT_DELETION,
+      )),
+    );
+
     await client.query(
       `DELETE FROM messages
        WHERE (sender_id = $1 OR receiver_id = $1)
@@ -356,29 +436,188 @@ const deleteUser = async (req, res) => {
       );
     }
 
-    await client.query(
-      `
-      UPDATE messages
-      SET content = CASE
-        WHEN $2 <> ''
-          THEN REPLACE(REPLACE(content, $2, 'Former Lomir User'), $3, 'Former Lomir User')
-        ELSE REPLACE(content, $3, 'Former Lomir User')
-      END
-      WHERE sender_id = $1
-        AND team_id IS NOT NULL
-        AND (
-          content LIKE '%👋%'
-          OR content LIKE '%🚪%'
-          OR content LIKE '%👑%'
-          OR content LIKE '%🎯%'
-          OR content LIKE '%✅%'
-          OR content LIKE '%❌%'
-          OR content LIKE '%🎉%'
-          OR content LIKE '%🔓%'
-        )
-      `,
-      [userId, fullName, user.username],
-    );
+    // ─────────────────────────────────────────────────────────────────────────
+    // The name scrub covers other marker tokens, delimited ownership/deletion
+    // tokens, legacy bare-name markers, and prose. Audit and row counts:
+    // `lomir-docs-internal/HANDOVER-Privacy-Security-Hardening.md` and
+    // `deletion-audit/`.
+    //
+    // 🔴 It used to be ONE statement, matching `sender_id = $1` plus a bare
+    // emoji anywhere in the content. Both halves of that were wrong:
+    //   · `sender_id = $1` misses every format that names someone OTHER than
+    //     its sender — eleven of them, measured — and cannot ever reach a row
+    //     whose sender is NULL, which `deleteUser` itself creates below.
+    //   · a bare emoji cannot tell a stored format from a message a person
+    //     typed. Users open messages with 👍 (56 rows), ❤️ (14), 🙏 (17).
+    //
+    // 🔴 BOTH spellings of the name, because every statement below matches the
+    // stored text LITERALLY and `fullName` above does not collapse whitespace.
+    // One stray space in a `users` row hid ~1,000 rows from this scrub inside
+    // BE #347 and #348 — measured in `deletion-audit/15` and `16`, bounded by
+    // `17`. The reasoning, the numbers and why the data is not cleaned instead
+    // live with the function, in the config module that has no imports and can
+    // therefore be unit-tested without touching a database.
+    const namesToScrub = buildScrubNameCandidates(user);
+    // idNameToken trims outer whitespace but preserves spaces inside names.
+    // Keep the raw spelling too, for writers that interpolate tokens directly.
+    const tokenNamesToScrub = [
+      ...new Set(namesToScrub.flatMap((name) => [name, name.trim()])),
+    ];
+
+    // ── 1. Other id-token markers: existing replacement path ───────────────
+    // No sender condition: marker events can name someone other than their
+    // sender. The ownership/deletion formats are excluded and handled below.
+    for (const name of namesToScrub) {
+      await client.query(
+        `
+        UPDATE messages
+        SET content = REPLACE(content, $1 || ':' || $2, $1 || ':' || $3)
+        WHERE team_id IS NOT NULL
+          AND position($1 || ':' || $2 IN content) > 0
+          AND (
+            ${SCRUB_ANCHORED_GLOBAL_PREFIXES.map((_, index) =>
+              startsWithParam(`$${index + 4}`),
+            ).join("\n            OR ")}
+          )
+        `,
+        [
+          String(userId),
+          name,
+          DELETED_USER_DISPLAY_NAME,
+          ...SCRUB_ANCHORED_GLOBAL_PREFIXES,
+        ],
+      );
+    }
+
+    // ── 1b. Tokenized ownership/deletion person slots ──────────────────────
+    // Match the entire token with its field boundaries. A suffix comparison
+    // alone would also match id 42 inside 142; a global replacement could
+    // change TEAM_DELETED's leading team token on an id/name collision.
+    for (const target of SCRUB_ANCHORED_SLOT_TARGETS) {
+      for (const slot of target.personSlots) {
+        const leading = slot === "leading";
+        const boundary = leading
+          ? "$4 || ' ' || $1 || ':' || $2 || ' | '"
+          : "' | ' || $1 || ':' || $2";
+        const replacement = leading
+          ? "$4 || ' ' || $1 || ':' || $3 || ' | '"
+          : "' | ' || $1 || ':' || $3";
+        const updatedContent = leading
+          ? `${replacement} || substring(content FROM length(${boundary}) + 1)`
+          : `left(content, length(content) - length(${boundary})) || ${replacement}`;
+        const query = `
+          UPDATE messages
+          SET content = ${updatedContent}
+          WHERE team_id IS NOT NULL
+            AND ${startsWithParam("$4")}
+            AND ${leading ? "left" : "right"}(content, length(${boundary})) = ${boundary}
+        `;
+        for (const name of tokenNamesToScrub) {
+          await client.query(query, [
+            String(userId),
+            name,
+            DELETED_USER_DISPLAY_NAME,
+            target.prefix,
+          ]);
+        }
+      }
+    }
+
+    // ── 2. Marker formats with NO id tokens ─────────────────────────────────
+    // Legacy rows still need the display name because they have no id token.
+    // `personSlots` restricts the replacement to person fields: both
+    // formats are `<prefix> <slot> | <slot>`, and in `🗑️ TEAM_DELETED` the
+    // LEADING slot is a team name, never a person. A team name is the worse
+    // half of the substring trap — "Cooking" sits inside "Online Cooking &
+    // Recipe Swap Group" — so it is never rewritten here.
+    //
+    // ⚠️ Both slot rules match the name with its delimiters attached, so a
+    // deleted "Anna Berg" cannot damage an "Anna Bergmann" named in the same
+    // row. That is stricter than the statement this replaces, which would now
+    // have been table-wide rather than limited to the deleted user's own rows.
+    for (const target of SCRUB_ID_LESS_TARGETS) {
+      const trailing = `right(content, length($2) + 3) = ' | ' || $2`;
+      const leading = `position(': ' || $2 || ' | ' IN content) > 0`;
+      const hasLeading = target.personSlots.includes("leading");
+
+      const setExpression = hasLeading
+        ? `CASE
+             WHEN ${trailing}
+               THEN left(content, length(content) - length($2)) || $3
+             ELSE REPLACE(content, ': ' || $2 || ' | ', ': ' || $3 || ' | ')
+           END`
+        : `left(content, length(content) - length($2)) || $3`;
+
+      const matchExpression = hasLeading
+        ? `(${trailing} OR ${leading})`
+        : trailing;
+
+      for (const name of namesToScrub) {
+        await client.query(
+          `
+          UPDATE messages
+          SET content = ${setExpression}
+          WHERE team_id IS NOT NULL
+            AND ${startsWithParam("$1")}
+            AND ${matchExpression}
+          `,
+          [target.prefix, name, DELETED_USER_DISPLAY_NAME],
+        );
+      }
+    }
+
+    // ── 3. Prose formats: the old sender-based path, kept deliberately ──────
+    // 🔴 Do NOT "finish the job" by deleting this. Anchoring cannot replace the
+    // sender condition for prose: those formats have no marker, so there is
+    // nothing to anchor on, and `🎯` and the `🚪` prose form carry
+    // `namedIsSender: true` — they are reached today precisely BECAUSE the
+    // named person is the sender. Removing the condition would scrub them
+    // never instead of sometimes.
+    //
+    // ⚠️ Narrowed in two ways against what it replaced. The prefix list is now
+    // prose-only, and the emoji must be at the START of the content. Without
+    // the first change a `🚪 MEMBER_LEFT:` row would be matched here too and
+    // get the blind name swap that statement 1 exists to avoid; without the
+    // second, any message merely containing the emoji was eligible.
+    //
+    // 🔴 What this still does NOT reach, and it is the remaining gap:
+    // `FORMATS_STILL_UNREACHABLE_AFTER_ANCHORING` — `👋` (136 rows, 5 with no
+    // sender), `🎉` (288) and `❌`. They name a non-sender AND have no marker.
+    // Their fix is an id token in the writer or a one-off migration over known
+    // ids, decided separately. A wider prefix list is not an option.
+    for (const name of namesToScrub) {
+      await client.query(
+        `
+        UPDATE messages
+        SET content = REPLACE(content, $2, $3)
+        WHERE sender_id = $1
+          AND team_id IS NOT NULL
+          AND position($2 IN content) > 0
+          AND (
+            ${SCRUB_PROSE_EMOJI_PREFIXES.map((_, index) =>
+              startsWithParam(`$${index + 4}`),
+            ).join("\n            OR ")}
+          )
+          AND NOT (
+            ${SCRUB_ANCHORED_PREFIXES.map((_, index) =>
+              startsWithParam(`$${index + 4 + SCRUB_PROSE_EMOJI_PREFIXES.length}`),
+            ).join("\n            OR ")}
+          )
+        `,
+        [
+          userId,
+          name,
+          DELETED_USER_DISPLAY_NAME,
+          ...SCRUB_PROSE_EMOJI_PREFIXES,
+          ...SCRUB_ANCHORED_PREFIXES,
+        ],
+      );
+    }
+
+    // @-mention labels in other people's messages, anchored on the id (item
+    // 59, utils/mentionScrub.js): the rest of their text stays untouched.
+    const mentionLabelsScrubbed = await mentionScrub.scrubMentionLabels(client, userId);
+    logDeletionPhase("Phase B - mention labels", { messages: mentionLabelsScrubbed });
 
     logDeletionPhase("Phase C - team ownership cleanup", {
       teamsToDelete: teamsToDelete.length,
@@ -445,6 +684,15 @@ const deleteUser = async (req, res) => {
       await client.query("DELETE FROM team_applications WHERE team_id = $1", [
         team.teamId,
       ]);
+      // This solo team is deleted here, not through permanentlyDeleteTeam, so
+      // its chat attachments and its avatar are queued here (item 59).
+      queuedFileIds.push(
+        ...(await fileDeletionQueue.queueTeamFiles(
+          client,
+          team.teamId,
+          fileDeletionQueue.FILE_DELETION_SOURCE.ACCOUNT_DELETION,
+        )),
+      );
       await client.query("DELETE FROM messages WHERE team_id = $1", [team.teamId]);
       await client.query(
         `
@@ -550,7 +798,7 @@ const deleteUser = async (req, res) => {
         [
           null,
           team.teamId,
-          `👑 OWNERSHIP_TEAM: ${DELETED_USER_DISPLAY_NAME} | ${successor.name}`,
+          `👑 OWNERSHIP_TEAM: ${DELETED_USER_DISPLAY_NAME} | ${idNameToken(successor.userId, successor.name)}`,
         ],
       );
 
@@ -609,7 +857,16 @@ const deleteUser = async (req, res) => {
         await client.query(
           `INSERT INTO messages (sender_id, team_id, content, sent_at)
            VALUES ($1, $2, $3, NOW())`,
-          [null, role.teamId, `🔓 The role ${role.roleName} is now open again.`],
+          // The ordinary ROLE_REOPENED marker, so the role keeps its id: the
+          // chat can then tell a deleted role from a living one. Until item 37
+          // this wrote id-less prose (`🔓 The role <name> is now open again.`),
+          // which no reader could resolve. The deleted person is the bare
+          // placeholder, as in the successor tombstone above — no id survives.
+          [
+            null,
+            role.teamId,
+            `🔓 ROLE_REOPENED: ${idNameToken(role.teamId, role.teamName || "your team")} | ${idNameToken(role.roleId, role.roleName || DEFAULT_ROLE_NAME)} | ${DELETED_USER_DISPLAY_NAME}`,
+          ],
         );
 
         const recipients = roleRecipientsByTeamId.get(role.teamId) || [];
@@ -659,7 +916,106 @@ const deleteUser = async (req, res) => {
       [userId],
     );
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Notifications that name this user are DELETED, not rewritten.
+    //
+    // 🔴 Why deletion rather than the REPLACE the message scrub uses. Measured
+    // 2026-10-02 (`deletion-audit/11`): of 1826 `badge_awarded` rows only 117
+    // still carry the literal the current writer produces, and only 1056 the
+    // `New Badge: ` title prefix. **The stored text shapes are historical and
+    // varied**, so the anchored-prefix approach that makes the message scrub
+    // safe would miss the large majority of rows here. Matching the display
+    // name is the only route that reaches them — and on free prose that is a
+    // blind substring swap with none of the delimiters that bound it in
+    // `messages`. A notification is a transient alert rather than a record, so
+    // removing it loses nothing a rewrite would have preserved. Julia's call.
+    //
+    // 🔴 THIS MUST STAY BEFORE PHASE E, and the reason is invisible in the SQL:
+    // `notifications.actor_id` is `ON DELETE SET NULL`, so the moment the
+    // `users` row goes, every `actor_id` pointing at it becomes NULL and the
+    // first statement below matches nothing. There is no error — it silently
+    // deletes zero rows. ~400 rows in the table already have a NULL actor for
+    // exactly this reason, from deletions that predate this code.
+    //
+    // ⚠️ `user_id` is `ON DELETE CASCADE`, so this user's OWN notifications need
+    // no handling; they go with the `users` row in Phase E.
+    logDeletionPhase("Phase D2 - notifications naming this user", { userId });
+
+    // 1. Everything they were the actor of, whether or not their name is in the
+    //    text.
+    //
+    //    ⚠️ This is BROAD on purpose, and the cost is measured: one user in the
+    //    live data is the actor of 2,514 notifications (dry run 2026-10-02,
+    //    `deletion-audit/12` section A; median 22). Deleting their account
+    //    removes all of them, including rows that never contained their name.
+    //
+    //    🔴 The narrow alternative — delete only actor rows that CONTAIN the
+    //    name — was considered and rejected, because it depends on something
+    //    that is not built yet. A notification stores the display name as it was
+    //    when written, and **renames do not propagate today**: Julia's rename
+    //    rule (a renamed person is renamed everywhere, old name forgotten) is
+    //    decided but unimplemented, order 1 → 3 → 2 in the privacy handover. So
+    //    a person who renamed before deleting leaves rows holding their OLD
+    //    name, which is still their personal data and which no name match can
+    //    ever find. The `actor_id` is the only remaining link to it.
+    //
+    //    ✅ **Narrow this once the rename rule ships, not before.** At that point
+    //    stored text carries the current name, the name match reaches it, and
+    //    the 2,514 can shrink to the rows that actually name someone.
+    //
+    //    ⚠️ Note what this statement does NOT justify: for a row that never held
+    //    the name, deleting it serves no privacy purpose — `actor_id` goes NULL
+    //    by itself through the FK. Those rows are collateral, accepted for the
+    //    rename case alone.
+    const actorNotifications = await client.query(
+      `DELETE FROM notifications WHERE actor_id = $1`,
+      [userId],
+    );
+
+    // 2. The rows that name them without their being the actor. Measured at
+    //    ~1,500, and `role_application_deferred_invite` is 52 of 52 — the
+    //    approver is the actor while the applicant is the one named
+    //    (`teamApplicationsController.js:1022`). An actor condition alone
+    //    leaves all of these behind.
+    //
+    // ⚠️ Matched on WORD BOUNDARIES, not as a bare substring: a deleted "Ana"
+    // must not take out a notification about "Anastasia". The name is escaped
+    // for the regex in JS (`escapeForPosixRegex`) because a display name may
+    // contain `.`, `*`, `(`, `[` and friends, and an unescaped one would either
+    // match the wrong rows or raise.
+    const deletedByName = [];
+
+    for (const name of namesToScrub) {
+      const result = await client.query(
+        `
+        DELETE FROM notifications
+        WHERE title ~ ('(^|[^[:alnum:]])' || $1 || '([^[:alnum:]]|$)')
+           OR COALESCE(message, '') ~ ('(^|[^[:alnum:]])' || $1 || '([^[:alnum:]]|$)')
+        `,
+        [escapeForPosixRegex(name)],
+      );
+      deletedByName.push(result.rowCount);
+    }
+
+    // 3. The rows holding a mention token of this id, whatever name it shows
+    //    (a rename before the deletion leaves the old name in the label).
+    const mentionNotifications = await mentionScrub.deleteNotificationsMentioning(client, userId);
+
+    logDeletionPhase("Phase D2 - done", {
+      byActor: actorNotifications.rowCount,
+      byName: deletedByName,
+      byMention: mentionNotifications,
+    });
+
     logDeletionPhase("Phase E - delete user row", { userId });
+
+    queuedFileIds.push(
+      ...(await fileDeletionQueue.queueFiles(
+        client,
+        [{ url: avatarUrl, fileId: avatarFileId }],
+        fileDeletionQueue.FILE_DELETION_SOURCE.ACCOUNT_DELETION,
+      )),
+    );
 
     await client.query("DELETE FROM users WHERE id = $1", [userId]);
     await client.query("COMMIT");
@@ -671,9 +1027,21 @@ const deleteUser = async (req, res) => {
     });
 
     try {
-      if (avatarUrl || avatarFileId) {
-        await deleteImageKitFile(avatarUrl, avatarFileId);
-      }
+      // Avatar, DM attachments and solo-team files: deleted from ImageKit now,
+      // without holding the response; a failure stays queued for the daily
+      // cleanup and the next server start.
+      fileDeletionQueue.processFileDeletionsSoon(queuedFileIds);
+
+      // The internal record for re-deleting after a backup restore (item 59):
+      // ids and timestamps only, mailed to the operator inbox.
+      deletionRecord.sendDeletionRecordSoon(
+        deletionRecord.buildAccountDeletionRecord({
+          userId,
+          createdAt: user.created_at,
+          successors: ownershipTransferEvents,
+          deletedTeams: teamsToDelete,
+        }),
+      );
 
       const io =
         req.app && typeof req.app.get === "function" ? req.app.get("io") : null;
@@ -738,6 +1106,10 @@ const deleteUser = async (req, res) => {
  * @route POST /api/users/:id/deletion-preview
  * @access Private (Requires authentication and password verification)
  */
+// The route handler: two arguments only, so nothing a request carries (nor
+// Express's `next`) can ever reach the options of runAccountDeletion.
+const deleteUser = (req, res) => runAccountDeletion(req, res);
+
 const deletionPreview = async (req, res) => {
   try {
     const userId = parseInt(req.params.id, 10);
@@ -777,6 +1149,7 @@ const deletionPreview = async (req, res) => {
     if (!passwordMatches) {
       return res.status(401).json({
         success: false,
+        code: AUTH_ERROR_CODES.PASSWORD_INCORRECT,
         message: "Password is incorrect",
       });
     }
@@ -973,4 +1346,5 @@ const deletionPreview = async (req, res) => {
 module.exports = {
   deleteUser,
   deletionPreview,
+  runAccountDeletion,
 };
