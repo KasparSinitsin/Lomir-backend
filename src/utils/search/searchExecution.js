@@ -2,6 +2,10 @@
 // open-role SQL, delegating to the filter/order builders and result shapers.
 
 const db = require("../../config/database");
+const { accentInsensitiveLike } = require("./accentFolding");
+
+// The role search takes a plain term (not a pattern) as $1; accents are ignored (item 52).
+const ROLE_TERM_PATTERN = "'%' || $1::text || '%'";
 const {
   buildDistanceSelectSQL,
   buildDistanceFilterSQL,
@@ -53,10 +57,10 @@ async function fetchOpenRoleSearchResults({
       AND t.archived_at IS NULL
       AND (
         $1 = '' OR $1 IS NULL
-        OR vr.role_name ILIKE '%' || $1 || '%'
-        OR vr.bio ILIKE '%' || $1 || '%'
-        OR t.name ILIKE '%' || $1 || '%'
-        OR tg.name ILIKE '%' || $1 || '%'
+        OR ${accentInsensitiveLike('vr.role_name', ROLE_TERM_PATTERN)}
+        OR ${accentInsensitiveLike('vr.bio', ROLE_TERM_PATTERN)}
+        OR ${accentInsensitiveLike('t.name', ROLE_TERM_PATTERN)}
+        OR ${accentInsensitiveLike('tg.name', ROLE_TERM_PATTERN)}
       )
   `;
 
@@ -115,13 +119,13 @@ async function fetchOpenRoleSearchResults({
       AND t.archived_at IS NULL
       AND (
         $1 = '' OR $1 IS NULL
-        OR vr.role_name ILIKE '%' || $1 || '%'
-        OR vr.bio ILIKE '%' || $1 || '%'
-        OR t.name ILIKE '%' || $1 || '%'
+        OR ${accentInsensitiveLike('vr.role_name', ROLE_TERM_PATTERN)}
+        OR ${accentInsensitiveLike('vr.bio', ROLE_TERM_PATTERN)}
+        OR ${accentInsensitiveLike('t.name', ROLE_TERM_PATTERN)}
         OR EXISTS (
           SELECT 1 FROM team_vacant_role_tags vrt2
           JOIN tags tg2 ON vrt2.tag_id = tg2.id
-          WHERE vrt2.role_id = vr.id AND tg2.name ILIKE '%' || $1 || '%'
+          WHERE vrt2.role_id = vr.id AND ${accentInsensitiveLike('tg2.name', ROLE_TERM_PATTERN)}
         )
       )
   `;

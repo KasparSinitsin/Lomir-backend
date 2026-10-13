@@ -69,6 +69,7 @@ const mergeLegacyTags = require("./merge_legacy_tags");
 const createTagCategoryTables = require("./create_tag_category_tables");
 const createTagTranslationTables = require("./create_tag_translation_tables");
 const createPendingFileDeletions = require("./create_pending_file_deletions");
+const createUnaccentExtension = require("./create_unaccent_extension");
 const scrubMentionLabelsOfDeletedAccounts = require("./scrub_mention_labels_of_deleted_accounts");
 
 const runMigrations = async () => {
@@ -157,6 +158,10 @@ const runMigrations = async () => {
     // (item 59). Additive and empty; runs before item 35 so a held data
     // migration never keeps it from being created.
     await createPendingFileDeletions();
+
+    // The accent-insensitive search needs the `unaccent` extension (item 52).
+    // Additive; must exist before the search code that calls it runs.
+    await createUnaccentExtension();
 
     // The @-mention labels of accounts deleted before the account deletion did
     // it itself get the placeholder, anchored on the id (item 59). Data: runs
