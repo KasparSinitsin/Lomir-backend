@@ -99,3 +99,21 @@ test("the tag helpers fold accents and no longer use ILIKE or plain LOWER compar
   assert.ok(rank.includes("LIKE unaccent(lower($1::text || '%'))"), "rank 2: prefix, typed as text");
   assert.ok(rank.includes("LIKE unaccent(lower('%' || $1::text || '%'))"), "rank 3: contains, typed as text");
 });
+
+// A trip-wire, not a proof: a new search written with ILIKE would bring the
+// exact-spelling behaviour back for that one field (STATUS item 52).
+test("no search in src uses ILIKE any more (comments aside)", () => {
+  const walk = (dir) =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      return entry.isDirectory() ? walk(full) : full.endsWith(".js") ? [full] : [];
+    });
+  const offenders = walk(path.join(__dirname, "../src")).filter((file) => {
+    const code = fs
+      .readFileSync(file, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    return /\bILIKE\b/.test(code);
+  });
+  assert.deepEqual(offenders.map((f) => path.relative(path.join(__dirname, ".."), f)), []);
+});

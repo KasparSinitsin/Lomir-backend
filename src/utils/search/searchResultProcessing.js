@@ -205,9 +205,9 @@ function appendTeamSearchClause({
   } else {
     teamQuery += `
           AND (
-            t.name ILIKE $${nextParamIndex} OR
-            t.description ILIKE $${nextParamIndex} OR
-            t.city ILIKE $${nextParamIndex} OR
+            ${accentInsensitiveLike("t.name", `$${nextParamIndex}`)} OR
+            ${accentInsensitiveLike("t.description", `$${nextParamIndex}`)} OR
+            ${accentInsensitiveLike("t.city", `$${nextParamIndex}`)} OR
             ${tagNameMatchSQL("tag", `$${nextParamIndex}`)}
           )
         `;
@@ -305,11 +305,11 @@ function appendUserSearchClause({
   } else {
     userQuery += `
           AND (
-            u.username ILIKE $${nextParamIndex} OR
-            u.first_name ILIKE $${nextParamIndex} OR
-            u.last_name ILIKE $${nextParamIndex} OR
-            u.bio ILIKE $${nextParamIndex} OR
-            u.city ILIKE $${nextParamIndex} OR
+            ${accentInsensitiveLike("u.username", `$${nextParamIndex}`)} OR
+            ${accentInsensitiveLike("u.first_name", `$${nextParamIndex}`)} OR
+            ${accentInsensitiveLike("u.last_name", `$${nextParamIndex}`)} OR
+            ${accentInsensitiveLike("u.bio", `$${nextParamIndex}`)} OR
+            ${accentInsensitiveLike("u.city", `$${nextParamIndex}`)} OR
             EXISTS (${visibleFocusAreaMatchSQL(`$${nextParamIndex}`)}) OR
             EXISTS (${visibleBadgeNameMatchSQL(`$${nextParamIndex}`)})
           )
