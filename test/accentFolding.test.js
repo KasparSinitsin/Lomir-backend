@@ -11,7 +11,9 @@ const {
   ALTERNATIVE_SPELLINGS,
   foldSql,
   accentInsensitiveLike,
+  accentInsensitiveEquals,
 } = require("../src/utils/search/accentFolding");
+const { tagNameMatchSQL, tagRelevanceJoinSQL } = require("../src/utils/search/tagNameMatch");
 
 test("the base fold is lower case, then the accents off", () => {
   assert.equal(foldSql("u.last_name"), "unaccent(lower(u.last_name))");
@@ -77,4 +79,23 @@ test("it is registered, and migrate:one may run it early", () => {
   assert.ok(index.includes("await createUnaccentExtension();"));
   const runner = fs.readFileSync(path.join(__dirname, "../scripts/run-migration.js"), "utf8");
   assert.ok(/create_unaccent_extension:\s*\n\s*"/.test(runner));
+});
+
+test("equality has no wildcards and tries every form", () => {
+  const sql = accentInsensitiveEquals("l.label", "$1");
+  assert.ok(!sql.includes("LIKE"));
+  const forms = sql.slice(1, -1).split(" OR ");
+  assert.equal(forms.length, 1 + Object.keys(ALTERNATIVE_SPELLINGS).length);
+  assert.equal(forms[0], "unaccent(lower(l.label)) = unaccent(lower($1))");
+});
+
+test("the tag helpers fold accents and no longer use ILIKE or plain LOWER comparisons", () => {
+  const match = tagNameMatchSQL("t2", "$PARAM");
+  assert.ok(!match.includes("ILIKE"));
+  assert.ok(match.includes("unaccent(lower(cand.label)) LIKE unaccent(lower($PARAM))"));
+  const rank = tagRelevanceJoinSQL("t", "$1");
+  assert.ok(!/ILIKE|LOWER\(l\.label\)/.test(rank));
+  assert.ok(rank.includes("unaccent(lower(l.label)) = unaccent(lower($1))"), "rank 1: equals");
+  assert.ok(rank.includes("LIKE unaccent(lower($1::text || '%'))"), "rank 2: prefix, typed as text");
+  assert.ok(rank.includes("LIKE unaccent(lower('%' || $1::text || '%'))"), "rank 3: contains, typed as text");
 });

@@ -18,6 +18,7 @@ const {
   BADGE_NAME_TRANSLATIONS_VALUES_SQL,
 } = require("./badgeNameTranslations");
 const { tagNameMatchSQL } = require("./tagNameMatch");
+const { accentInsensitiveLike } = require("./accentFolding");
 
 function computeJaccardOverlap(baseSet, candidateIds) {
   const candidateSet = new Set(
@@ -226,9 +227,7 @@ function appendTeamSearchClause({
 // there to be inferred (found 2026-09-28, alongside the search display leak).
 //
 // A term is matched against the English name AND the German one, so a German
-// "Empathisch" finds "Empathetic". `param` appears ONCE: the boolean parser
-// substitutes its `$PARAM` placeholder with `String.replace`, which replaces
-// the first occurrence only, and a second one would reach postgres as text.
+// "Empathisch" finds "Empathetic", and accents are ignored (item 52).
 const visibleBadgeNameMatchSQL = (param) => `
               SELECT 1
               FROM badge_awards ba_name
@@ -240,7 +239,7 @@ const visibleBadgeNameMatchSQL = (param) => `
                 AND EXISTS (
                   SELECT 1
                   FROM unnest(ARRAY[b_name.name, m_name.de]) AS cand(label)
-                  WHERE cand.label ILIKE ${param}
+                  WHERE ${accentInsensitiveLike("cand.label", param)}
                 )
                 AND ${visibleAwardCondition({
                   awardAlias: "ba_name",

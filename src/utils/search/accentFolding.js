@@ -46,4 +46,19 @@ const accentInsensitiveLike = (haystackSql, patternSql) => {
     .join(" OR ")})`;
 };
 
-module.exports = { ALTERNATIVE_SPELLINGS, foldSql, accentInsensitiveLike };
+// The SQL boolean "haystack equals term" in any form, the replacement for
+// `LOWER(haystack) = LOWER(term)`. Unlike LIKE it has no wildcards: a `_` or `%`
+// in the term is just a character.
+const accentInsensitiveEquals = (haystackSql, termSql) => {
+  const forms = [[], ...Object.values(ALTERNATIVE_SPELLINGS)];
+  return `(${forms
+    .map((spellings) => `${foldSql(haystackSql, spellings)} = ${foldSql(termSql, spellings)}`)
+    .join(" OR ")})`;
+};
+
+module.exports = {
+  ALTERNATIVE_SPELLINGS,
+  foldSql,
+  accentInsensitiveLike,
+  accentInsensitiveEquals,
+};

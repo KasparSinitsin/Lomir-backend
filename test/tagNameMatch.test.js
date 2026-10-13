@@ -7,9 +7,10 @@ const assert = require("node:assert/strict");
 const { tagNameMatchSQL, tagRelevanceJoinSQL } = require("../src/utils/search/tagNameMatch");
 const { parseBooleanSearch } = require("../src/utils/booleanSearchParser");
 
-test("the match uses its placeholder exactly once", () => {
+test("the match uses its placeholder once per form (the base form and each language's own)", () => {
+  const { ALTERNATIVE_SPELLINGS } = require("../src/utils/search/accentFolding");
   const sql = tagNameMatchSQL("t2", "$PARAM");
-  assert.equal(sql.split("$PARAM").length - 1, 1);
+  assert.equal(sql.split("$PARAM").length - 1, 1 + Object.keys(ALTERNATIVE_SPELLINGS).length);
   assert.match(sql, /tag_translations/);
 });
 
