@@ -17,6 +17,7 @@
  */
 
 const { SEARCH_ERROR_CODES } = require("../config/searchErrors");
+const { accentInsensitiveLike } = require("./search/accentFolding");
 
 const OPERATORS = {
   AND: "AND",
@@ -175,6 +176,8 @@ function parseTokens(tokens) {
  *   - notExistsTemplate: SQL template with $PARAM placeholder
  *   - extraExistsTemplates: array of SQL templates with $PARAM placeholder
  *   - extraNotExistsTemplates: array of SQL templates with $PARAM placeholder
+ *   $PARAM is replaced EVERYWHERE it occurs in a template (the accent-insensitive
+ *   match uses the parameter once per form), so it may appear more than once.
  *
  * @returns {Object} { whereClause: string, params: array, nextParamIndex: number }
  */
@@ -212,7 +215,9 @@ function buildSQLConditions(
     const regularMatch =
       regularColumns.length > 0
         ? `(${regularColumns
-            .map((col) => `COALESCE(${col}, '') ILIKE $${paramIndex}`)
+            .map((col) =>
+              accentInsensitiveLike(`COALESCE(${col}, '')`, `$${paramIndex}`),
+            )
             .join(" OR ")})`
         : "";
 
@@ -223,15 +228,15 @@ function buildSQLConditions(
     if (hasTagColumn && tagConfig) {
       // Main tag exists / not-exists
       if (!negated && tagConfig.existsTemplate) {
-        tagMatch = tagConfig.existsTemplate.replace("$PARAM", `$${paramIndex}`);
+        tagMatch = tagConfig.existsTemplate.replaceAll("$PARAM", `$${paramIndex}`);
       } else if (negated && tagConfig.notExistsTemplate) {
-        tagMatch = tagConfig.notExistsTemplate.replace(
+        tagMatch = tagConfig.notExistsTemplate.replaceAll(
           "$PARAM",
           `$${paramIndex}`,
         );
       } else {
         // Fallback to joined-column matching if templates missing
-        tagMatch = `(${tagColumn} ILIKE $${paramIndex})`;
+        tagMatch = accentInsensitiveLike(tagColumn, `$${paramIndex}`);
         if (negated) tagMatch = `NOT ${tagMatch}`;
       }
 
@@ -242,7 +247,7 @@ function buildSQLConditions(
 
       if (extras.length > 0) {
         const replaced = extras.map((tpl) =>
-          tpl.replace("$PARAM", `$${paramIndex}`),
+          tpl.replaceAll("$PARAM", `$${paramIndex}`),
         );
 
         // positive extras => OR, negative extras => AND

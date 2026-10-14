@@ -37,9 +37,19 @@ const indexReferences = (references) => {
 };
 
 /**
+ * Where one file stands: "referenced", "queued", "orphanedUnderADay" or
+ * "orphanedOlder". A file younger than a day may still be on its way into a
+ * message or a profile, so it is told apart from the older orphans.
+ */
+const classify = (file, index, now) => {
+  const url = file.url ? normalizeUrl(file.url) : null;
+  if (index.fileIds.has(file.fileId) || (url && index.urls.has(url))) return "referenced";
+  if (index.queuedFileIds.has(file.fileId) || (url && index.queuedUrls.has(url))) return "queued";
+  return now - Date.parse(file.createdAt || 0) < DAY_MS ? "orphanedUnderADay" : "orphanedOlder";
+};
+
+/**
  * Counts per folder: files, referenced, queued for deletion, and orphans by age.
- * A file younger than a day may still be on its way into a message or a
- * profile, so it is counted apart.
  */
 const countOrphans = (files, references, now = Date.now()) => {
   const index = indexReferences(references);
@@ -51,19 +61,20 @@ const countOrphans = (files, references, now = Date.now()) => {
   for (const file of files) {
     const row = result[folderOf(file.filePath)];
     row.files += 1;
-    const url = file.url ? normalizeUrl(file.url) : null;
-
-    if (index.fileIds.has(file.fileId) || (url && index.urls.has(url))) {
-      row.referenced += 1;
-    } else if (index.queuedFileIds.has(file.fileId) || (url && index.queuedUrls.has(url))) {
-      row.queued += 1;
-    } else {
-      const age = now - Date.parse(file.createdAt || 0);
-      if (age < DAY_MS) row.orphanedUnderADay += 1;
-      else row.orphanedOlder += 1;
-    }
+    row[classify(file, index, now)] += 1;
   }
   return result;
 };
 
-module.exports = { FOLDERS, folderOf, normalizeUrl, countOrphans };
+/**
+ * The files to delete: orphans older than a day inside the four Lomir folders.
+ * Anything in another folder is never touched, however old.
+ */
+const findOrphans = (files, references, now = Date.now()) => {
+  const index = indexReferences(references);
+  return files.filter(
+    (file) => folderOf(file.filePath) !== "other" && classify(file, index, now) === "orphanedOlder",
+  );
+};
+
+module.exports = { FOLDERS, folderOf, normalizeUrl, countOrphans, findOrphans };

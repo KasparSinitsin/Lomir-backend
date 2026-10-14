@@ -30,6 +30,8 @@ const EARLY_SAFE = {
   create_tag_translation_tables: "adds three EMPTY tables; needs the category tables",
   create_pending_file_deletions:
     "adds one EMPTY table, the ImageKit files still to delete (item 59); must exist before that code runs",
+  create_unaccent_extension:
+    "adds the unaccent extension (functions only, no table, no row) for the accent-insensitive search (item 52); must exist before that code runs",
 };
 
 const args = process.argv.slice(2);

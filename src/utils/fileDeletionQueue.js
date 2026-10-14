@@ -18,6 +18,7 @@ const FILE_DELETION_SOURCE = Object.freeze({
   TEAM_DELETION: "team_deletion",
   CHAT_FILE_EXPIRY: "chat_file_expiry",
   UNVERIFIED_ACCOUNT: "unverified_account",
+  ORPHAN_CLEANUP: "orphan_cleanup",
 });
 
 const DEFAULT_BATCH_SIZE = 100;

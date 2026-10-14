@@ -52,3 +52,17 @@ test("a file referenced AND queued counts as referenced (it is still in use)", (
   assert.equal(result["/lomir/avatars/"].referenced, 1);
   assert.equal(result["/lomir/avatars/"].queued, 0);
 });
+
+test("findOrphans takes old orphans in the four folders only", () => {
+  const { findOrphans } = require("../scripts/orphans/countOrphans");
+  const mk = (id, p, createdAt = OLD) => ({ fileId: id, filePath: p, url: `${IK}${p}`, createdAt });
+  const files = [
+    mk("o1", "/lomir/avatars/old.png"),
+    mk("o2", "/lomir/chat-images/fresh.jpg", FRESH),
+    mk("o3", "/elsewhere/old.png"),
+    mk("o4", "/lomir/chat-files/used.pdf"),
+    mk("o5", "/lomir/chat-files/queued.pdf"),
+  ];
+  const refs = [{ url: `${IK}/lomir/chat-files/used.pdf` }, { fileId: "o5", queued: true }];
+  assert.deepEqual(findOrphans(files, refs, NOW).map((f) => f.fileId), ["o1"]);
+});
